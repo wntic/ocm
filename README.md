@@ -93,6 +93,33 @@ hour), set `OCM_SYNC_INTERVAL_MS=3600000`.
 
 Remove the loader any time with `ocm loader uninstall`.
 
+## TUI integration (`/ocm`)
+
+`ocm init` also installs a TUI plugin (`~/.config/opencode/plugins/ocm-ui.js`)
+and registers it in `~/.config/opencode/tui.json` — the only entry ocm owns in
+that file; theme, keybinds and other user settings are preserved.
+
+Restart opencode after installing, then type `/ocm` in the prompt:
+
+```
+ocm
+  Browse plugins    All plugins across marketplaces
+  Update all        Pull every marketplace now
+  Marketplaces      List and update marketplaces
+```
+
+- **Browse plugins** — searchable list of every installed plugin
+  (`plugin@marketplace`), with per-plugin details (commands, agents, skills).
+- **Update all** — pulls every marketplace and refreshes links in place.
+- **Marketplaces** — per-marketplace update.
+
+The dialog is a thin view over the same `ocm-core.js` the CLI uses — no CLI
+spawning, no duplicated logic. Install/uninstall toggles and marketplace
+add/remove from inside the TUI are planned (see `docs/specs/09-tui-command.md`).
+
+`OPENCODE_PURE=1` disables the TUI plugin along with all other external
+plugins. Remove it with `ocm loader uninstall`.
+
 ## Requirements
 
 - [opencode](https://opencode.ai)
