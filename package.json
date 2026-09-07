@@ -1,0 +1,22 @@
+{
+  "name": "ocm",
+  "version": "0.1.0",
+  "description": "File-based plugin marketplace for opencode: skills, agents, commands distributed via git repos",
+  "type": "module",
+  "bin": {
+    "ocm": "./bin/ocm.ts"
+  },
+  "scripts": {
+    "dev": "bun run ./bin/ocm.ts",
+    "test": "bun test"
+  },
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}
