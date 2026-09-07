@@ -2,7 +2,7 @@ import { syncAll } from "./ocm-core.js"
 
 function intervalMs() {
   const raw = parseInt(process.env.OCM_SYNC_INTERVAL_MS ?? "", 10)
-  return Number.isFinite(raw) && raw >= 0 ? raw : 60 * 60 * 1000
+  return Number.isFinite(raw) && raw >= 0 ? raw : 0
 }
 
 export default {

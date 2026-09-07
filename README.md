@@ -80,7 +80,7 @@ Every directory under `plugins/` with at least one component becomes an installa
 On every opencode start the loader:
 
 1. runs `git fetch` + `git reset` (shallow-clone safe) for all added git
-   marketplaces — at most once per hour;
+   marketplaces — in the background, adds ~1s to startup;
 2. refreshes the symlinks, so newly added or removed plugins are picked up;
 3. if anything changed, triggers a config reload, so **commands and agents
    from the update are available in the current session**.
@@ -88,8 +88,8 @@ On every opencode start the loader:
 Skills are cached for the process lifetime by opencode and pick up changes on
 the next launch.
 
-The sync interval defaults to one hour and can be tuned or disabled with the
-`OCM_SYNC_INTERVAL_MS` environment variable (`0` syncs on every start).
+By default the sync runs on every start. To throttle it (e.g. to once an
+hour), set `OCM_SYNC_INTERVAL_MS=3600000`.
 
 Remove the loader any time with `ocm loader uninstall`.
 
