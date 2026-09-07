@@ -1,70 +1,24 @@
-import { readdirSync, statSync, existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import type { ComponentType } from "./types"
-import { componentDir } from "./registry"
+import { discoverPlugins } from "../loader/ocm-core.js"
 
 export interface DiscoveredPlugin {
   name: string
   dir: string
   source: string
-  components: Partial<Record<ComponentType, string[]>>
-}
-
-function listMdFiles(dir: string): string[] {
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".md"))
-    .sort()
-}
-
-function listSkillDirs(dir: string): string[] {
-  return readdirSync(dir)
-    .filter((d) => {
-      const p = join(dir, d)
-      return statSync(p).isDirectory() && existsSync(join(p, "SKILL.md"))
-    })
-    .sort()
-}
-
-export function discoverPlugin(pluginDir: string): DiscoveredPlugin | null {
-  const components: Partial<Record<ComponentType, string[]>> = {}
-  for (const type of ["agent", "command", "skill"] as ComponentType[]) {
-    const dir = join(pluginDir, componentDir(type))
-    if (!existsSync(dir)) continue
-    if (type === "skill") {
-      const skills = listSkillDirs(dir)
-      if (skills.length) components.skill = skills
-    } else {
-      const files = listMdFiles(dir)
-      if (files.length) components[type] = files
-    }
-  }
-  if (!Object.keys(components).length) return null
-  return {
-    name: pluginDir.split("/").filter(Boolean).pop()!.toLowerCase(),
-    dir: pluginDir,
-    source: pluginDir,
-    components,
-  }
+  components: Partial<Record<"agent" | "command" | "skill", string[]>>
 }
 
 export function discoverMarketplace(marketplaceDir: string): Map<string, DiscoveredPlugin> {
   const plugins = new Map<string, DiscoveredPlugin>()
-
-  const pluginsDir = join(marketplaceDir, "plugins")
-  if (existsSync(pluginsDir)) {
-    for (const entry of readdirSync(pluginsDir).sort()) {
-      const pluginDir = join(pluginsDir, entry)
-      if (!statSync(pluginDir).isDirectory()) continue
-      const plugin = discoverPlugin(pluginDir)
-      if (plugin) plugins.set(plugin.name, plugin)
-    }
+  for (const plugin of discoverPlugins(marketplaceDir)) {
+    plugins.set(plugin.name, {
+      name: plugin.name,
+      dir: plugin.dir,
+      source: plugin.dir,
+      components: plugin.components,
+    })
   }
-
-  if (!plugins.size) {
-    const plugin = discoverPlugin(marketplaceDir)
-    if (plugin) plugins.set(plugin.name, plugin)
-  }
-
   return plugins
 }
 

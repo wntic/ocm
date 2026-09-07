@@ -1,29 +1,19 @@
-import { existsSync, mkdirSync, copyFileSync, rmSync } from "node:fs"
-import { join, dirname } from "node:path"
-import { fileURLToPath } from "node:url"
+import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { join } from "node:path"
+import { OCM_MARKETPLACES_DIR, marketplaceDir, marketplaceNameFromUrl } from "../paths"
 import {
-  OCM_MARKETPLACES_DIR,
-  OCM_LOADER_TARGET,
-  OPENCODE_GLOBAL_DIR,
-  marketplaceDir,
-  marketplaceNameFromUrl,
-} from "../paths"
-import { loadRegistry, saveRegistry, readGlobalConfig, writeGlobalConfig, refreshLinks, removeLinks, registerPlugins } from "../install"
-import { clone, pull } from "../git"
+  loadRegistry,
+  saveRegistry,
+  refreshLinks,
+  removeLinks,
+  registerPlugins,
+} from "../install"
+import { clone } from "../git"
+import { pullRepo } from "../../loader/ocm-core.js"
 import { discoverMarketplace } from "../discovery"
+import type { DiscoveredPlugin } from "../discovery"
 import type { MarketplaceEntry } from "../types"
 import { installLoader } from "../loader"
-function loaderSource(): string {
-  const here = dirname(fileURLToPath(import.meta.url))
-  const candidates = [
-    join(here, "..", "..", "loader", "ocm-loader.js"),
-    join(here, "ocm-loader.js"),
-  ]
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate
-  }
-  throw new Error("ocm-loader.js not found")
-}
 
 function isGitUrl(source: string): boolean {
   return /^https?:|^git@|^file:\/\//.test(source)
@@ -42,6 +32,10 @@ function parseSource(source: string): { url: string; name: string } {
 
 function basename(p: string): string {
   return p.replace(/\/+$/, "").split("/").pop() ?? p
+}
+
+function reportWarnings(warnings: string[]): void {
+  for (const warning of warnings) console.error(`  warning: ${warning}`)
 }
 
 export function add(source: string): void {
@@ -70,7 +64,8 @@ export function add(source: string): void {
     const plugins = [...discoverMarketplace(url).values()]
     const entry = registry.marketplaces[name]!
     registerPlugins(name, entry, plugins)
-    refreshLinks(name, plugins)
+    const links = refreshLinks(name, url)
+    reportWarnings(links.warnings)
     saveRegistry(registry)
     reportAdded(name, plugins)
     return
@@ -91,13 +86,14 @@ export function add(source: string): void {
   }
   registry.marketplaces[name] = entry
   registerPlugins(name, entry, plugins)
-  refreshLinks(name, plugins)
+  const links = refreshLinks(name, dir)
+  reportWarnings(links.warnings)
   installLoader()
   saveRegistry(registry)
   reportAdded(name, plugins)
 }
 
-function reportAdded(name: string, plugins: import("../discovery").DiscoveredPlugin[]): void {
+function reportAdded(name: string, plugins: DiscoveredPlugin[]): void {
   console.log(`added marketplace "${name}"`)
   for (const plugin of plugins) {
     const parts: string[] = []
@@ -106,7 +102,7 @@ function reportAdded(name: string, plugins: import("../discovery").DiscoveredPlu
     if (plugin.components.skill) parts.push(`${plugin.components.skill.length} skills`)
     console.log(`  ${plugin.name} (${parts.join(", ")})`)
   }
-  console.log(`components are now globally available in all projects`)
+  console.log("commands and agents are available as /<plugin>:<name> in every project")
 }
 
 export function remove(name: string): void {
@@ -115,7 +111,7 @@ export function remove(name: string): void {
   if (!entry) {
     throw new Error(`marketplace "${name}" not found (ocm list)`)
   }
-  removeLinks(name)
+  removeLinks(name, entry.dir)
   if (entry.dir.startsWith(OCM_MARKETPLACES_DIR)) {
     rmSync(entry.dir, { recursive: true, force: true })
   }
@@ -124,22 +120,27 @@ export function remove(name: string): void {
   console.log(`removed marketplace "${name}"`)
 }
 
-export function update(name?: string): void {
+export async function update(name?: string): Promise<void> {
   const registry = loadRegistry()
   const names = name ? [name] : Object.keys(registry.marketplaces)
   if (!names.length) {
     console.log("no marketplaces added yet (ocm add <url|path>)")
     return
   }
+  let reinstalledLoader = false
   for (const marketplaceName of names) {
     const entry = registry.marketplaces[marketplaceName]
     if (!entry) {
       console.error(`marketplace "${marketplaceName}" not found, skipping`)
       continue
     }
-    if (isGitUrl(entry.url)) {
+    if (!existsSync(entry.dir)) {
+      console.error(`marketplace "${marketplaceName}" directory missing (${entry.dir}), skipping`)
+      continue
+    }
+    if (entry.dir.startsWith(OCM_MARKETPLACES_DIR)) {
       console.log(`updating ${marketplaceName}...`)
-      const result = pull(entry.dir)
+      const result = await pullRepo(entry.dir)
       if (!result.ok) {
         console.error(`  failed: ${result.output}`)
         continue
@@ -150,7 +151,12 @@ export function update(name?: string): void {
     }
     const plugins = [...discoverMarketplace(entry.dir).values()]
     registerPlugins(marketplaceName, entry, plugins)
-    refreshLinks(marketplaceName, plugins)
+    const links = refreshLinks(marketplaceName, entry.dir)
+    reportWarnings(links.warnings)
+    if (!reinstalledLoader) {
+      installLoader()
+      reinstalledLoader = true
+    }
   }
   saveRegistry(registry)
 }
@@ -202,4 +208,3 @@ export function scan(source: string): void {
     if (dir !== url) rmSync(dir, { recursive: true, force: true })
   }
 }
-

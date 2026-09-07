@@ -1,29 +1,37 @@
-import { existsSync, mkdirSync, copyFileSync, rmSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { OCM_LOADER_TARGET, OPENCODE_GLOBAL_DIR } from "./paths"
+import { OCM_LOADER_NAME, OPENCODE_GLOBAL_DIR } from "./paths"
 
-function loaderSource(): string {
+const LOADER_FILES = [OCM_LOADER_NAME, "ocm-core.js"]
+
+function loaderSourceDir(): string {
   const here = dirname(fileURLToPath(import.meta.url))
   const candidates = [
-    join(here, "..", "..", "loader", "ocm-loader.js"),
-    join(here, "..", "loader", "ocm-loader.js"),
-    join(here, "ocm-loader.js"),
+    join(here, "..", "..", "loader"),
+    join(here, "..", "loader"),
+    join(here, "loader"),
+    here,
   ]
   for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate
+    if (LOADER_FILES.every((file) => existsSync(join(candidate, file)))) return candidate
   }
-  throw new Error("ocm-loader.js not found")
+  throw new Error(`loader files not found (${LOADER_FILES.join(", ")})`)
 }
 
 export function installLoader(): void {
-  const source = loaderSource()
-  mkdirSync(join(OPENCODE_GLOBAL_DIR, "plugins"), { recursive: true })
-  copyFileSync(source, OCM_LOADER_TARGET)
-  console.log(`installed auto-sync loader (${OCM_LOADER_TARGET})`)
+  const source = loaderSourceDir()
+  const targetDir = join(OPENCODE_GLOBAL_DIR, "plugins")
+  mkdirSync(targetDir, { recursive: true })
+  for (const file of LOADER_FILES) {
+    copyFileSync(join(source, file), join(targetDir, file))
+  }
+  console.log(`installed auto-sync loader (${join(targetDir, OCM_LOADER_NAME)})`)
 }
 
 export function uninstallLoader(): void {
-  rmSync(OCM_LOADER_TARGET, { force: true })
+  for (const file of LOADER_FILES) {
+    rmSync(join(OPENCODE_GLOBAL_DIR, "plugins", file), { force: true })
+  }
   console.log("removed auto-sync loader")
 }

@@ -14,7 +14,6 @@ export const OCM_REGISTRY_DIR = join(OPENCODE_GLOBAL_DIR, "plugins")
 export const OCM_REGISTRY_FILE = join(OCM_REGISTRY_DIR, "ocm-registry.json")
 
 export const OCM_LOADER_NAME = "ocm-loader.js"
-export const OCM_LOADER_TARGET = join(OPENCODE_GLOBAL_DIR, "plugins", OCM_LOADER_NAME)
 
 export function marketplaceDir(name: string): string {
   return join(OCM_MARKETPLACES_DIR, name)

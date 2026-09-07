@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import {
   OCM_LINKS_DIR,
@@ -8,6 +8,8 @@ import {
   OPENCODE_GLOBAL_DIR,
 } from "./paths"
 import { emptyRegistry, normalizeRegistry } from "./registry"
+import { refreshLinks as coreRefreshLinks, removeLinksFor } from "../loader/ocm-core.js"
+import type { CoreRefreshResult } from "../loader/ocm-core.js"
 import type { DiscoveredPlugin, MarketplaceEntry, Registry } from "./types"
 
 export function loadRegistry(): Registry {
@@ -61,54 +63,22 @@ export function removeSkillsPath(path: string): void {
   writeGlobalConfig(config)
 }
 
-export function linksDirFor(marketplaceName: string, type: "agents" | "commands" | "skills"): string {
-  return join(OCM_LINKS_DIR, marketplaceName, type)
+export function skillsLinksDir(marketplaceName: string): string {
+  return join(OCM_LINKS_DIR, marketplaceName, "skills")
 }
 
-export function refreshLinks(marketplaceName: string, plugins: DiscoveredPlugin[]): {
-  agents: number
-  commands: number
-  skills: number
-} {
-  const counts = { agents: 0, commands: 0, skills: 0 }
-  rmSync(join(OCM_LINKS_DIR, marketplaceName), { recursive: true, force: true })
-
-  for (const type of ["agents", "commands", "skills"] as const) {
-    const dir = linksDirFor(marketplaceName, type)
-    mkdirSync(dir, { recursive: true })
-  }
-
-  for (const plugin of plugins) {
-    for (const type of ["agents", "commands", "skills"] as const) {
-      const source = join(plugin.dir, type)
-      if (!existsSync(source)) continue
-      symlinkSync(source, join(linksDirFor(marketplaceName, type), plugin.name))
-      counts[type] += 1
-    }
-  }
-
-  mkdirSync(join(OPENCODE_GLOBAL_DIR, "agents"), { recursive: true })
-  mkdirSync(join(OPENCODE_GLOBAL_DIR, "commands"), { recursive: true })
-  const agentsContainer = join(OPENCODE_GLOBAL_DIR, "agents", `ocm--${marketplaceName}`)
-  const commandsContainer = join(OPENCODE_GLOBAL_DIR, "commands", `ocm--${marketplaceName}`)
-  rmSync(agentsContainer, { recursive: true, force: true })
-  rmSync(commandsContainer, { recursive: true, force: true })
-  if (counts.agents > 0) symlinkSync(linksDirFor(marketplaceName, "agents"), agentsContainer)
-  if (counts.commands > 0) symlinkSync(linksDirFor(marketplaceName, "commands"), commandsContainer)
-
-  addSkillsPath(linksDirFor(marketplaceName, "skills"))
-
-  return counts
+export function refreshLinks(marketplaceName: string, marketplaceDir: string): CoreRefreshResult {
+  const result = coreRefreshLinks(marketplaceName, marketplaceDir)
+  if (result.counts.skills > 0) addSkillsPath(skillsLinksDir(marketplaceName))
+  return result
 }
 
-export function removeLinks(marketplaceName: string): void {
-  rmSync(join(OPENCODE_GLOBAL_DIR, "agents", `ocm--${marketplaceName}`), { recursive: true, force: true })
-  rmSync(join(OPENCODE_GLOBAL_DIR, "commands", `ocm--${marketplaceName}`), { recursive: true, force: true })
-  rmSync(join(OCM_LINKS_DIR, marketplaceName), { recursive: true, force: true })
-  removeSkillsPath(linksDirFor(marketplaceName, "skills"))
+export function removeLinks(marketplaceName: string, marketplaceDir: string): void {
+  removeLinksFor(marketplaceName, marketplaceDir)
+  removeSkillsPath(skillsLinksDir(marketplaceName))
 }
 
-export function registerPlugins(marketplaceName: string, entry: MarketplaceEntry, plugins: DiscoveredPlugin[]): void {
+export function registerPlugins(_marketplaceName: string, entry: MarketplaceEntry, plugins: DiscoveredPlugin[]): void {
   entry.plugins = {}
   for (const plugin of plugins) {
     entry.plugins[plugin.name] = {

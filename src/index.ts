@@ -39,7 +39,7 @@ export async function main(argv: string[]): Promise<void> {
       remove(rest[0]!)
       break
     case "update":
-      update(rest[0])
+      await update(rest[0])
       break
     case "list":
       list()
