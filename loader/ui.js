@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import { MARKETPLACES_DIR, isGitRepo, pullRepo, readRegistry, refreshLinks, syncAll } from "./ocm-core.js"
+import { MARKETPLACES_DIR, isGitRepo, pullRepo, readRegistry, refreshLinks, syncAll } from "./core.js"
 
 function componentSummary(plugin) {
   const components = plugin?.components ?? {}

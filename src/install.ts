@@ -1,15 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import {
+  OCM_DIR,
   OCM_LINKS_DIR,
-  OCM_REGISTRY_DIR,
   OCM_REGISTRY_FILE,
   OPENCODE_GLOBAL_CONFIG,
   OPENCODE_GLOBAL_DIR,
 } from "./paths"
 import { emptyRegistry, normalizeRegistry } from "./registry"
-import { refreshLinks as coreRefreshLinks, removeLinksFor } from "../loader/ocm-core.js"
-import type { CoreRefreshResult } from "../loader/ocm-core.js"
+import { refreshLinks as coreRefreshLinks, removeLinksFor } from "../loader/core.js"
+import type { CoreRefreshResult } from "../loader/core.js"
 import type { DiscoveredPlugin, MarketplaceEntry, Registry } from "./types"
 
 export function loadRegistry(): Registry {
@@ -22,7 +22,7 @@ export function loadRegistry(): Registry {
 }
 
 export function saveRegistry(registry: Registry): void {
-  mkdirSync(OCM_REGISTRY_DIR, { recursive: true })
+  mkdirSync(OCM_DIR, { recursive: true })
   writeFileSync(OCM_REGISTRY_FILE, `${JSON.stringify(registry, null, 2)}\n`)
 }
 

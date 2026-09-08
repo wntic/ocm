@@ -1,4 +1,4 @@
-import { installLoader, uninstallLoader } from "./loader"
+import { installLoader, migrateLegacyLayout, uninstallLoader } from "./loader"
 import { add, remove, update, list, scan } from "./commands/marketplace"
 
 const HELP = `ocm - file-based plugin marketplace for opencode
@@ -18,6 +18,7 @@ examples:
   ocm update`
 
 export async function main(argv: string[]): Promise<void> {
+  migrateLegacyLayout()
   const [command, ...rest] = argv
 
   switch (command) {

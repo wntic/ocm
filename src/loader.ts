@@ -1,11 +1,20 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { OCM_LOADER_NAME, OPENCODE_GLOBAL_DIR } from "./paths"
+import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OPENCODE_GLOBAL_DIR, OPENCODE_PLUGINS_DIR } from "./paths"
 
-const LOADER_FILES = [OCM_LOADER_NAME, "ocm-core.js", "ocm-ui.js"]
 const TUI_CONFIG_FILE = join(OPENCODE_GLOBAL_DIR, "tui.json")
-const TUI_PLUGIN_ENTRY = "./plugins/ocm-ui.js"
+const TUI_PLUGIN_ENTRY = "./ocm/ui.js"
+const LEGACY_TUI_PLUGIN_ENTRY = "./plugins/ocm-ui.js"
+const LEGACY_PLUGIN_FILES = ["ocm-core.js", "ocm-ui.js", "ocm-core.d.ts"]
+
+const LOADER_FILES = [
+  { source: OCM_LOADER_NAME, target: join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME) },
+  { source: "core.js", target: join(OCM_DIR, "core.js") },
+  { source: "core.d.ts", target: join(OCM_DIR, "core.d.ts") },
+  { source: "ui.js", target: join(OCM_DIR, "ui.js") },
+]
 
 function loaderSourceDir(): string {
   const here = dirname(fileURLToPath(import.meta.url))
@@ -16,34 +25,54 @@ function loaderSourceDir(): string {
     here,
   ]
   for (const candidate of candidates) {
-    if (LOADER_FILES.every((file) => existsSync(join(candidate, file)))) return candidate
+    if (LOADER_FILES.every((file) => existsSync(join(candidate, file.source)))) return candidate
   }
-  throw new Error(`loader files not found (${LOADER_FILES.join(", ")})`)
+  throw new Error(`loader files not found (${LOADER_FILES.map((file) => file.source).join(", ")})`)
+}
+
+function packageVersion(): string {
+  const here = dirname(fileURLToPath(import.meta.url))
+  const parsed = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as { version?: unknown }
+  return typeof parsed.version === "string" ? parsed.version : "0"
+}
+
+function stamped(source: string): string {
+  const content = readFileSync(source, "utf8")
+  const hash = createHash("sha256").update(content).digest("hex").slice(0, 8)
+  return `${content.trimEnd()}\n// ocm-version: ${packageVersion()} ${hash}\n`
 }
 
 function readTuiConfig(): Record<string, unknown> | undefined {
   if (!existsSync(TUI_CONFIG_FILE)) return {}
   try {
-    const parsed = JSON.parse(readFileSync(TUI_CONFIG_FILE, "utf8"))
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed
-  } catch {
-    return undefined
-  }
-  return {}
+    const parsed = JSON.parse(readFileSync(TUI_CONFIG_FILE, "utf8")) as unknown
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+  } catch {}
+  return undefined
 }
 
 function writeTuiConfig(config: Record<string, unknown>): void {
-  writeFileSync(TUI_CONFIG_FILE, `${JSON.stringify(config, null, 2)}\n`)
+  const tmp = `${TUI_CONFIG_FILE}.ocm-tmp`
+  writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`)
+  renameSync(tmp, TUI_CONFIG_FILE)
+}
+
+function warnTuiManual(reason: string): void {
+  console.error(`warning: ${TUI_CONFIG_FILE} ${reason}, left untouched`)
+  console.error(`warning: add "${TUI_PLUGIN_ENTRY}" to its "plugin" array manually for the /ocm TUI command`)
 }
 
 function ensureTuiPluginEntry(): void {
   const config = readTuiConfig()
   if (!config) {
-    console.error(`warning: ${TUI_CONFIG_FILE} is not valid JSON, left untouched`)
-    console.error(`warning: add "${TUI_PLUGIN_ENTRY}" to its "plugin" array manually for the /ocm TUI command`)
+    warnTuiManual("is not valid JSON or not a JSON object")
     return
   }
   const plugin = config.plugin
+  if (plugin !== undefined && !Array.isArray(plugin)) {
+    warnTuiManual('has a "plugin" key that is not an array')
+    return
+  }
   const entries = Array.isArray(plugin) ? plugin : []
   if (entries.includes(TUI_PLUGIN_ENTRY)) return
   config.plugin = [...entries, TUI_PLUGIN_ENTRY]
@@ -61,22 +90,65 @@ function removeTuiPluginEntry(): void {
   writeTuiConfig(config)
 }
 
-export function installLoader(): void {
-  const source = loaderSourceDir()
-  const targetDir = join(OPENCODE_GLOBAL_DIR, "plugins")
-  mkdirSync(targetDir, { recursive: true })
+function rewriteLegacyTuiPluginEntry(): void {
+  const config = readTuiConfig()
+  if (!config) {
+    warnTuiManual("is not valid JSON or not a JSON object")
+    return
+  }
+  const plugin = config.plugin
+  if (!Array.isArray(plugin) || !plugin.includes(LEGACY_TUI_PLUGIN_ENTRY)) return
+  config.plugin = plugin.map((entry) => (entry === LEGACY_TUI_PLUGIN_ENTRY ? TUI_PLUGIN_ENTRY : entry))
+  writeTuiConfig(config)
+}
+
+function installFiles(sourceDir: string): void {
+  if (existsSync(OCM_DIR) && !statSync(OCM_DIR).isDirectory()) {
+    throw new Error(`${OCM_DIR} exists but is not a directory; remove it or move it aside, then re-run ocm init`)
+  }
+  mkdirSync(OPENCODE_PLUGINS_DIR, { recursive: true })
+  mkdirSync(OCM_DIR, { recursive: true })
   for (const file of LOADER_FILES) {
-    copyFileSync(join(source, file), join(targetDir, file))
+    const content = stamped(join(sourceDir, file.source))
+    let current: string | undefined
+    try {
+      current = readFileSync(file.target, "utf8")
+    } catch {
+      current = undefined
+    }
+    if (current === content) continue
+    writeFileSync(file.target, content)
   }
   ensureTuiPluginEntry()
-  console.log(`installed auto-sync loader (${join(targetDir, OCM_LOADER_NAME)})`)
+}
+
+export function migrateLegacyLayout(): void {
+  const triggered = ["ocm-core.js", "ocm-ui.js"].some((name) => existsSync(join(OPENCODE_PLUGINS_DIR, name)))
+  if (!triggered) return
+  mkdirSync(OCM_DIR, { recursive: true })
+  if (existsSync(OCM_LEGACY_REGISTRY_FILE)) {
+    renameSync(OCM_LEGACY_REGISTRY_FILE, join(OCM_DIR, "registry.json"))
+  }
+  for (const name of LEGACY_PLUGIN_FILES) {
+    rmSync(join(OPENCODE_PLUGINS_DIR, name), { force: true })
+  }
+  rewriteLegacyTuiPluginEntry()
+  installFiles(loaderSourceDir())
+  console.log(`migrated ocm registry to ${join(OCM_DIR, "registry.json")}`)
+}
+
+export function installLoader(): void {
+  migrateLegacyLayout()
+  installFiles(loaderSourceDir())
+  console.log(`installed auto-sync loader (${join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME)})`)
   console.log(`installed TUI plugin (/ocm in the opencode TUI, restart opencode to activate)`)
 }
 
 export function uninstallLoader(): void {
-  for (const file of LOADER_FILES) {
-    rmSync(join(OPENCODE_GLOBAL_DIR, "plugins", file), { force: true })
+  for (const name of [OCM_LOADER_NAME, ...LEGACY_PLUGIN_FILES]) {
+    rmSync(join(OPENCODE_PLUGINS_DIR, name), { force: true })
   }
+  rmSync(OCM_DIR, { recursive: true, force: true })
   removeTuiPluginEntry()
   console.log("removed auto-sync loader")
 }

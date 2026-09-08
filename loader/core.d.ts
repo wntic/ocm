@@ -35,10 +35,12 @@ export declare const OPENCODE_DIR: string
 export declare const OPENCODE_COMMANDS_DIR: string
 export declare const OPENCODE_AGENTS_DIR: string
 export declare const OPENCODE_PLUGINS_DIR: string
+export declare const OCM_DIR: string
 export declare const CACHE_DIR: string
 export declare const MARKETPLACES_DIR: string
 export declare const LINKS_DIR: string
 export declare const REGISTRY_FILE: string
+export declare const LEGACY_REGISTRY_FILE: string
 export declare const STAMP_FILE: string
 export declare const DEFAULT_SYNC_INTERVAL_MS: number
 
@@ -51,4 +53,5 @@ export declare function removeLinksFor(name: string, marketplaceDir: string): vo
 export declare function syncAll(options?: {
   minIntervalMs?: number
   force?: boolean
+  reason?: string
 }): Promise<CoreSyncResult>

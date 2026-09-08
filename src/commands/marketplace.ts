@@ -9,7 +9,7 @@ import {
   registerPlugins,
 } from "../install"
 import { clone } from "../git"
-import { pullRepo } from "../../loader/ocm-core.js"
+import { pullRepo } from "../../loader/core.js"
 import { discoverMarketplace } from "../discovery"
 import type { DiscoveredPlugin } from "../discovery"
 import type { MarketplaceEntry } from "../types"

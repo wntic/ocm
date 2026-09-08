@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { discoverPlugins } from "../loader/ocm-core.js"
+import { discoverPlugins } from "../loader/core.js"
 
 export interface DiscoveredPlugin {
   name: string
