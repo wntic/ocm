@@ -22,7 +22,8 @@ loops the implementer on a failure up to three times. Use `/ocm:status` to see
 where you are and `/ocm:probe` to ask the real opencode binary what it sees.
 
 If you want to drive a step by hand, `/ocm:tests NN`, `/ocm:implement NN` and
-`/ocm:check NN` each run one stage on their own.
+`/ocm:check NN` each run one stage on their own. `/ocm:commit` verifies the
+gate, then stages and commits — never pushes, amends or resets.
 
 Tests are written before the implementation, by a different agent, and the
 implementer is not permitted to edit `test/`. That separation is the point: a
@@ -82,6 +83,9 @@ Four project skills carry the knowledge that is not in the code:
 | `ocm-architecture` | deciding which file a change belongs in |
 | `ocm-invariants` | before calling any file-writing change done |
 | `ocm-test-harness` | writing anything under `test/` |
+
+Commit messages: imperative subject, prose body explaining *why*, no trailers
+of any kind. `git log` is the reference.
 
 Read the relevant one. Do not reconstruct these facts from memory — several of
 them contradict opencode's own documentation, and the specs record which was
