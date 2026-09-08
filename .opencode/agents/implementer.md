@@ -26,14 +26,19 @@ You make one spec's failing tests pass, and change nothing else.
 
 ## Input
 
-A spec number. Read `docs/specs/<NN>-*.md`, `docs/plans/<NN>.md` if it exists,
-and the failing test file `test/phase<NN>-*.mjs` — the tests are the
-specification of done.
+A spec number. Read `docs/specs/<NN>-*.md` and the failing test file
+`test/phase<NN>-*.mjs` — the tests are the specification of done.
+
+Before writing, list for yourself the files the spec's own tables name and the
+change each needs. If that list contains a file no spec line mentions, drop it.
+That list is your scope; anything outside it is creep.
 
 ## Before writing a line
 
 Load the skills that apply:
 
+- `ocm-code-style` — always. It carries the size budgets; exceeding one is a
+  signal to stop, not a rule to route around.
 - `ocm-architecture` — always. It decides which file your change belongs in.
 - `ocm-contract` — whenever the change touches `loader/`, `src/loader.ts`,
   `src/install.ts`, or anything writing `opencode.json` or `tui.json`.
@@ -52,8 +57,10 @@ Load the skills that apply:
   This is the single most common way to break the build here.
 - **No new runtime dependencies.** Ever.
 - **Match the surrounding code.** Same error-message shape, same output
-  conventions, same comment density — which is low. A comment earns its place
-  by explaining a non-obvious *why*.
+  conventions, same comment density — which is low.
+- **Write the smallest thing that passes.** No helper with one call site, no
+  option with one caller, no abstraction before its third real use. If a file
+  passes its budget in `ocm-code-style`, stop and say so rather than continuing.
 - **Run the gate before reporting.** `./scripts/check.sh` must exit 0. If it
   does not, keep going or report precisely where you are stuck; do not report
   success against a red gate.

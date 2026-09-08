@@ -67,6 +67,13 @@ await assertNoPluginErrors()
 `assertNoPluginErrors` shells out to the real `opencode` binary and is skipped
 when it is not on PATH, so the suite still runs in CI.
 
+## The harness stays small
+
+Budget: **150 lines, 8 exports**. It exists to remove repetition from phase
+tests, not to be a testing framework. Add a helper when a test in front of you
+calls it — never for a phase you have not written yet. If it is over budget,
+the fix is deleting helpers with one call site, not splitting the file.
+
 ## Rules
 
 - **One behaviour per test.** A test named for two things will fail for a
@@ -82,9 +89,29 @@ when it is not on PATH, so the suite still runs in CI.
 ## Running
 
 ```
-bun test                          everything
-bun test test/phase03-*.mjs       one phase
-./scripts/check.sh                typecheck + tests + probe, the real gate
+./scripts/check.sh                the gate — typecheck, tests, probe
+bun test test/phase03-loader.mjs  one phase, explicit path
 ```
 
+**Never run bare `bun test` or `bun test test/` in this repo.** Directory
+traversal walks both `node_modules` trees and hangs indefinitely; an explicit
+file path runs in milliseconds. `scripts/check.sh` builds the file list for
+you, which is why it is the command to use.
+
+Note also that `bun test` only *discovers* files whose name contains `.test`,
+`_test_`, `.spec` or `_spec_`. The spec convention is `test/phaseNN-<name>.mjs`,
+which does not match, so `test/all.test.mjs` imports every phase file to
+bridge the two. Keep that file working.
+
 A phase ships only when `./scripts/check.sh` exits 0.
+
+## Nothing expensive at module scope
+
+Test files are *imported* before any test runs, so anything at module scope
+runs during discovery, outside any timeout, with no output. A probe helper
+called while registering tests — rather than inside a test body — spawns
+opencode during import and appears to the caller as an indefinite hang.
+
+Do the expensive thing inside the test callback, or memoise it behind a lazy
+getter the callback calls. A `test.skip` decision that needs a probe should
+register the test unconditionally and skip from inside it.

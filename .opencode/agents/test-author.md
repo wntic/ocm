@@ -21,8 +21,8 @@ tests stop being an independent check.
 
 ## Input
 
-A spec number. Read `docs/specs/<NN>-*.md`, its Tests section especially, and
-`docs/plans/<NN>.md` if it exists.
+A spec number. Read `docs/specs/<NN>-*.md`, its Tests section especially.
+That numbered list is the whole job: one test per item, no extras.
 
 ## Output
 
@@ -34,8 +34,12 @@ skill.
 
 ## Rules
 
-- **Load the `ocm-test-harness` skill before writing.** The fake-home
-  re-import pattern is not optional and is not guessable.
+- **Load `ocm-test-harness` and `ocm-code-style` before writing.** The
+  fake-home pattern is not guessable, and the size budgets are what keep the
+  harness a harness instead of a framework.
+- **The harness is shared and small.** Add a helper to it only when this
+  phase's tests actually call it. A helper written for a future phase is
+  deleted on sight.
 - **Tests must fail first, for the right reason.** After writing, run
   `bun test test/phase<NN>-*.mjs` and confirm each failure is "not
   implemented" — a missing export, a missing file — and not a typo in your

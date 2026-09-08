@@ -38,6 +38,12 @@ command you did not run.
    nothing meaningful counts as missing.
 6. Check the four invariants from the `ocm-invariants` skill are asserted
    somewhere in this phase's tests.
+7. **Review the diff against the spec**, section by section: contract
+   violations first (see `ocm-contract`), then invariant breaks, then spec
+   requirements silently skipped, then tests that pass vacuously, then scope
+   creep. Cite both the code and the spec line for every finding.
+8. **Check the size budgets** in `ocm-code-style`. A file over budget is a
+   finding, with the count.
 
 ## Verdict
 
