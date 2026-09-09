@@ -21,7 +21,8 @@ about opencode that turned out to be wrong (see
 | [07 — Trust for code-executing components](./07-trust.md) | not started | 02, 06 |
 | [08 — Update engine](./08-update.md) | not started | 02, 03, 06 |
 | [09 — Search & info](./09-search.md) | not started | 06 |
-| [10 — TUI integration (`/ocm`)](./10-tui.md) | not started | 01, 05, 06 |
+| [10a — Shared mutation core](./10a-core-mutations.md) | not started | 01, 05–09 |
+| [10b — TUI integration (`/ocm`)](./10b-tui-dialog.md) | not started | 10a |
 | [11 — Cross-tool authoring format](./11-cross-tool.md) | not started | 03, 06 |
 | [12 — Validate & doctor](./12-validate-doctor.md) | not started | 06, 07 |
 | [13 — Packaging & migration](./13-packaging.md) | not started | all |
@@ -72,7 +73,7 @@ Build in this order. The reasoning is dependency plus how much each unblocks.
 | 7 | [07 — Trust](./07-trust.md) | Must land in the same release as 06, never after: 06 is what makes unattended code execution possible. |
 | 8 | [08 — Update engine](./08-update.md) | Pinning, change reporting, renames, per-marketplace throttling. Wants 06's manifests for `renames` and versions. |
 | 9 | [09 — Search & info](./09-search.md) | Independently shippable, and 10 renders its output — cheaper to build once here than inline in the TUI. |
-| 10 | [10 — TUI](./10-tui.md) | The visible payoff, and correct only once 05–07 exist to be driven from a dialog. |
+| 10 | [10a — Shared mutation core](./10a-core-mutations.md) + [10b — TUI](./10b-tui-dialog.md) | The visible payoff, and correct only once 05–07 exist to be driven from a dialog. Split in two: the plain-JS core surface the dialog and CLI share, then the dialog over it. |
 | 11 | [11 — Cross-tool](./11-cross-tool.md) | Phase 1 is a directory convention, a `shell.env` hook and a lint — small, and nothing above depends on it. Deliberately after per-plugin install, as requested. |
 | 12 | [12 — Validate & doctor](./12-validate-doctor.md) | Cross-cutting; wants every rule it lints to exist first. |
 | 13 | [13 — Packaging & migration](./13-packaging.md) | The migration must cover every layout change from 01–03, so it is written last even though users hit it first. |

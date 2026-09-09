@@ -85,7 +85,7 @@ Decisions:
 The superseded spec claimed commands and agents refresh in-session. They do
 not. Every user-visible message about an install must say **"restart opencode
 to activate"** — for all five component types, without exception. The TUI path
-in [10](./10-tui.md) is the only place where a live-session effect is
+in [10b](./10b-tui-dialog.md) is the only place where a live-session effect is
 possible, and only via `api.client`.
 
 ## TUI plugin registration
@@ -156,7 +156,7 @@ Idempotent, and safe to run when the old files are absent.
 ## Consumed by
 
 Every other spec. [02](./02-registry.md) reads the registry from its new path;
-[08](./08-update.md) owns `syncAll`; [10](./10-tui.md) owns `ocm/ui.js`.
+[08](./08-update.md) owns `syncAll`; [10b](./10b-tui-dialog.md) owns `ocm/ui.js`.
 
 ## Tests (`test/phase01-loader.mjs`)
 

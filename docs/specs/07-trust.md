@@ -112,7 +112,7 @@ template) at `validate` time so authors are aware, and `ocm info` shows it.
 
 [03](./03-materializer.md) skips untrusted executable components;
 [05](./05-install.md) prompts at add; [08](./08-update.md) prompts on
-fingerprint change and records `trustPending`; [10](./10-tui.md) surfaces
+fingerprint change and records `trustPending`; [10b](./10b-tui-dialog.md) surfaces
 blocked components and offers the trust dialog.
 
 ## Tests (`test/phase07-trust.mjs`)

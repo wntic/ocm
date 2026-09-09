@@ -142,7 +142,7 @@ error: marketplace "wntic-adw" is unreachable
 
 ## Consumed by
 
-[10](./10-tui.md) calls the same functions from the dialog;
+[10b](./10b-tui-dialog.md) calls the same functions from the dialog;
 [08](./08-update.md) reuses the mode table for newly discovered plugins.
 
 ## Tests (`test/phase05-install.mjs`)

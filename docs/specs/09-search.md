@@ -82,7 +82,7 @@ quality-review @ team-tools
 
 ## Consumed by
 
-[10](./10-tui.md) renders the same data in the browse and details dialogs, via
+[10b](./10b-tui-dialog.md) renders the same data in the browse and details dialogs, via
 the `--json` shapes.
 
 ## Tests (`test/phase09-search.mjs`)
