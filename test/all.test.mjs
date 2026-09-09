@@ -3,3 +3,4 @@
 // the bridge that pulls the phase tests into discovery. Later phases append
 // their imports here.
 import "./phase01-loader.mjs"
+import "./phase02-registry.mjs"

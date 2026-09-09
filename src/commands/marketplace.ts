@@ -1,13 +1,8 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { OCM_MARKETPLACES_DIR, marketplaceDir, marketplaceNameFromUrl } from "../paths"
-import {
-  loadRegistry,
-  saveRegistry,
-  refreshLinks,
-  removeLinks,
-  registerPlugins,
-} from "../install"
+import { OCM_MARKETPLACES_DIR, OCM_REGISTRY_FILE, marketplaceDir, marketplaceNameFromUrl } from "../paths"
+import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
+import { refreshLinks, removeLinks, registerPlugins } from "../install"
 import { clone } from "../git"
 import { pullRepo } from "../../loader/core.js"
 import { discoverMarketplace } from "../discovery"
@@ -38,9 +33,13 @@ function reportWarnings(warnings: string[]): void {
   for (const warning of warnings) console.error(`  warning: ${warning}`)
 }
 
+function reportUpgrade(wasV1: boolean): void {
+  if (wasV1) console.log(`registry upgraded v1 → v2 (${OCM_REGISTRY_FILE})`)
+}
+
 export function add(source: string): void {
   const { url, name } = parseSource(source)
-  const registry = loadRegistry()
+  const { registry, wasV1 } = loadRegistryForWrite()
 
   if (registry.marketplaces[name]) {
     throw new Error(`marketplace "${name}" already added (use "ocm update ${name}")`)
@@ -56,17 +55,24 @@ export function add(source: string): void {
     console.log(`linking local marketplace ${url}`)
     registry.marketplaces[name] = {
       url,
-      path: url,
       dir: url,
+      local: true,
       addedAt: new Date().toISOString(),
+      mode: "auto",
+      ref: null,
+      revision: null,
+      syncIntervalMs: null,
+      trust: { code: "none" },
+      lastSync: null,
       plugins: {},
     }
     const plugins = [...discoverMarketplace(url).values()]
     const entry = registry.marketplaces[name]!
-    registerPlugins(name, entry, plugins)
+    registerPlugins(entry, plugins)
     const links = refreshLinks(name, url)
     reportWarnings(links.warnings)
     saveRegistry(registry)
+    reportUpgrade(wasV1)
     reportAdded(name, plugins)
     return
   }
@@ -79,17 +85,24 @@ export function add(source: string): void {
 
   const entry: MarketplaceEntry = {
     url,
-    path: url,
     dir,
+    local: false,
     addedAt: new Date().toISOString(),
+    mode: "auto",
+    ref: null,
+    revision: null,
+    syncIntervalMs: null,
+    trust: { code: "none" },
+    lastSync: null,
     plugins: {},
   }
   registry.marketplaces[name] = entry
-  registerPlugins(name, entry, plugins)
+  registerPlugins(entry, plugins)
   const links = refreshLinks(name, dir)
   reportWarnings(links.warnings)
   installLoader()
   saveRegistry(registry)
+  reportUpgrade(wasV1)
   reportAdded(name, plugins)
 }
 
@@ -106,22 +119,25 @@ function reportAdded(name: string, plugins: DiscoveredPlugin[]): void {
 }
 
 export function remove(name: string): void {
-  const registry = loadRegistry()
+  const { registry, wasV1 } = loadRegistryForWrite()
   const entry = registry.marketplaces[name]
   if (!entry) {
     throw new Error(`marketplace "${name}" not found (ocm list)`)
   }
   removeLinks(name, entry.dir)
-  if (entry.dir.startsWith(OCM_MARKETPLACES_DIR)) {
+  // `local === false` rather than `!local`: an entry missing the field must
+  // never be treated as ocm-managed and deleted
+  if (entry.local === false) {
     rmSync(entry.dir, { recursive: true, force: true })
   }
   delete registry.marketplaces[name]
   saveRegistry(registry)
+  reportUpgrade(wasV1)
   console.log(`removed marketplace "${name}"`)
 }
 
 export async function update(name?: string): Promise<void> {
-  const registry = loadRegistry()
+  const { registry, wasV1 } = loadRegistryForWrite()
   const names = name ? [name] : Object.keys(registry.marketplaces)
   if (!names.length) {
     console.log("no marketplaces added yet (ocm add <url|path>)")
@@ -138,7 +154,7 @@ export async function update(name?: string): Promise<void> {
       console.error(`marketplace "${marketplaceName}" directory missing (${entry.dir}), skipping`)
       continue
     }
-    if (entry.dir.startsWith(OCM_MARKETPLACES_DIR)) {
+    if (entry.local === false) {
       console.log(`updating ${marketplaceName}...`)
       const result = await pullRepo(entry.dir)
       if (!result.ok) {
@@ -150,7 +166,7 @@ export async function update(name?: string): Promise<void> {
       console.log(`${marketplaceName} is local (${entry.url}), refreshing links`)
     }
     const plugins = [...discoverMarketplace(entry.dir).values()]
-    registerPlugins(marketplaceName, entry, plugins)
+    registerPlugins(entry, plugins)
     const links = refreshLinks(marketplaceName, entry.dir)
     reportWarnings(links.warnings)
     if (!reinstalledLoader) {
@@ -159,6 +175,7 @@ export async function update(name?: string): Promise<void> {
     }
   }
   saveRegistry(registry)
+  reportUpgrade(wasV1)
 }
 
 export function list(): void {

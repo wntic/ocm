@@ -1,30 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
-import {
-  OCM_DIR,
-  OCM_LINKS_DIR,
-  OCM_REGISTRY_FILE,
-  OPENCODE_GLOBAL_CONFIG,
-  OPENCODE_GLOBAL_DIR,
-} from "./paths"
-import { emptyRegistry, normalizeRegistry } from "./registry"
+import { join, relative } from "node:path"
+import { OCM_LINKS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_GLOBAL_DIR } from "./paths"
 import { refreshLinks as coreRefreshLinks, removeLinksFor } from "../loader/core.js"
 import type { CoreRefreshResult } from "../loader/core.js"
-import type { DiscoveredPlugin, MarketplaceEntry, Registry } from "./types"
-
-export function loadRegistry(): Registry {
-  if (!existsSync(OCM_REGISTRY_FILE)) return emptyRegistry()
-  try {
-    return normalizeRegistry(JSON.parse(readFileSync(OCM_REGISTRY_FILE, "utf8")))
-  } catch {
-    return emptyRegistry()
-  }
-}
-
-export function saveRegistry(registry: Registry): void {
-  mkdirSync(OCM_DIR, { recursive: true })
-  writeFileSync(OCM_REGISTRY_FILE, `${JSON.stringify(registry, null, 2)}\n`)
-}
+import type { DiscoveredPlugin, MarketplaceEntry, MarketplacePlugin } from "./types"
 
 export function readGlobalConfig(): Record<string, unknown> {
   if (!existsSync(OPENCODE_GLOBAL_CONFIG)) return {}
@@ -78,12 +57,18 @@ export function removeLinks(marketplaceName: string, marketplaceDir: string): vo
   removeSkillsPath(skillsLinksDir(marketplaceName))
 }
 
-export function registerPlugins(_marketplaceName: string, entry: MarketplaceEntry, plugins: DiscoveredPlugin[]): void {
-  entry.plugins = {}
+export function registerPlugins(entry: MarketplaceEntry, plugins: DiscoveredPlugin[]): void {
+  const updated: Record<string, MarketplacePlugin> = {}
   for (const plugin of plugins) {
-    entry.plugins[plugin.name] = {
-      source: plugin.source,
+    const existing = entry.plugins[plugin.name]
+    updated[plugin.name] = {
+      source: relative(entry.dir, plugin.dir),
       components: plugin.components,
+      enabled: existing?.enabled ?? true,
+      installedAt: existing?.installedAt ?? entry.addedAt,
+      version: existing?.version ?? null,
+      manifest: existing?.manifest ?? {},
     }
   }
+  entry.plugins = updated
 }

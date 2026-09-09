@@ -44,10 +44,16 @@ export declare const LEGACY_REGISTRY_FILE: string
 export declare const STAMP_FILE: string
 export declare const DEFAULT_SYNC_INTERVAL_MS: number
 
+export interface CoreRegistry {
+  version: number
+  marketplaces: Record<string, Record<string, unknown>>
+}
+
 export declare function discoverPlugins(marketplaceDir: string): CoreDiscoveredPlugin[]
 export declare function isGitRepo(dir: string): boolean
 export declare function pullRepo(dir: string): Promise<CorePullResult>
-export declare function readRegistry(): { version: number; marketplaces: Record<string, unknown> }
+export declare function readRegistry(): CoreRegistry
+export declare function normalizeRegistry(raw: unknown): CoreRegistry
 export declare function refreshLinks(name: string, marketplaceDir: string): CoreRefreshResult
 export declare function removeLinksFor(name: string, marketplaceDir: string): void
 export declare function syncAll(options?: {

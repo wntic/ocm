@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import { MARKETPLACES_DIR, isGitRepo, pullRepo, readRegistry, refreshLinks, syncAll } from "./core.js"
+import { isGitRepo, pullRepo, readRegistry, refreshLinks, syncAll } from "./core.js"
 
 function componentSummary(plugin) {
   const components = plugin?.components ?? {}
@@ -125,7 +125,7 @@ function openMarketplaces(api) {
     options: entries.map(([name, entry]) => ({
       title: name,
       value: name,
-      description: entry.dir?.startsWith(MARKETPLACES_DIR) ? entry.url : `${entry.url} (local)`,
+      description: entry.local ? `${entry.url} (local)` : entry.url,
     })),
     onSelect: (option) => {
       const name = option.value
@@ -154,7 +154,7 @@ async function updateMarketplace(api, name, back) {
   busy(api, `Updating ${name}...`)
   try {
     let changed = false
-    if (entry.dir.startsWith(MARKETPLACES_DIR) && isGitRepo(entry.dir)) {
+    if (entry.local === false && isGitRepo(entry.dir)) {
       const pull = await pullRepo(entry.dir)
       if (!pull.ok) throw new Error(pull.output)
       changed = pull.changed
