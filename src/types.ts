@@ -26,6 +26,9 @@ export interface MarketplaceEntry {
   addedAt: string
   mode: "auto" | "explicit"
   ref: string | null
+  // set when the source was a github tree url: discovery roots here while
+  // git operations run against the clone root
+  subdir?: string | null
   revision: string | null
   syncIntervalMs: number | null
   trust: { code: "none" | "granted" | "denied"; grantedAt?: string; fingerprint?: string }

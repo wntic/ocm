@@ -71,7 +71,10 @@ export async function syncAll(options = {}) {
       changed = pull.changed
       if (changed) result.updated.push(name)
     }
-    const links = materialize(name, entry.dir, { enabled: enabledPlugins(entry, entry.dir) })
+    // discovery roots at the subdir when the source was a tree url (spec 05);
+    // git operations above ran against the clone root
+    const root = entry.subdir ? join(entry.dir, entry.subdir) : entry.dir
+    const links = materialize(name, root, { enabled: enabledPlugins(entry, root) })
     if (links.warnings.length) result.warnings = [...(result.warnings ?? []), ...links.warnings.map((w) => `${name}: ${w}`)]
     if (changed || links.created > 0) result.changed = true
   }

@@ -5,7 +5,7 @@ import type { MarketplaceEntry, MarketplacePlugin, Registry } from "./types"
 // Canonical key order: a no-op save must be byte-identical, and unknown
 // fields ride after the known ones so they survive round-trips.
 const MARKETPLACE_KEYS = [
-  "url", "dir", "local", "addedAt", "mode", "ref", "revision",
+  "url", "dir", "local", "addedAt", "mode", "ref", "subdir", "revision",
   "syncIntervalMs", "trust", "lastSync", "plugins",
 ]
 const PLUGIN_KEYS = ["source", "components", "enabled", "collision", "installedAt", "version", "manifest"]

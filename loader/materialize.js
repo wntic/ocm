@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import { setSkillsPath } from "./config.js"
 import { discoverPlugins } from "./discovery.js"
 import { gcTargets, isRenderedFile, link, mirror } from "./links.js"
-import { LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR } from "./paths.js"
+import { LINKS_DIR, DISPLACED_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR } from "./paths.js"
 import { readRegistry } from "./registry.js"
 
 const PLUGIN_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
@@ -74,7 +74,15 @@ export function materialize(name, dir, options = {}) {
   const registry = readRegistry()
   const entry = (registry.marketplaces ?? {})[name]
   const revision = (entry && typeof entry.revision === "string" && entry.revision) || gitRevision(dir)
-  const ctx = { name, dir, managed: managedDirs(dir, registry), revision, warnings }
+  const ctx = {
+    name,
+    dir,
+    managed: managedDirs(dir, registry),
+    revision,
+    warnings,
+    force: options.force === true,
+    displacedDir: join(DISPLACED_DIR, new Date().toISOString().replace(/[:.]/g, "-")),
+  }
   const enabled = options.enabled ?? null
   const skillsDir = join(LINKS_DIR, name, "skills")
   const desiredCommands = new Set()

@@ -11,6 +11,7 @@ export const OCM_DIR = join(OPENCODE_DIR, "ocm")
 export const CACHE_DIR = join(HOME, ".cache", "ocm")
 export const MARKETPLACES_DIR = join(CACHE_DIR, "marketplaces")
 export const LINKS_DIR = join(CACHE_DIR, "links")
+export const DISPLACED_DIR = join(CACHE_DIR, "displaced")
 export const REGISTRY_FILE = join(OCM_DIR, "registry.json")
 // pre-01 layout; read as a fallback for one release
 export const LEGACY_REGISTRY_FILE = join(OPENCODE_PLUGINS_DIR, "ocm-registry.json")

@@ -5,6 +5,8 @@ export const HOME = homedir()
 
 export const OPENCODE_GLOBAL_DIR = join(HOME, ".config", "opencode")
 export const OPENCODE_GLOBAL_CONFIG = join(OPENCODE_GLOBAL_DIR, "opencode.json")
+export const OPENCODE_COMMANDS_DIR = join(OPENCODE_GLOBAL_DIR, "commands")
+export const OPENCODE_AGENTS_DIR = join(OPENCODE_GLOBAL_DIR, "agents")
 export const OPENCODE_PLUGINS_DIR = join(OPENCODE_GLOBAL_DIR, "plugins")
 
 export const OCM_CACHE_DIR = join(HOME, ".cache", "ocm")
@@ -21,21 +23,21 @@ export function marketplaceDir(name: string): string {
   return join(OCM_MARKETPLACES_DIR, name)
 }
 
+export function normaliseMarketplaceName(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "marketplace"
+  )
+}
+
 export function marketplaceNameFromUrl(url: string): string {
   const cleaned = url
     .replace(/\.git$/, "")
     .replace(/\/+$/, "")
     .replace(/^https?:\/\/[^/]+\//, "")
     .replace(/^git@[^:]+:/, "")
-  return (
-    cleaned
-      .split("/")
-      .filter(Boolean)
-      .slice(-2)
-      .join("--")
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || "marketplace"
-  )
+  return normaliseMarketplaceName(cleaned.split("/").filter(Boolean).slice(-2).join("--"))
 }

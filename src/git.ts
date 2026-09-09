@@ -13,8 +13,11 @@ export function git(args: string[], cwd?: string): { ok: boolean; stdout: string
   }
 }
 
-export function clone(url: string, dir: string): void {
-  const result = git(["clone", "--depth", "1", url, dir])
+export function clone(url: string, dir: string, ref?: string | null): void {
+  const args = ["clone", "--depth", "1"]
+  if (ref) args.push("--branch", ref)
+  args.push(url, dir)
+  const result = git(args)
   if (!result.ok) {
     throw new Error(`git clone failed: ${result.stderr || result.stdout}`)
   }

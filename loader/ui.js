@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs"
+import { join } from "node:path"
 import { enabledPlugins, isGitRepo, materialize, pullRepo, readRegistry, syncAll } from "./core.js"
 
 function componentSummary(plugin) {
@@ -159,7 +160,10 @@ async function updateMarketplace(api, name, back) {
       if (!pull.ok) throw new Error(pull.output)
       changed = pull.changed
     }
-    const links = materialize(name, entry.dir, { enabled: enabledPlugins(entry, entry.dir) })
+    // discovery roots at the subdir when the source was a tree url (spec 05);
+    // git operations above ran against the clone root
+    const root = entry.subdir ? join(entry.dir, entry.subdir) : entry.dir
+    const links = materialize(name, root, { enabled: enabledPlugins(entry, root) })
     if (links.warnings.length) toast(api, "warning", links.warnings[0])
     const restart = links.created > 0 ? "\nrestart opencode to activate" : ""
     toast(api, "success", `${name}: ${changed ? "updated to new revision" : "already up to date"}${restart}`)

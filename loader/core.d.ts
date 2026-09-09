@@ -60,7 +60,7 @@ export declare function normalizeRegistry(raw: unknown): CoreRegistry
 export declare function materialize(
   name: string,
   dir: string,
-  options?: { enabled?: Set<string> | null },
+  options?: { enabled?: Set<string> | null; force?: boolean },
 ): CoreMaterializeReport
 export declare function enabledPlugins(entry: unknown, dir: string): Set<string> | null
 export declare function setSkillsPath(skillsDir: string, present: boolean): string | null

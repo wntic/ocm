@@ -5,11 +5,12 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs"
-import { join, relative } from "node:path"
+import { dirname, join, relative } from "node:path"
 import { containsSkillMd } from "./discovery.js"
 
 const RENDERED_MARKER = "ocm: rendered from "
@@ -27,6 +28,25 @@ function targetsInside(target, dirs) {
 function owningPlugin(target) {
   const match = target.match(/\/plugins\/([^/]+)\//)
   return match ? match[1] : null
+}
+
+// --force takes over an unowned path by moving it under the displaced dir,
+// never deleting: a mistake stays recoverable and the path is reported
+function takeOver(dest, ctx) {
+  if (!ctx.force) {
+    ctx.warnings.push(`skipped ${dest}: not managed by ocm`)
+    return false
+  }
+  const target = join(ctx.displacedDir, dest)
+  try {
+    mkdirSync(dirname(target), { recursive: true })
+    renameSync(dest, target)
+  } catch (err) {
+    ctx.warnings.push(`failed to displace ${dest}: ${err instanceof Error ? err.message : String(err)}`)
+    return false
+  }
+  ctx.warnings.push(`displaced ${dest} -> ${target}`)
+  return true
 }
 
 export function isRenderedFile(path) {
@@ -50,18 +70,17 @@ export function link(source, dest, ctx, plugin, component) {
     stat = lstatSync(dest)
   } catch {}
   if (stat && !stat.isSymbolicLink()) {
-    ctx.warnings.push(`skipped ${dest}: not managed by ocm`)
-    return "skipped"
+    if (!takeOver(dest, ctx)) return "skipped"
   }
   if (existing !== undefined && existsSync(dest)) {
     if (!targetsInside(existing, ctx.managed)) {
-      ctx.warnings.push(`skipped ${dest}: not managed by ocm`)
-      return "skipped"
-    }
-    const owner = owningPlugin(existing) ?? ctx.name
-    if (owner !== plugin || !insideDir(existing, ctx.dir)) {
-      ctx.warnings.push(`${plugin}:${component} conflicts with ${owner}:${component}`)
-      return "refused"
+      if (!takeOver(dest, ctx)) return "skipped"
+    } else {
+      const owner = owningPlugin(existing) ?? ctx.name
+      if (owner !== plugin || !insideDir(existing, ctx.dir)) {
+        ctx.warnings.push(`${plugin}:${component} conflicts with ${owner}:${component}`)
+        return "refused"
+      }
     }
   }
   if (stat) {
@@ -97,15 +116,13 @@ function render(source, dest, transform, ctx) {
   if (stat) {
     if (stat.isSymbolicLink()) {
       if (existsSync(dest)) {
-        ctx.warnings.push(`skipped ${dest}: not managed by ocm`)
-        return "skipped"
+        if (!takeOver(dest, ctx)) return "skipped"
       }
       try {
         rmSync(dest, { force: true })
       } catch {}
     } else if (!stat.isFile()) {
-      ctx.warnings.push(`skipped ${dest}: not managed by ocm`)
-      return "skipped"
+      if (!takeOver(dest, ctx)) return "skipped"
     } else {
       let current
       try {
@@ -113,8 +130,7 @@ function render(source, dest, transform, ctx) {
       } catch {}
       if (current === output) return "ok"
       if (current === undefined || !current.includes(RENDERED_MARKER)) {
-        ctx.warnings.push(`skipped ${dest}: not managed by ocm`)
-        return "skipped"
+        if (!takeOver(dest, ctx)) return "skipped"
       }
     }
   }
