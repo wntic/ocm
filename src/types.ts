@@ -6,9 +6,15 @@ export type PluginManifest = {
   description?: string
   category?: string
   tags?: string[]
+  keywords?: string[]
   version?: string
+  homepage?: string
+  license?: string
   defaultEnabled?: boolean
   mcpServers?: string
+  // fields where marketplace.json and plugin.json disagreed; the marketplace
+  // entry won by precedence, and info annotates them (spec 09)
+  conflicts?: string[]
 }
 
 export interface DiscoveredPlugin {

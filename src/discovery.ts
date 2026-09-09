@@ -37,8 +37,13 @@ function metadataFrom(raw: Record<string, unknown> | undefined): PluginManifest 
   if (typeof raw.description === "string") manifest.description = raw.description
   if (typeof raw.category === "string") manifest.category = raw.category
   if (typeof raw.version === "string") manifest.version = raw.version
+  if (typeof raw.homepage === "string") manifest.homepage = raw.homepage
+  if (typeof raw.license === "string") manifest.license = raw.license
   if (Array.isArray(raw.tags) && raw.tags.every((tag) => typeof tag === "string")) {
     manifest.tags = raw.tags as string[]
+  }
+  if (Array.isArray(raw.keywords) && raw.keywords.every((keyword) => typeof keyword === "string")) {
+    manifest.keywords = raw.keywords as string[]
   }
   return manifest
 }
@@ -89,10 +94,17 @@ export function discoverMarketplace(marketplaceDir: string): DiscoveredMarketpla
     const entry = entries.get(plugin.name)
     const disagreement = nameDisagreement(plugin.dir, plugin.name)
     if (disagreement) warnings.push(disagreement)
-    const manifest: PluginManifest = {
-      ...metadataFrom(readJsonRecord(join(plugin.dir, "plugin.json"))),
-      ...metadataFrom(entry),
-    }
+    const fromPlugin = metadataFrom(readJsonRecord(join(plugin.dir, "plugin.json")))
+    const fromEntry = metadataFrom(entry)
+    const manifest: PluginManifest = { ...fromPlugin, ...fromEntry }
+    // the disagreement is cached so info can annotate it from the registry
+    // alone, with the marketplace directory deleted (spec 09)
+    const pluginValues = fromPlugin as Record<string, unknown>
+    const entryValues = fromEntry as Record<string, unknown>
+    const conflicts = Object.keys(fromEntry).filter(
+      (key) => key in fromPlugin && JSON.stringify(pluginValues[key]) !== JSON.stringify(entryValues[key]),
+    )
+    if (conflicts.length) manifest.conflicts = conflicts.sort()
     const components: Partial<Record<ComponentType, string[]>> = { ...plugin.components }
     if (typeof entry?.defaultEnabled === "boolean") manifest.defaultEnabled = entry.defaultEnabled
     if (typeof entry?.mcpServers === "string") {

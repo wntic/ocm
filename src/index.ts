@@ -4,6 +4,8 @@ import { update } from "./commands/update"
 import { install, scan, setMode, uninstall } from "./commands/plugins"
 import { trust, untrust } from "./commands/trust"
 import { list } from "./commands/list"
+import { search } from "./commands/search"
+import { info } from "./commands/info"
 
 const HELP = `ocm - file-based plugin marketplace for opencode
 
@@ -17,6 +19,10 @@ usage:
   ocm pin <name> <ref>              follow a branch or tag
   ocm pin <name> --clear            back to the default branch
   ocm list [--all] [--json]         list marketplaces and plugins
+  ocm search <query> [--enabled-only] [--json]
+                                     search cached plugin metadata
+  ocm info <plugin>[@<marketplace>] [--json]
+                                     show a plugin's cached record
   ocm install <plugin>[@<mp>] [--force]
                                      enable a plugin and materialize its components
   ocm uninstall <plugin>[@<mp>]     disable a plugin and remove its links
@@ -104,6 +110,14 @@ export async function main(argv: string[]): Promise<void> {
       break
     case "list":
       list({ all: flags.has("all"), json: flags.has("json") })
+      break
+    case "search":
+      requireArg(positional[0], "missing search query")
+      search(positional[0]!, { enabledOnly: flags.has("enabled-only"), json: flags.has("json") })
+      break
+    case "info":
+      requireArg(positional[0], "missing plugin name")
+      info(positional[0]!, { json: flags.has("json") })
       break
     case "install":
     case "enable":
