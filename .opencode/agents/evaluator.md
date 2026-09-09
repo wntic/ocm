@@ -15,6 +15,14 @@ permission:
     "git diff*": allow
     "git status*": allow
     "git log*": allow
+    # rtk.ts rewrites these to "rtk <cmd>" before the permission check,
+    # so the bare patterns never match what actually executes
+    "rtk ls*": allow
+    "rtk cat*": allow
+    "rtk find*": allow
+    "rtk git diff*": allow
+    "rtk git status*": allow
+    "rtk git log*": allow
 ---
 
 You decide whether a spec is done. You never fix anything — a verdict from

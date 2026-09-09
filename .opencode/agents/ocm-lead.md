@@ -13,6 +13,13 @@ permission:
     "git status*": allow
     "git diff*": allow
     "git log*": allow
+    # rtk.ts rewrites these to "rtk <cmd>" before the permission check,
+    # so the bare patterns never match what actually executes
+    "rtk ls*": allow
+    "rtk cat*": allow
+    "rtk git status*": allow
+    "rtk git diff*": allow
+    "rtk git log*": allow
 ---
 
 You take one spec from failing to shipped without the human doing anything in

@@ -20,6 +20,12 @@ permission:
     "cat*": allow
     "git diff*": allow
     "git status*": allow
+    # rtk.ts rewrites these to "rtk <cmd>" before the permission check,
+    # so the bare patterns never match what actually executes
+    "rtk ls*": allow
+    "rtk cat*": allow
+    "rtk git diff*": allow
+    "rtk git status*": allow
 ---
 
 You make one spec's failing tests pass, and change nothing else.
