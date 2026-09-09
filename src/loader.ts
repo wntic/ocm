@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OPENCODE_GLOBAL_DIR, OPENCODE_PLUGINS_DIR } from "./paths"
@@ -9,12 +9,9 @@ const TUI_PLUGIN_ENTRY = "./ocm/ui.js"
 const LEGACY_TUI_PLUGIN_ENTRY = "./plugins/ocm-ui.js"
 const LEGACY_PLUGIN_FILES = ["ocm-core.js", "ocm-ui.js", "ocm-core.d.ts"]
 
-const LOADER_FILES = [
-  { source: OCM_LOADER_NAME, target: join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME) },
-  { source: "core.js", target: join(OCM_DIR, "core.js") },
-  { source: "core.d.ts", target: join(OCM_DIR, "core.d.ts") },
-  { source: "ui.js", target: join(OCM_DIR, "ui.js") },
-]
+// only a subset proves a candidate is the loader source dir; the full install
+// list is derived from the directory itself (spec 01, Installation set)
+const REQUIRED_LOADER_FILES = [OCM_LOADER_NAME, "core.js", "ui.js"]
 
 function loaderSourceDir(): string {
   const here = dirname(fileURLToPath(import.meta.url))
@@ -25,9 +22,22 @@ function loaderSourceDir(): string {
     here,
   ]
   for (const candidate of candidates) {
-    if (LOADER_FILES.every((file) => existsSync(join(candidate, file.source)))) return candidate
+    if (REQUIRED_LOADER_FILES.every((name) => existsSync(join(candidate, name)))) return candidate
   }
-  throw new Error(`loader files not found (${LOADER_FILES.map((file) => file.source).join(", ")})`)
+  throw new Error(`loader files not found (${REQUIRED_LOADER_FILES.join(", ")})`)
+}
+
+// the installed set is the loader directory by definition: ocm-loader.js to
+// plugins/, every other *.js / *.d.ts to ocm/; the filter keeps editor junk
+// (e.g. .DS_Store) out of the install
+function loaderFiles(sourceDir: string): { source: string; target: string }[] {
+  return readdirSync(sourceDir)
+    .filter((name) => /\.(js|d\.ts)$/.test(name))
+    .sort()
+    .map((name) => ({
+      source: name,
+      target: join(name === OCM_LOADER_NAME ? OPENCODE_PLUGINS_DIR : OCM_DIR, name),
+    }))
 }
 
 function packageVersion(): string {
@@ -108,7 +118,7 @@ function installFiles(sourceDir: string): void {
   }
   mkdirSync(OPENCODE_PLUGINS_DIR, { recursive: true })
   mkdirSync(OCM_DIR, { recursive: true })
-  for (const file of LOADER_FILES) {
+  for (const file of loaderFiles(sourceDir)) {
     const content = stamped(join(sourceDir, file.source))
     let current: string | undefined
     try {

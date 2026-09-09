@@ -3,11 +3,18 @@
 // where they apply (config safety, idempotence, ownership, no plugin errors).
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { expect, mock, test } from "bun:test"
 import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome } from "./harness.mjs"
 
-const INSTALLED = ["plugins/ocm-loader.js", "ocm/core.js", "ocm/core.d.ts", "ocm/ui.js"]
+// The installed set is the repository's loader/ directory, by definition
+// (spec 01, "Installation set"): ocm-loader.js -> plugins/, every other
+// *.js / *.d.ts -> ocm/. Derived, never enumerated, so a split of the core
+// needs no amendment here — but a partial install or a stray still fails.
+const LOADER_DIR = fileURLToPath(new URL("../loader", import.meta.url))
+const LOADER_NAMES = readdirSync(LOADER_DIR).filter((name) => /\.(js|d\.ts)$/.test(name))
+const INSTALLED = LOADER_NAMES.map((name) => (name === "ocm-loader.js" ? `plugins/${name}` : `ocm/${name}`))
+const OCM_FILES = LOADER_NAMES.filter((name) => name !== "ocm-loader.js")
 
 function cfg(home) {
   return join(home, ".config", "opencode")
@@ -32,13 +39,13 @@ function assertDirContains(dir, names) {
   }
 }
 
-test("1. installs exactly the four files; plugins/ holds only ocm-loader.js", async () => {
+test("1. installs exactly the repository's loader/ directory; plugins/ holds only ocm-loader.js", async () => {
   await withFakeHome(async (home, ocm) => {
     expectOk(await ocm.installLoader())
     const root = cfg(home)
     for (const file of INSTALLED) assertFileExists(join(root, file))
     assertDirContains(join(root, "plugins"), ["ocm-loader.js"])
-    assertDirContains(join(root, "ocm"), ["core.d.ts", "core.js", "ui.js"])
+    assertDirContains(join(root, "ocm"), OCM_FILES)
     // no stray files (e.g. leftover atomic-write temporaries) in the config dir
     assertDirContains(root, ["ocm", "plugins", "tui.json"])
   })
@@ -163,7 +170,7 @@ test("6. migration: the old layout ends in the new layout, registry preserved, t
       assertAbsent(join(plugins, file))
     }
     assertDirContains(plugins, ["ocm-loader.js", "user-plugin.js"])
-    assertDirContains(join(root, "ocm"), ["core.d.ts", "core.js", "registry.json", "ui.js"])
+    assertDirContains(join(root, "ocm"), [...OCM_FILES, "registry.json"])
     expect(readFileSync(join(root, "ocm", "registry.json"), "utf8")).toBe(registryBytes)
     expect(JSON.parse(readFileSync(join(root, "tui.json"), "utf8")).plugin).toEqual(["./ocm/ui.js"])
     expect(readFileSync(join(plugins, "user-plugin.js"), "utf8")).toBe("// user plugin\n")

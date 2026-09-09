@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import { isGitRepo, pullRepo, readRegistry, refreshLinks, syncAll } from "./core.js"
+import { enabledPlugins, isGitRepo, materialize, pullRepo, readRegistry, syncAll } from "./core.js"
 
 function componentSummary(plugin) {
   const components = plugin?.components ?? {}
@@ -159,9 +159,10 @@ async function updateMarketplace(api, name, back) {
       if (!pull.ok) throw new Error(pull.output)
       changed = pull.changed
     }
-    const links = refreshLinks(name, entry.dir)
+    const links = materialize(name, entry.dir, { enabled: enabledPlugins(entry, entry.dir) })
     if (links.warnings.length) toast(api, "warning", links.warnings[0])
-    toast(api, "success", `${name}: ${changed ? "updated to new revision" : "already up to date"}`)
+    const restart = links.created > 0 ? "\nrestart opencode to activate" : ""
+    toast(api, "success", `${name}: ${changed ? "updated to new revision" : "already up to date"}${restart}`)
   } catch (err) {
     toast(api, "error", `${name}: ${err instanceof Error ? err.message : String(err)}`)
   }

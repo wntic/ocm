@@ -69,10 +69,46 @@ export function opencodeProbe(configDir, home) {
       'export default { id: "probe-canary", setup: async () => ({}) }\n',
     )
     if (pluginErrorLines(canaryConfig, canaryHome).length === 0) return { available: true, unreliable: true }
-    return { available: true, pluginErrors: pluginErrorLines(configDir, home) }
+    let config, skills
+    return {
+      available: true,
+      pluginErrors: pluginErrorLines(configDir, home),
+      // resolved names are lazy getters: each spawns opencode, and a caller
+      // that only wants pluginErrors must not pay for spawns it never uses
+      get commands() {
+        config ??= debugJson(configDir, home, ["debug", "config"]) ?? {}
+        return Object.keys(config.command ?? {})
+      },
+      get agents() {
+        config ??= debugJson(configDir, home, ["debug", "config"]) ?? {}
+        return Object.keys(config.agent ?? {})
+      },
+      get skills() {
+        if (skills === undefined) {
+          const parsed = debugJson(configDir, home, ["debug", "skill"])
+          skills = Array.isArray(parsed) ? parsed.map((s) => s?.name).filter(Boolean) : []
+        }
+        return skills
+      },
+    }
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }
+}
+
+// `opencode debug config` prints the resolved config (command/agent keyed by
+// name); `opencode debug skill` prints a JSON array of resolved skills.
+function debugJson(configDir, home, args) {
+  const run = spawnSync("opencode", args, {
+    env: { ...process.env, HOME: home, OPENCODE_CONFIG_DIR: configDir },
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    timeout: 180_000,
+  })
+  if (run.status !== 0 || !run.stdout) {
+    throw new Error(`opencode ${args.join(" ")} exited ${run.status} against ${configDir}: ${run.stderr}`)
+  }
+  return JSON.parse(run.stdout)
 }
 
 function pluginErrorLines(configDir, home) {

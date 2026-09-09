@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { OCM_MARKETPLACES_DIR, OCM_REGISTRY_FILE, marketplaceDir, marketplaceNameFromUrl } from "../paths"
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
-import { refreshLinks, removeLinks, registerPlugins } from "../install"
+import { materializeLinks, removeLinks, registerPlugins } from "../install"
 import { clone } from "../git"
 import { pullRepo } from "../../loader/core.js"
 import { discoverMarketplace } from "../discovery"
@@ -31,6 +31,10 @@ function basename(p: string): string {
 
 function reportWarnings(warnings: string[]): void {
   for (const warning of warnings) console.error(`  warning: ${warning}`)
+}
+
+function reportRestart(created: number): void {
+  if (created > 0) console.log("restart opencode to activate")
 }
 
 function reportUpgrade(wasV1: boolean): void {
@@ -69,8 +73,9 @@ export function add(source: string): void {
     const plugins = [...discoverMarketplace(url).values()]
     const entry = registry.marketplaces[name]!
     registerPlugins(entry, plugins)
-    const links = refreshLinks(name, url)
+    const links = materializeLinks(name, url, entry)
     reportWarnings(links.warnings)
+    reportRestart(links.created)
     saveRegistry(registry)
     reportUpgrade(wasV1)
     reportAdded(name, plugins)
@@ -98,8 +103,9 @@ export function add(source: string): void {
   }
   registry.marketplaces[name] = entry
   registerPlugins(entry, plugins)
-  const links = refreshLinks(name, dir)
+  const links = materializeLinks(name, dir, entry)
   reportWarnings(links.warnings)
+  reportRestart(links.created)
   installLoader()
   saveRegistry(registry)
   reportUpgrade(wasV1)
@@ -167,8 +173,9 @@ export async function update(name?: string): Promise<void> {
     }
     const plugins = [...discoverMarketplace(entry.dir).values()]
     registerPlugins(entry, plugins)
-    const links = refreshLinks(marketplaceName, entry.dir)
+    const links = materializeLinks(marketplaceName, entry.dir, entry)
     reportWarnings(links.warnings)
+    reportRestart(links.created)
     if (!reinstalledLoader) {
       installLoader()
       reinstalledLoader = true

@@ -16,9 +16,11 @@ export interface CorePullResult {
   output: string
 }
 
-export interface CoreRefreshResult {
-  counts: { agents: number; commands: number; skills: number }
+export interface CoreMaterializeReport {
+  counts: { command: number; agent: number; skill: number; plugin: number; mcp: number }
   created: number
+  removed: number
+  skipped: number
   warnings: string[]
 }
 
@@ -32,6 +34,7 @@ export interface CoreSyncResult {
 
 export declare const HOME: string
 export declare const OPENCODE_DIR: string
+export declare const OPENCODE_CONFIG_FILE: string
 export declare const OPENCODE_COMMANDS_DIR: string
 export declare const OPENCODE_AGENTS_DIR: string
 export declare const OPENCODE_PLUGINS_DIR: string
@@ -54,7 +57,13 @@ export declare function isGitRepo(dir: string): boolean
 export declare function pullRepo(dir: string): Promise<CorePullResult>
 export declare function readRegistry(): CoreRegistry
 export declare function normalizeRegistry(raw: unknown): CoreRegistry
-export declare function refreshLinks(name: string, marketplaceDir: string): CoreRefreshResult
+export declare function materialize(
+  name: string,
+  dir: string,
+  options?: { enabled?: Set<string> | null },
+): CoreMaterializeReport
+export declare function enabledPlugins(entry: unknown, dir: string): Set<string> | null
+export declare function setSkillsPath(skillsDir: string, present: boolean): string | null
 export declare function removeLinksFor(name: string, marketplaceDir: string): void
 export declare function syncAll(options?: {
   minIntervalMs?: number

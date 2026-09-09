@@ -4,3 +4,4 @@
 // their imports here.
 import "./phase01-loader.mjs"
 import "./phase02-registry.mjs"
+import "./phase03-materializer.mjs"
