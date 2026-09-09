@@ -65,6 +65,22 @@ function readEntries(marketplaceDir: string): Map<string, Record<string, unknown
   return entries
 }
 
+// spec 08: renames come from each discovered plugin's plugin.json, with the
+// marketplace manifest winning on conflict
+export function readRenames(marketplaceDir: string, plugins: DiscoveredPlugin[]): Record<string, string | null> {
+  const renames: Record<string, string | null> = {}
+  for (const plugin of plugins) collectRenames(readJsonRecord(join(plugin.dir, "plugin.json")), renames)
+  collectRenames(readJsonRecord(join(marketplaceDir, "marketplace.json")), renames)
+  return renames
+}
+
+function collectRenames(raw: Record<string, unknown> | undefined, into: Record<string, string | null>): void {
+  if (!raw || !isRecord(raw.renames)) return
+  for (const [from, to] of Object.entries(raw.renames)) {
+    if (typeof to === "string" || to === null) into[from] = to
+  }
+}
+
 export function discoverMarketplace(marketplaceDir: string): DiscoveredMarketplace {
   const warnings: string[] = []
   const entries = readEntries(marketplaceDir)

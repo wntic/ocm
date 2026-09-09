@@ -15,6 +15,9 @@ export interface CoreDiscoveredPlugin {
 export interface CorePullResult {
   ok: boolean
   changed: boolean
+  before: string
+  after: string
+  dirty: boolean
   output: string
 }
 
@@ -66,13 +69,13 @@ export interface CoreRegistry {
 export declare function discoverPlugins(marketplaceDir: string): CoreDiscoveredPlugin[]
 export declare function dirClashes(pluginDir: string): string[]
 export declare function isGitRepo(dir: string): boolean
-export declare function pullRepo(dir: string): Promise<CorePullResult>
+export declare function pullRepo(dir: string, ref?: string | null): Promise<CorePullResult>
 export declare function readRegistry(): CoreRegistry
 export declare function normalizeRegistry(raw: unknown): CoreRegistry
 export declare function materialize(
   name: string,
   dir: string,
-  options?: { enabled?: Set<string> | null; force?: boolean },
+  options?: { enabled?: Set<string> | null; force?: boolean; plugin?: string },
 ): CoreMaterializeReport
 export declare function enabledPlugins(entry: unknown, dir: string): Set<string> | null
 export declare function setSkillsPath(skillsDir: string, present: boolean): string | null
@@ -80,7 +83,6 @@ export declare function removeLinksFor(name: string, marketplaceDir: string): vo
 export declare function executableComponents(dir: string, entry: unknown): CoreExecutableComponent[]
 export declare function trustFingerprint(components: CoreExecutableComponent[]): string
 export declare function syncAll(options?: {
-  minIntervalMs?: number
   force?: boolean
   reason?: string
 }): Promise<CoreSyncResult>

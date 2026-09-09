@@ -144,8 +144,9 @@ function render(source, dest, transform, ctx) {
 }
 
 // remove owned entries not in the desired set; a symlink is ours iff it
-// points into the current marketplace, anything else iff `extra` proves it
-export function gcTargets(dir, desired, ctx, extra) {
+// points into the current marketplace, anything else iff `extra` proves it.
+// `scope` restricts the pass to one plugin's entries (plugin-scoped update).
+export function gcTargets(dir, desired, ctx, extra, scope) {
   let removed = 0
   let entries
   try {
@@ -155,6 +156,7 @@ export function gcTargets(dir, desired, ctx, extra) {
   }
   for (const entry of entries) {
     if (desired.has(entry)) continue
+    if (scope !== undefined && !entry.startsWith(scope)) continue
     const path = join(dir, entry)
     let target
     try {

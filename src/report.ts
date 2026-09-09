@@ -9,5 +9,5 @@ export function reportRestart(changed: number): void {
 }
 
 export function reportUpgrade(wasV1: boolean): void {
-  if (wasV1) console.log(`registry upgraded v1 → v2 (${OCM_REGISTRY_FILE})`)
+  if (wasV1) console.error(`registry upgraded v1 → v2 (${OCM_REGISTRY_FILE})`)
 }

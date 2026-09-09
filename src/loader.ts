@@ -144,14 +144,15 @@ export function migrateLegacyLayout(): void {
   }
   rewriteLegacyTuiPluginEntry()
   installFiles(loaderSourceDir())
+  // spec 01 migration step 5 pins this line to stdout
   console.log(`migrated ocm registry to ${join(OCM_DIR, "registry.json")}`)
 }
 
 export function installLoader(): void {
   migrateLegacyLayout()
   installFiles(loaderSourceDir())
-  console.log(`installed auto-sync loader (${join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME)})`)
-  console.log(`installed TUI plugin (/ocm in the opencode TUI, restart opencode to activate)`)
+  console.error(`installed auto-sync loader (${join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME)})`)
+  console.error(`installed TUI plugin (/ocm in the opencode TUI, restart opencode to activate)`)
 }
 
 export function uninstallLoader(): void {

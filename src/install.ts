@@ -15,9 +15,14 @@ export function componentRoot(entry: MarketplaceEntry): string {
   return entry.subdir ? join(entry.dir, entry.subdir) : entry.dir
 }
 
-export function materializeLinks(name: string, entry: MarketplaceEntry, force = false): CoreMaterializeReport {
+export function materializeLinks(
+  name: string,
+  entry: MarketplaceEntry,
+  force = false,
+  plugin?: string,
+): CoreMaterializeReport {
   const dir = componentRoot(entry)
-  return coreMaterialize(name, dir, { enabled: enabledPlugins(entry, dir), force })
+  return coreMaterialize(name, dir, { enabled: enabledPlugins(entry, dir), force, plugin })
 }
 
 export function removeLinks(marketplaceName: string, marketplaceDir: string): void {

@@ -6,7 +6,7 @@ import { discoverPlugins, PLUGIN_NAME_RE } from "./discovery.js"
 import { gcTargets, isRenderedFile, link, mirror } from "./links.js"
 import { syncMcp } from "./mcp.js"
 import { LINKS_DIR, DISPLACED_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "./paths.js"
-import { readRegistry } from "./registry.js"
+import { readRegistry, isRecord } from "./registry.js"
 import { approvedComponents, componentKey } from "./trust.js"
 
 function managedDirs(dir, registry) {
@@ -85,6 +85,9 @@ export function materialize(name, dir, options = {}) {
     displacedDir: join(DISPLACED_DIR, new Date().toISOString().replace(/[:.]/g, "-")),
   }
   const enabled = options.enabled ?? null
+  // a plugin-scoped pass (ocm update <plugin>@<mp>) reconciles only the
+  // named plugin; every other plugin's links and mcp keys stay untouched
+  const only = options.plugin ?? null
   const skillsDir = join(LINKS_DIR, name, "skills")
   const desiredCommands = new Set()
   const desiredAgents = new Set()
@@ -96,7 +99,8 @@ export function materialize(name, dir, options = {}) {
   mkdirSync(OPENCODE_PLUGINS_DIR, { recursive: true })
 
   const discovered = discoverPlugins(dir)
-  for (const plugin of discovered) {
+  const active = only === null ? discovered : discovered.filter((plugin) => plugin.name === only)
+  for (const plugin of active) {
     if (enabled !== null && !enabled.has(plugin.name)) continue
     if (!PLUGIN_NAME_RE.test(plugin.name)) {
       warnings.push(`skipped plugin "${plugin.name}": name must match ${PLUGIN_NAME_RE}`)
@@ -145,7 +149,7 @@ export function materialize(name, dir, options = {}) {
       counts.plugin += 1
       const dest = `ocm--${plugin.name}--${file}`
       if (!approved.get(componentKey("plugin", plugin.name, file))) {
-        warnings.push(`blocked (untrusted): ${plugin.name}:${file} not linked`)
+        warnings.push(`blocked (untrusted): ${plugin.name}:${file} not linked — run \`ocm trust ${name}\` to approve`)
         continue
       }
       desiredPluginLinks.add(dest)
@@ -155,15 +159,22 @@ export function materialize(name, dir, options = {}) {
     }
   }
 
-  removed += gcTargets(OPENCODE_COMMANDS_DIR, desiredCommands, ctx)
-  removed += gcTargets(OPENCODE_AGENTS_DIR, desiredAgents, ctx)
-  removed += gcTargets(skillsDir, desiredMirrors, ctx, (path) => isRenderedFile(join(path, "SKILL.md")))
-  removed += gcTargets(OPENCODE_PLUGINS_DIR, desiredPluginLinks, ctx)
+  // plugin names cannot contain ":", "--" or uppercase (PLUGIN_NAME_RE),
+  // so a name prefix never spans another plugin's entries
+  const scope = only === null ? undefined : `${only}:`
+  removed += gcTargets(OPENCODE_COMMANDS_DIR, desiredCommands, ctx, undefined, scope)
+  removed += gcTargets(OPENCODE_AGENTS_DIR, desiredAgents, ctx, undefined, scope)
+  removed += gcTargets(skillsDir, desiredMirrors, ctx, (path) => isRenderedFile(join(path, "SKILL.md")), only === null ? undefined : `${only}--`)
+  removed += gcTargets(OPENCODE_PLUGINS_DIR, desiredPluginLinks, ctx, undefined, only === null ? undefined : `ocm--${only}--`)
 
-  counts.mcp += syncMcp(discovered, dir, entry, enabled, approved, warnings)
+  counts.mcp += syncMcp(active, dir, entry, enabled, approved, warnings)
 
-  const warning = setSkillsPath(skillsDir, counts.skill > 0)
-  if (warning) warnings.push(warning)
+  // a scoped pass never unregisters the skills path: other plugins'
+  // rendered skills may still live there
+  if (only === null || counts.skill > 0) {
+    const warning = setSkillsPath(skillsDir, counts.skill > 0)
+    if (warning) warnings.push(warning)
+  }
 
   return { counts, created, removed, skipped, warnings }
 }
@@ -178,8 +189,14 @@ export function enabledPlugins(entry, dir) {
     if (plugin && plugin.enabled !== false) enabled.add(name)
   }
   if (entry.mode !== "explicit") {
+    // a name some marketplace already provides is never auto-installed
+    // here: it would displace the incumbent's links (spec 04)
+    const taken = new Set()
+    for (const other of Object.values(readRegistry().marketplaces ?? {})) {
+      if (isRecord(other?.plugins)) for (const name of Object.keys(other.plugins)) taken.add(name)
+    }
     for (const plugin of discoverPlugins(dir)) {
-      if (!(plugin.name in registered)) enabled.add(plugin.name)
+      if (!(plugin.name in registered) && !taken.has(plugin.name)) enabled.add(plugin.name)
     }
   }
   return enabled

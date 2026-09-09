@@ -156,7 +156,7 @@ async function updateMarketplace(api, name, back) {
   try {
     let changed = false
     if (entry.local === false && isGitRepo(entry.dir)) {
-      const pull = await pullRepo(entry.dir)
+      const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null)
       if (!pull.ok) throw new Error(pull.output)
       changed = pull.changed
     }

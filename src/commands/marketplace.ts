@@ -1,17 +1,17 @@
-import { existsSync, rmSync } from "node:fs"
+import { rmSync } from "node:fs"
 import { join } from "node:path"
 import { normaliseMarketplaceName } from "../paths"
 import { loadRegistryForWrite, saveRegistry } from "../registry"
-import { componentRoot, incumbentMarketplace, materializeLinks, registerPlugins, removeLinks, removeMcpKeys } from "../install"
-import { pullRepo } from "../../loader/core.js"
+import { incumbentMarketplace, materializeLinks, registerPlugins, removeLinks, removeMcpKeys } from "../install"
 import { discoverMarketplace, discoveryError, readManifest } from "../discovery"
 import { manifestName, parseSource, placeClone } from "../source"
 import type { ParsedSource } from "../source"
 import type { DiscoveredPlugin } from "../discovery"
 import type { MarketplaceEntry, Registry } from "../types"
+import { git } from "../git"
 import { installLoader } from "../loader"
 import { reportRestart, reportUpgrade, reportWarnings } from "../report"
-import { decideTrust, decideUpdateTrust } from "./trust"
+import { decideTrust } from "./trust"
 
 // spec 04, axis 4: plugin names are globally unique across marketplaces;
 // adding a marketplace that ships a taken name fails with both sources named
@@ -145,48 +145,26 @@ export function remove(name: string): void {
   }
 }
 
-export async function update(name?: string, trust?: boolean): Promise<void> {
+// spec 08: pinning is branch- and tag-following, never commit-freezing.
+// The ref is validated by fetching it before it is saved, so a typo fails
+// immediately rather than breaking the next unattended sync.
+export function pin(name: string, ref?: string, clear = false): void {
   const { registry, wasV1 } = loadRegistryForWrite()
-  const names = name ? [name] : Object.keys(registry.marketplaces)
-  if (!names.length) {
-    console.log("no marketplaces added yet (ocm add <url|path>)")
+  const entry = registry.marketplaces[name]
+  if (!entry) throw new Error(`marketplace "${name}" not found (ocm list)`)
+  if (entry.local) throw new Error(`marketplace "${name}" is local; nothing to pin`)
+  if (clear) {
+    entry.ref = null
+    saveRegistry(registry)
+    reportUpgrade(wasV1)
+    console.log(`marketplace "${name}" unpinned (following the default branch)`)
     return
   }
-  let reinstalledLoader = false
-  for (const marketplaceName of names) {
-    const entry = registry.marketplaces[marketplaceName]
-    if (!entry) {
-      console.error(`marketplace "${marketplaceName}" not found, skipping`)
-      continue
-    }
-    if (!existsSync(entry.dir)) {
-      console.error(`marketplace "${marketplaceName}" directory missing (${entry.dir}), skipping`)
-      continue
-    }
-    if (entry.local === false) {
-      console.log(`updating ${marketplaceName}...`)
-      const result = await pullRepo(entry.dir)
-      if (!result.ok) {
-        console.error(`  failed: ${result.output}`)
-        continue
-      }
-      console.log(`  ${result.changed ? "updated to new revision" : "already up to date"}`)
-    } else {
-      console.log(`${marketplaceName} is local (${entry.url}), refreshing links`)
-    }
-    const root = componentRoot(entry)
-    const discovered = discoverMarketplace(root)
-    reportWarnings(discovered.warnings)
-    registerPlugins(registry, marketplaceName, [...discovered.plugins.values()])
-    await decideUpdateTrust(marketplaceName, entry, root, trust)
-    saveRegistry(registry)
-    const links = materializeLinks(marketplaceName, entry)
-    reportWarnings(links.warnings)
-    reportRestart(links.created)
-    if (!reinstalledLoader) {
-      installLoader()
-      reinstalledLoader = true
-    }
-  }
+  if (!ref) throw new Error(`missing ref (ocm pin <name> <ref>)`)
+  const fetch = git(["fetch", "--depth", "1", "origin", ref], entry.dir)
+  if (!fetch.ok) throw new Error(`cannot pin "${name}" to "${ref}": ${fetch.stderr || fetch.stdout}`)
+  entry.ref = ref
+  saveRegistry(registry)
   reportUpgrade(wasV1)
+  console.log(`marketplace "${name}" pinned to ${ref}`)
 }

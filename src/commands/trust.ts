@@ -23,22 +23,22 @@ export function deny(entry: MarketplaceEntry): void {
 // the block every trust decision prints before asking: what runs, where it
 // lives, and what it can do (spec 07)
 function printTrustBlock(name: string, entry: MarketplaceEntry, root: string, components: CoreExecutableComponent[]): void {
-  console.log(`marketplace "${name}" ships code that opencode will execute:`)
+  console.error(`marketplace "${name}" ships code that opencode will execute:`)
   for (const component of components) {
     if (component.kind === "plugin") {
-      console.log(`  plugin  ${component.plugin}/${component.name.replace(/\.[jt]s$/, "")} (${component.rel})`)
+      console.error(`  plugin  ${component.plugin}/${component.name.replace(/\.[jt]s$/, "")} (${component.rel})`)
     } else {
       const value = component.value as Record<string, unknown> | undefined
       const detail =
         value && typeof value.url === "string"
           ? `remote server: ${value.url}`
           : `local server: ${Array.isArray(value?.command) ? (value.command as string[]).join(" ") : ""}`
-      console.log(`  mcp     ${component.plugin}/${component.name} (${detail})`)
+      console.error(`  mcp     ${component.plugin}/${component.name} (${detail})`)
     }
   }
-  console.log("this code runs with your shell's permissions on every opencode start.")
-  console.log(`review it at ${entry.dir}`)
-  console.log("trust this marketplace to run code? [y/N/skip]")
+  console.error("this code runs with your shell's permissions on every opencode start.")
+  console.error(`review it at ${entry.dir}`)
+  console.error("trust this marketplace to run code? [y/N/skip]")
 }
 
 async function readAnswer(): Promise<string> {
@@ -87,10 +87,10 @@ function reportChanged(name: string, entry: MarketplaceEntry, components: CoreEx
   const added = components.filter((c) => !(c.rel in recorded)).map((c) => c.rel)
   const removed = Object.keys(recorded).filter((rel) => !current.has(rel))
   const modified = components.filter((c) => c.rel in recorded && recorded[c.rel] !== c.hash).map((c) => c.rel)
-  console.log(`marketplace "${name}" shipped code that changed since you trusted it:`)
-  for (const rel of added) console.log(`  added: ${rel}`)
-  for (const rel of removed) console.log(`  removed: ${rel}`)
-  for (const rel of modified) console.log(`  modified: ${rel}`)
+  console.error(`marketplace "${name}" shipped code that changed since you trusted it:`)
+  for (const rel of added) console.error(`  added: ${rel}`)
+  for (const rel of removed) console.error(`  removed: ${rel}`)
+  for (const rel of modified) console.error(`  modified: ${rel}`)
 }
 
 // the update-time decision: an unchanged or denied grant stands; a drifted

@@ -1,5 +1,6 @@
 import { installLoader, migrateLegacyLayout, uninstallLoader } from "./loader"
-import { add, remove, update } from "./commands/marketplace"
+import { add, pin, remove } from "./commands/marketplace"
+import { update } from "./commands/update"
 import { install, scan, setMode, uninstall } from "./commands/plugins"
 import { trust, untrust } from "./commands/trust"
 import { list } from "./commands/list"
@@ -11,8 +12,10 @@ usage:
   ocm add <url|path> [--ref <ref>] [--explicit] [--name <name>] [--trust|--no-trust]
                                      add a marketplace (github url or local dir)
   ocm remove <name>                 remove a marketplace and its links
-  ocm update [name] [--trust|--no-trust]
-                                     pull latest changes (all or one marketplace)
+  ocm update [name|plugin@mp] [--quiet] [--json] [--trust|--no-trust]
+                                     pull latest changes (all, one marketplace or one plugin's marketplace)
+  ocm pin <name> <ref>              follow a branch or tag
+  ocm pin <name> --clear            back to the default branch
   ocm list [--all] [--json]         list marketplaces and plugins
   ocm install <plugin>[@<mp>] [--force]
                                      enable a plugin and materialize its components
@@ -93,7 +96,11 @@ export async function main(argv: string[]): Promise<void> {
       remove(positional[0]!)
       break
     case "update":
-      await update(positional[0], trustFlag(flags))
+      await update(positional[0], { quiet: flags.has("quiet"), json: flags.has("json"), trust: trustFlag(flags) })
+      break
+    case "pin":
+      requireArg(positional[0], "missing marketplace name")
+      pin(positional[0]!, positional[1], flags.has("clear"))
       break
     case "list":
       list({ all: flags.has("all"), json: flags.has("json") })
