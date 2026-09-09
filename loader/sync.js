@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { enabledPlugins, materialize } from "./materialize.js"
 import { CACHE_DIR, DEFAULT_SYNC_INTERVAL_MS, STAMP_FILE } from "./paths.js"
-import { readRegistry } from "./registry.js"
+import { isRecord, markTrustPending, readRegistry } from "./registry.js"
+import { executableComponents, trustFingerprint } from "./trust.js"
 
 export function isGitRepo(dir) {
   return existsSync(join(dir, ".git"))
@@ -43,6 +44,24 @@ export async function pullRepo(dir) {
   return { ok: true, changed: before !== after, output: after }
 }
 
+// the loader never prompts: an unanswered or drifted grant is recorded as
+// pending and left for the CLI to surface (spec 07)
+function markDriftedTrust(name, entry, root) {
+  const trust = entry?.trust
+  if (!isRecord(trust) || trust.code === "denied") return
+  const components = executableComponents(root, entry)
+  if (components.length && (trust.code === "none" || trust.fingerprint !== trustFingerprint(components))) {
+    markTrustPending(name)
+  }
+}
+
+function writeStamp() {
+  try {
+    mkdirSync(CACHE_DIR, { recursive: true })
+    writeFileSync(STAMP_FILE, `${JSON.stringify({ lastSync: Date.now() })}\n`)
+  } catch {}
+}
+
 export async function syncAll(options = {}) {
   const minIntervalMs = options.minIntervalMs ?? DEFAULT_SYNC_INTERVAL_MS
   const result = { ran: false, changed: false, updated: [], failed: [] }
@@ -77,10 +96,8 @@ export async function syncAll(options = {}) {
     const links = materialize(name, root, { enabled: enabledPlugins(entry, root) })
     if (links.warnings.length) result.warnings = [...(result.warnings ?? []), ...links.warnings.map((w) => `${name}: ${w}`)]
     if (changed || links.created > 0) result.changed = true
+    markDriftedTrust(name, entry, root)
   }
-  try {
-    mkdirSync(CACHE_DIR, { recursive: true })
-    writeFileSync(STAMP_FILE, `${JSON.stringify({ lastSync: Date.now() })}\n`)
-  } catch {}
+  writeStamp()
   return result
 }

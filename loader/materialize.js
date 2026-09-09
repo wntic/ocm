@@ -7,6 +7,7 @@ import { gcTargets, isRenderedFile, link, mirror } from "./links.js"
 import { syncMcp } from "./mcp.js"
 import { LINKS_DIR, DISPLACED_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "./paths.js"
 import { readRegistry } from "./registry.js"
+import { approvedComponents, componentKey } from "./trust.js"
 
 function managedDirs(dir, registry) {
   const dirs = [dir]
@@ -72,7 +73,7 @@ export function materialize(name, dir, options = {}) {
 
   const registry = readRegistry()
   const entry = (registry.marketplaces ?? {})[name]
-  const trusted = entry?.trust?.code === "granted"
+  const approved = approvedComponents(dir, entry)
   const revision = (entry && typeof entry.revision === "string" && entry.revision) || gitRevision(dir)
   const ctx = {
     name,
@@ -143,7 +144,7 @@ export function materialize(name, dir, options = {}) {
       if (!source) continue
       counts.plugin += 1
       const dest = `ocm--${plugin.name}--${file}`
-      if (!trusted) {
+      if (!approved.get(componentKey("plugin", plugin.name, file))) {
         warnings.push(`blocked (untrusted): ${plugin.name}:${file} not linked`)
         continue
       }
@@ -159,7 +160,7 @@ export function materialize(name, dir, options = {}) {
   removed += gcTargets(skillsDir, desiredMirrors, ctx, (path) => isRenderedFile(join(path, "SKILL.md")))
   removed += gcTargets(OPENCODE_PLUGINS_DIR, desiredPluginLinks, ctx)
 
-  counts.mcp += syncMcp(discovered, dir, entry, enabled, trusted, warnings)
+  counts.mcp += syncMcp(discovered, dir, entry, enabled, approved, warnings)
 
   const warning = setSkillsPath(skillsDir, counts.skill > 0)
   if (warning) warnings.push(warning)

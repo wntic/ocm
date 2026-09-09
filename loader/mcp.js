@@ -1,15 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
-import { PLUGIN_NAME_RE } from "./discovery.js"
+import { mcpSourceFile, PLUGIN_NAME_RE } from "./discovery.js"
 import { OPENCODE_CONFIG_FILE, OPENCODE_DIR } from "./paths.js"
 import { isRecord } from "./registry.js"
-
-// the mcp source file: the marketplace entry's mcpServers path when it
-// declares one, else the plugin directory's own mcp.json (spec 06)
-function mcpSourceFile(dir, entry, plugin) {
-  const declared = entry?.plugins?.[plugin.name]?.manifest?.mcpServers
-  return typeof declared === "string" ? join(dir, declared) : join(plugin.dir, "mcp.json")
-}
+import { componentKey } from "./trust.js"
 
 // desired keys are ocm--<plugin>--<server>; every other key in the mcp object
 // is the user's and survives byte-identically outside the keys ocm owns
@@ -58,10 +51,10 @@ function applyMcpKeys(desired, prefixes) {
   return null
 }
 
-// one pass over every discovered plugin: enabled and trusted plugins
-// contribute desired keys, everything else only the prefix that scopes the
-// stale keys removed for it (spec 06)
-export function syncMcp(plugins, dir, entry, enabled, trusted, warnings) {
+// one pass over every discovered plugin: enabled plugins contribute desired
+// keys for their approved servers, everything else only the prefix that
+// scopes the stale keys removed for it (specs 06, 07)
+export function syncMcp(plugins, dir, entry, enabled, approved, warnings) {
   const desired = new Map()
   const prefixes = []
   let count = 0
@@ -71,10 +64,6 @@ export function syncMcp(plugins, dir, entry, enabled, trusted, warnings) {
     if (enabled !== null && !enabled.has(plugin.name)) continue
     const file = mcpSourceFile(dir, entry, plugin)
     if (!(plugin.components.mcp ?? []).length && !existsSync(file)) continue
-    if (!trusted) {
-      warnings.push(`blocked (untrusted): ${plugin.name}: mcp servers not installed`)
-      continue
-    }
     let servers = null
     try {
       const parsed = JSON.parse(readFileSync(file, "utf8"))
@@ -84,8 +73,12 @@ export function syncMcp(plugins, dir, entry, enabled, trusted, warnings) {
       warnings.push(`skipped ${file}: not a JSON object`)
       continue
     }
-    count += Object.keys(servers).length
     for (const [server, value] of Object.entries(servers)) {
+      if (!approved.get(componentKey("mcp", plugin.name, server))) {
+        warnings.push(`blocked (untrusted): ${plugin.name}:mcp/${server} not installed`)
+        continue
+      }
+      count += 1
       desired.set(`ocm--${plugin.name}--${server}`, value)
     }
   }

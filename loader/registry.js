@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { LEGACY_REGISTRY_FILE, MARKETPLACES_DIR, REGISTRY_FILE } from "./paths.js"
 
 export function isRecord(value) {
@@ -66,4 +66,20 @@ export function readRegistry() {
     return normalizeRegistry(JSON.parse(readFileSync(LEGACY_REGISTRY_FILE, "utf8")))
   } catch {}
   return { version: 2, marketplaces: {} }
+}
+
+// the loader's only registry write: flag that a marketplace's executable
+// components changed since its grant. The raw file is preserved verbatim
+// outside the flag — never migrated — and an existing flag is left alone.
+export function markTrustPending(name) {
+  try {
+    const raw = JSON.parse(readFileSync(REGISTRY_FILE, "utf8"))
+    if (!isRecord(raw) || !isRecord(raw.marketplaces) || !isRecord(raw.marketplaces[name])) return
+    const entry = raw.marketplaces[name]
+    if (entry.trustPending === true) return
+    entry.trustPending = true
+    const tmp = `${REGISTRY_FILE}.tmp`
+    writeFileSync(tmp, JSON.stringify(raw, null, 2))
+    renameSync(tmp, REGISTRY_FILE)
+  } catch {}
 }

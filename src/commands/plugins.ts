@@ -7,7 +7,7 @@ import { componentRoot, materializeLinks } from "../install"
 import { discoverMarketplace, nameDisagreement } from "../discovery"
 import { clone } from "../git"
 import { isGitUrl, parseSource } from "../source"
-import { reportRestart, reportWarnings, reportUpgrade } from "./marketplace"
+import { reportRestart, reportUpgrade, reportWarnings } from "../report"
 import type { MarketplaceEntry, Registry } from "../types"
 
 interface ResolvedPlugin {

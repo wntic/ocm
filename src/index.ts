@@ -1,23 +1,27 @@
 import { installLoader, migrateLegacyLayout, uninstallLoader } from "./loader"
 import { add, remove, update } from "./commands/marketplace"
 import { install, scan, setMode, uninstall } from "./commands/plugins"
+import { trust, untrust } from "./commands/trust"
 import { list } from "./commands/list"
 
 const HELP = `ocm - file-based plugin marketplace for opencode
 
 usage:
   ocm init                          install auto-sync loader
-  ocm add <url|path> [--ref <ref>] [--explicit] [--name <name>]
-                                    add a marketplace (github url or local dir)
+  ocm add <url|path> [--ref <ref>] [--explicit] [--name <name>] [--trust|--no-trust]
+                                     add a marketplace (github url or local dir)
   ocm remove <name>                 remove a marketplace and its links
-  ocm update [name]                 pull latest changes (all or one marketplace)
+  ocm update [name] [--trust|--no-trust]
+                                     pull latest changes (all or one marketplace)
   ocm list [--all] [--json]         list marketplaces and plugins
   ocm install <plugin>[@<mp>] [--force]
-                                    enable a plugin and materialize its components
+                                     enable a plugin and materialize its components
   ocm uninstall <plugin>[@<mp>]     disable a plugin and remove its links
   ocm enable <plugin>[@<mp>]        alias of install
   ocm disable <plugin>[@<mp>]       alias of uninstall
   ocm mode <name> <auto|explicit>   change when new upstream plugins install
+  ocm trust <name>                  approve a marketplace's executable components
+  ocm untrust <name>                revoke trust and remove executable components
   ocm scan <url|path|plugin>        dry-run: show what would be installed
   ocm loader uninstall              remove auto-sync loader
 
@@ -58,6 +62,13 @@ function parseArgs(args: string[]): ParsedArgs {
   return { positional, flags, values }
 }
 
+// `--trust` and `--no-trust` carry opposite decisions; absence means prompt
+function trustFlag(flags: Set<string>): boolean | undefined {
+  if (flags.has("trust")) return true
+  if (flags.has("no-trust")) return false
+  return undefined
+}
+
 export async function main(argv: string[]): Promise<void> {
   migrateLegacyLayout()
   const [command, ...rest] = argv
@@ -75,14 +86,14 @@ export async function main(argv: string[]): Promise<void> {
       break
     case "add":
       requireArg(positional[0], "missing marketplace url or path")
-      add(positional[0]!, { explicit: flags.has("explicit"), name: values.name, ref: values.ref })
+      await add(positional[0]!, { explicit: flags.has("explicit"), name: values.name, ref: values.ref, trust: trustFlag(flags) })
       break
     case "remove":
       requireArg(positional[0], "missing marketplace name")
       remove(positional[0]!)
       break
     case "update":
-      await update(positional[0])
+      await update(positional[0], trustFlag(flags))
       break
     case "list":
       list({ all: flags.has("all"), json: flags.has("json") })
@@ -101,6 +112,14 @@ export async function main(argv: string[]): Promise<void> {
       requireArg(positional[0], "missing marketplace name")
       requireArg(positional[1], "missing mode (auto or explicit)")
       setMode(positional[0]!, positional[1]!)
+      break
+    case "trust":
+      requireArg(positional[0], "missing marketplace name")
+      await trust(positional[0]!)
+      break
+    case "untrust":
+      requireArg(positional[0], "missing marketplace name")
+      await untrust(positional[0]!)
       break
     case "scan":
       requireArg(positional[0], "missing url, path or plugin")

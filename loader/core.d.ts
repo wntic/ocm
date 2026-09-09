@@ -34,6 +34,15 @@ export interface CoreSyncResult {
   warnings?: string[]
 }
 
+export interface CoreExecutableComponent {
+  rel: string
+  hash: string
+  kind: "plugin" | "mcp"
+  plugin: string
+  name: string
+  value?: unknown
+}
+
 export declare const HOME: string
 export declare const OPENCODE_DIR: string
 export declare const OPENCODE_CONFIG_FILE: string
@@ -68,6 +77,8 @@ export declare function materialize(
 export declare function enabledPlugins(entry: unknown, dir: string): Set<string> | null
 export declare function setSkillsPath(skillsDir: string, present: boolean): string | null
 export declare function removeLinksFor(name: string, marketplaceDir: string): void
+export declare function executableComponents(dir: string, entry: unknown): CoreExecutableComponent[]
+export declare function trustFingerprint(components: CoreExecutableComponent[]): string
 export declare function syncAll(options?: {
   minIntervalMs?: number
   force?: boolean

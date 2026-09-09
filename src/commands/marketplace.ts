@@ -1,6 +1,6 @@
 import { existsSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { OCM_REGISTRY_FILE, normaliseMarketplaceName } from "../paths"
+import { normaliseMarketplaceName } from "../paths"
 import { loadRegistryForWrite, saveRegistry } from "../registry"
 import { componentRoot, incumbentMarketplace, materializeLinks, registerPlugins, removeLinks, removeMcpKeys } from "../install"
 import { pullRepo } from "../../loader/core.js"
@@ -10,18 +10,8 @@ import type { ParsedSource } from "../source"
 import type { DiscoveredPlugin } from "../discovery"
 import type { MarketplaceEntry, Registry } from "../types"
 import { installLoader } from "../loader"
-
-export function reportWarnings(warnings: string[]): void {
-  for (const warning of warnings) console.error(`  warning: ${warning}`)
-}
-
-export function reportRestart(changed: number): void {
-  if (changed > 0) console.log("restart opencode to activate")
-}
-
-export function reportUpgrade(wasV1: boolean): void {
-  if (wasV1) console.log(`registry upgraded v1 → v2 (${OCM_REGISTRY_FILE})`)
-}
+import { reportRestart, reportUpgrade, reportWarnings } from "../report"
+import { decideTrust, decideUpdateTrust } from "./trust"
 
 // spec 04, axis 4: plugin names are globally unique across marketplaces;
 // adding a marketplace that ships a taken name fails with both sources named
@@ -39,6 +29,7 @@ export interface AddOptions {
   explicit?: boolean
   name?: string
   ref?: string
+  trust?: boolean
 }
 
 // a failed add leaves no clone behind; a local directory is the user's
@@ -46,7 +37,7 @@ function discardClone(parsed: ParsedSource, dir: string): void {
   if (parsed.isGit) rmSync(dir, { recursive: true, force: true })
 }
 
-export function add(source: string, options: AddOptions = {}): void {
+export async function add(source: string, options: AddOptions = {}): Promise<void> {
   const parsed = parseSource(source)
   const { registry, wasV1 } = loadRegistryForWrite()
   const mode: "auto" | "explicit" = options.explicit ? "explicit" : "auto"
@@ -97,11 +88,14 @@ export function add(source: string, options: AddOptions = {}): void {
   }
   registry.marketplaces[name] = entry
   registerPlugins(registry, name, plugins)
+  await decideTrust(name, entry, root, options.trust)
+  // the materializer reads the registry from disk, so the trust decision
+  // must be saved before links are made (spec 07)
+  saveRegistry(registry)
   const links = materializeLinks(name, entry)
   reportWarnings(links.warnings)
   reportRestart(links.created)
   installLoader()
-  saveRegistry(registry)
   reportUpgrade(wasV1)
   reportAdded(name, plugins, mode)
 }
@@ -151,7 +145,7 @@ export function remove(name: string): void {
   }
 }
 
-export async function update(name?: string): Promise<void> {
+export async function update(name?: string, trust?: boolean): Promise<void> {
   const { registry, wasV1 } = loadRegistryForWrite()
   const names = name ? [name] : Object.keys(registry.marketplaces)
   if (!names.length) {
@@ -180,9 +174,12 @@ export async function update(name?: string): Promise<void> {
     } else {
       console.log(`${marketplaceName} is local (${entry.url}), refreshing links`)
     }
-    const discovered = discoverMarketplace(componentRoot(entry))
+    const root = componentRoot(entry)
+    const discovered = discoverMarketplace(root)
     reportWarnings(discovered.warnings)
     registerPlugins(registry, marketplaceName, [...discovered.plugins.values()])
+    await decideUpdateTrust(marketplaceName, entry, root, trust)
+    saveRegistry(registry)
     const links = materializeLinks(marketplaceName, entry)
     reportWarnings(links.warnings)
     reportRestart(links.created)
@@ -191,6 +188,5 @@ export async function update(name?: string): Promise<void> {
       reinstalledLoader = true
     }
   }
-  saveRegistry(registry)
   reportUpgrade(wasV1)
 }

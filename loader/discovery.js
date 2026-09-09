@@ -75,6 +75,13 @@ function listMcpServers(pluginDir) {
   return []
 }
 
+// the mcp source file: the marketplace entry's mcpServers path when it
+// declares one, else the plugin directory's own mcp.json (spec 06)
+export function mcpSourceFile(dir, entry, plugin) {
+  const declared = entry?.plugins?.[plugin.name]?.manifest?.mcpServers
+  return typeof declared === "string" ? join(dir, declared) : join(plugin.dir, "mcp.json")
+}
+
 // a name defined in both the singular and plural form of a component
 // directory is a clash add refuses rather than guess (spec 06)
 export function dirClashes(pluginDir) {

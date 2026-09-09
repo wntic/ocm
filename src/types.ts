@@ -43,7 +43,17 @@ export interface MarketplaceEntry {
   subdir?: string | null
   revision: string | null
   syncIntervalMs: number | null
-  trust: { code: "none" | "granted" | "denied"; grantedAt?: string; fingerprint?: string }
+  trust: {
+    code: "none" | "granted" | "denied"
+    grantedAt?: string
+    fingerprint?: string
+    // per-component hashes recorded at grant time; absent on grants written
+    // before spec 07, which approve everything (spec 07)
+    components?: Record<string, string>
+  }
+  // set by the loader when executable components changed since the grant;
+  // cleared by the next trust decision (spec 07)
+  trustPending?: boolean
   lastSync: { at: string; ok: boolean; error: string | null } | null
   plugins: Record<string, MarketplacePlugin>
 }
