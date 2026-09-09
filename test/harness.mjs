@@ -53,7 +53,7 @@ function runChild(home, modulePath, exportName) {
 // plugin proves this probe can still detect errors before a clean result is
 // believed (same contract as scripts/oc-probe.sh exit 2). Never call this at
 // module scope — the opencode spawns belong inside test bodies.
-export function opencodeProbe(configDir, home) {
+export function opencodeProbe(configDir, home, cwd = REPO_ROOT) {
   if (opencodeOnPath === undefined) {
     opencodeOnPath = spawnSync("opencode", ["--version"], { encoding: "utf8", timeout: 30_000 }).status === 0
   }
@@ -72,20 +72,26 @@ export function opencodeProbe(configDir, home) {
     let config, skills
     return {
       available: true,
-      pluginErrors: pluginErrorLines(configDir, home),
+      pluginErrors: pluginErrorLines(configDir, home, cwd),
       // resolved names are lazy getters: each spawns opencode, and a caller
       // that only wants pluginErrors must not pay for spawns it never uses
       get commands() {
-        config ??= debugJson(configDir, home, ["debug", "config"]) ?? {}
+        config ??= debugJson(configDir, home, cwd, ["debug", "config"]) ?? {}
         return Object.keys(config.command ?? {})
       },
+      // the full resolved entries, not just names — precedence tests need to
+      // see which file's description won
+      get commandEntries() {
+        config ??= debugJson(configDir, home, cwd, ["debug", "config"]) ?? {}
+        return config.command ?? {}
+      },
       get agents() {
-        config ??= debugJson(configDir, home, ["debug", "config"]) ?? {}
+        config ??= debugJson(configDir, home, cwd, ["debug", "config"]) ?? {}
         return Object.keys(config.agent ?? {})
       },
       get skills() {
         if (skills === undefined) {
-          const parsed = debugJson(configDir, home, ["debug", "skill"])
+          const parsed = debugJson(configDir, home, cwd, ["debug", "skill"])
           skills = Array.isArray(parsed) ? parsed.map((s) => s?.name).filter(Boolean) : []
         }
         return skills
@@ -98,10 +104,10 @@ export function opencodeProbe(configDir, home) {
 
 // `opencode debug config` prints the resolved config (command/agent keyed by
 // name); `opencode debug skill` prints a JSON array of resolved skills.
-function debugJson(configDir, home, args) {
+function debugJson(configDir, home, cwd, args) {
   const run = spawnSync("opencode", args, {
     env: { ...process.env, HOME: home, OPENCODE_CONFIG_DIR: configDir },
-    cwd: REPO_ROOT,
+    cwd,
     encoding: "utf8",
     timeout: 180_000,
   })
@@ -111,10 +117,10 @@ function debugJson(configDir, home, args) {
   return JSON.parse(run.stdout)
 }
 
-function pluginErrorLines(configDir, home) {
+function pluginErrorLines(configDir, home, cwd = REPO_ROOT) {
   const run = spawnSync("opencode", ["debug", "skill", "--print-logs", "--log-level", "ERROR"], {
     env: { ...process.env, HOME: home, OPENCODE_CONFIG_DIR: configDir },
-    cwd: REPO_ROOT,
+    cwd,
     encoding: "utf8",
     // opencode 1.18.20 stalls before plugin loading whenever a plugin file
     // exists — observed 50-115s per run, versus ~3s with no plugins. Do not

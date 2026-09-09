@@ -8,7 +8,7 @@ const MARKETPLACE_KEYS = [
   "url", "dir", "local", "addedAt", "mode", "ref", "revision",
   "syncIntervalMs", "trust", "lastSync", "plugins",
 ]
-const PLUGIN_KEYS = ["source", "components", "enabled", "installedAt", "version", "manifest"]
+const PLUGIN_KEYS = ["source", "components", "enabled", "collision", "installedAt", "version", "manifest"]
 
 export function emptyRegistry(): Registry {
   return { version: 2, marketplaces: {} }

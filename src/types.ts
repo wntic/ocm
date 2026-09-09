@@ -11,6 +11,9 @@ export interface MarketplacePlugin {
   source: string
   components: Partial<Record<ComponentType, string[]>>
   enabled: boolean
+  // names the marketplace that already provides this plugin name; set only
+  // while the collision exists, and the plugin stays disabled until it clears
+  collision?: string
   installedAt: string | null
   version: string | null
   manifest: Record<string, unknown>

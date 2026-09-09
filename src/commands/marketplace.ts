@@ -2,12 +2,12 @@ import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { OCM_MARKETPLACES_DIR, OCM_REGISTRY_FILE, marketplaceDir, marketplaceNameFromUrl } from "../paths"
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
-import { materializeLinks, removeLinks, registerPlugins } from "../install"
+import { incumbentMarketplace, materializeLinks, removeLinks, registerPlugins } from "../install"
 import { clone } from "../git"
 import { pullRepo } from "../../loader/core.js"
 import { discoverMarketplace } from "../discovery"
 import type { DiscoveredPlugin } from "../discovery"
-import type { MarketplaceEntry } from "../types"
+import type { MarketplaceEntry, Registry } from "../types"
 import { installLoader } from "../loader"
 
 function isGitUrl(source: string): boolean {
@@ -41,6 +41,18 @@ function reportUpgrade(wasV1: boolean): void {
   if (wasV1) console.log(`registry upgraded v1 → v2 (${OCM_REGISTRY_FILE})`)
 }
 
+// spec 04, axis 4: plugin names are globally unique across marketplaces;
+// adding a marketplace that ships a taken name fails with both sources named
+function collisionError(registry: Registry, name: string, plugins: DiscoveredPlugin[]): string | null {
+  for (const plugin of plugins) {
+    const incumbent = incumbentMarketplace(registry, name, plugin.name)
+    if (incumbent) {
+      return `plugin "${plugin.name}" is already provided by marketplace "${incumbent}"; not adding "${name}". Remove one, or ask its author to rename.`
+    }
+  }
+  return null
+}
+
 export function add(source: string): void {
   const { url, name } = parseSource(source)
   const { registry, wasV1 } = loadRegistryForWrite()
@@ -71,8 +83,10 @@ export function add(source: string): void {
       plugins: {},
     }
     const plugins = [...discoverMarketplace(url).values()]
+    const collision = collisionError(registry, name, plugins)
+    if (collision) throw new Error(collision)
     const entry = registry.marketplaces[name]!
-    registerPlugins(entry, plugins)
+    registerPlugins(registry, name, plugins)
     const links = materializeLinks(name, url, entry)
     reportWarnings(links.warnings)
     reportRestart(links.created)
@@ -86,6 +100,11 @@ export function add(source: string): void {
   if (!plugins.length) {
     rmSync(dir, { recursive: true, force: true })
     throw new Error(`no plugins found in ${url} (expected plugins/<name>/{agents,commands,skills})`)
+  }
+  const collision = collisionError(registry, name, plugins)
+  if (collision) {
+    rmSync(dir, { recursive: true, force: true })
+    throw new Error(collision)
   }
 
   const entry: MarketplaceEntry = {
@@ -102,7 +121,7 @@ export function add(source: string): void {
     plugins: {},
   }
   registry.marketplaces[name] = entry
-  registerPlugins(entry, plugins)
+  registerPlugins(registry, name, plugins)
   const links = materializeLinks(name, dir, entry)
   reportWarnings(links.warnings)
   reportRestart(links.created)
@@ -172,7 +191,7 @@ export async function update(name?: string): Promise<void> {
       console.log(`${marketplaceName} is local (${entry.url}), refreshing links`)
     }
     const plugins = [...discoverMarketplace(entry.dir).values()]
-    registerPlugins(entry, plugins)
+    registerPlugins(registry, marketplaceName, plugins)
     const links = materializeLinks(marketplaceName, entry.dir, entry)
     reportWarnings(links.warnings)
     reportRestart(links.created)
