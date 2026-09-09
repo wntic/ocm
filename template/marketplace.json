@@ -1,4 +1,12 @@
 {
+  "$schema": "https://raw.githubusercontent.com/wntic/ocm/main/schema/marketplace-v1.json",
   "name": "demo-marketplace",
-  "description": "Example ocm marketplace"
+  "description": "Example ocm marketplace",
+  "plugins": [
+    {
+      "name": "demo-kit",
+      "source": "./plugins/demo-kit",
+      "description": "One component of every type ocm ships"
+    }
+  ]
 }

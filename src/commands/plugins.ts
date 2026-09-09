@@ -1,10 +1,10 @@
 import { existsSync, mkdtempSync, readlinkSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR } from "../paths"
+import { OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
 import { componentRoot, materializeLinks } from "../install"
-import { discoverMarketplace } from "../discovery"
+import { discoverMarketplace, nameDisagreement } from "../discovery"
 import { clone } from "../git"
 import { isGitUrl, parseSource } from "../source"
 import { reportRestart, reportWarnings, reportUpgrade } from "./marketplace"
@@ -60,6 +60,10 @@ export function install(arg: string, force = false): void {
   const { registry, wasV1 } = loadRegistryForWrite()
   const { marketplace, plugin, entry } = resolvePlugin(registry, arg)
   const record = entry.plugins[plugin]!
+  // spec 06: a plugin.json name that disagrees with the directory name is a
+  // warning at install; the directory name wins
+  const disagreement = nameDisagreement(join(componentRoot(entry), record.source), plugin)
+  if (disagreement) reportWarnings([disagreement])
   if (!(record.enabled && record.installedAt)) {
     record.enabled = true
     record.installedAt = new Date().toISOString()
@@ -130,7 +134,9 @@ export function scan(source: string): void {
     dir = parsed.subdir ? join(temp, parsed.subdir) : temp
   }
   try {
-    const plugins = [...discoverMarketplace(dir).values()]
+    const discovered = discoverMarketplace(dir)
+    reportWarnings(discovered.warnings)
+    const plugins = [...discovered.plugins.values()]
     if (!plugins.length) {
       console.log(`no plugins found in ${source}`)
       return
@@ -157,6 +163,12 @@ function scanPlugin(arg: string): void {
   }
   for (const rel of record.components.skill ?? []) {
     console.log(`  skill ${plugin}:${rel}`)
+  }
+  for (const file of record.components.plugin ?? []) {
+    console.log(`  plugin ${join(OPENCODE_PLUGINS_DIR, `ocm--${plugin}--${file}`)}`)
+  }
+  for (const server of record.components.mcp ?? []) {
+    console.log(`  mcp ocm--${plugin}--${server} (${OPENCODE_GLOBAL_CONFIG})`)
   }
 }
 

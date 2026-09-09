@@ -2,6 +2,8 @@ export interface CorePluginComponents {
   agent?: string[]
   command?: string[]
   skill?: string[]
+  plugin?: string[]
+  mcp?: string[]
 }
 
 export interface CoreDiscoveredPlugin {
@@ -53,6 +55,7 @@ export interface CoreRegistry {
 }
 
 export declare function discoverPlugins(marketplaceDir: string): CoreDiscoveredPlugin[]
+export declare function dirClashes(pluginDir: string): string[]
 export declare function isGitRepo(dir: string): boolean
 export declare function pullRepo(dir: string): Promise<CorePullResult>
 export declare function readRegistry(): CoreRegistry

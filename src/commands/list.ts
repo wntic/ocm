@@ -29,6 +29,8 @@ export function list(options: ListOptions = {}): void {
       if (plugin.components.agent) parts.push(`agents: ${plugin.components.agent.join(", ")}`)
       if (plugin.components.command) parts.push(`commands: ${plugin.components.command.join(", ")}`)
       if (plugin.components.skill) parts.push(`skills: ${plugin.components.skill.join(", ")}`)
+      if (plugin.components.plugin) parts.push(`plugins: ${plugin.components.plugin.join(", ")}`)
+      if (plugin.components.mcp) parts.push(`mcp: ${plugin.components.mcp.join(", ")}`)
       console.log(`  ${pluginName}${options.all && !plugin.enabled ? " (disabled)" : ""}`)
       for (const part of parts) console.log(`    ${part}`)
     }

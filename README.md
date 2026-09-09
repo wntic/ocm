@@ -12,8 +12,10 @@ github.com/you/my-marketplace     ← single source of truth (markdown files)
         │
         ├── commands → ~/.config/opencode/commands/<plugin>:<command>.md
         ├── agents   → ~/.config/opencode/agents/<plugin>:<agent>.md
-        └── skills   → skills.paths entry in global opencode.json
-                       (~/.cache/ocm/links/<marketplace>/skills/)
+        ├── skills   → skills.paths entry in global opencode.json
+        │              (~/.cache/ocm/links/<marketplace>/skills/)
+        ├── js plugins → ~/.config/opencode/plugins/ocm--<plugin>--<file>
+        └── mcp       → ocm--<plugin>--<server> keys in global opencode.json
         │
    ocm-loader (global plugin)     ← syncs at most once an hour on opencode start
 ```
@@ -56,20 +58,86 @@ Runs with [bun](https://bun.com) (`bun ./bin/ocm.ts ...`) or via `npx tsx ./bin/
 
 ```
 my-marketplace/
-├── marketplace.json              # optional: { "name", "description" }
+├── marketplace.json              # optional
 └── plugins/
-    └── my-plugin/
-        ├── agents/
-        │   └── reviewer.md       # opencode agent frontmatter
+    └── demo-kit/
+        ├── plugin.json           # optional
         ├── commands/
-        │   └── tdd.md            # opencode command frontmatter
-        └── skills/
-            └── code-review/
-                └── SKILL.md      # agent skill
+        │   └── tdd.md            # → /demo-kit:tdd
+        ├── agents/
+        │   └── reviewer.md       # → demo-kit:reviewer
+        ├── skills/
+        │   └── code-review/
+        │       └── SKILL.md      # skill "demo-kit:code-review"
+        ├── plugin/
+        │   └── notify.js         # opencode server plugin (trust-gated)
+        ├── mcp.json              # mcp servers (trust-gated)
+        └── scripts/, templates/  # supporting files, never materialized
 ```
 
-A marketplace is any git repo with `plugins/<name>/{agents,commands,skills}/`.
-Every directory under `plugins/` with at least one component becomes an installable plugin.
+A marketplace is any git repo with `plugins/<name>/`. Every directory under
+`plugins/` with at least one component is an installable plugin, manifest or
+not — manifests add metadata, they never hide a plugin.
+
+`command`/`commands`, `agent`/`agents`, `skill`/`skills` and `plugin`/`plugins`
+are all accepted (singular matches opencode's own globs); a name clash between
+the singular and plural form of the same type is an error.
+
+### `marketplace.json`
+
+```json
+{
+  "name": "my-marketplace",
+  "description": "Team plugin catalog",
+  "owner": { "name": "…", "email": "…", "url": "…" },
+  "homepage": "https://…",
+  "renames": { "old-plugin": "new-plugin", "dead-plugin": null },
+  "plugins": [
+    {
+      "name": "demo-kit",
+      "source": "./plugins/demo-kit",
+      "description": "…",
+      "version": "1.2.0",
+      "defaultEnabled": true,
+      "mcpServers": "./mcp.json"
+    }
+  ]
+}
+```
+
+Only a plugin entry's `name` and `source` are required. `source` is a
+`./`-relative path inside the marketplace — `../` and absolute paths are
+rejected; the marketplace repo is the distribution unit. `defaultEnabled:
+false` keeps a plugin disabled in an `auto` marketplace.
+
+### `plugin.json`
+
+The same fields as a `plugins[]` entry, minus `source`, `defaultEnabled` and
+`mcpServers` — a plugin directory is self-describing when vendored or read on
+its own. Metadata precedence: marketplace entry > `plugin.json` > filesystem
+inference (name from the directory, components from the scan).
+
+### JS/TS plugins and MCP servers
+
+`plugin/*.{js,ts}` are opencode server plugins. They execute, so they
+materialize only after trust is granted for their marketplace — until then
+they are reported as `blocked (untrusted)`. Each must default-export
+`{ id, server }` (see `template/plugins/demo-kit/plugin/notify.js`).
+
+`mcp.json` uses exactly opencode's `mcp` entry shape:
+
+```json
+{
+  "time": { "type": "local", "command": ["date"], "enabled": true }
+}
+```
+
+Both are namespaced under ocm's ownership prefix: JS plugins link as
+`~/.config/opencode/plugins/ocm--<plugin>--<file>`, MCP servers as
+`ocm--<plugin>--<server>` keys in the global `opencode.json`. MCP components
+are trust-gated too — a local server is a command line ocm caused to run.
+The user's own `mcp` keys are preserved. Both are read once at startup:
+restart opencode to activate.
 
 ## Loader (auto-sync)
 

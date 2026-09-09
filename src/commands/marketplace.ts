@@ -4,7 +4,7 @@ import { OCM_REGISTRY_FILE, normaliseMarketplaceName } from "../paths"
 import { loadRegistryForWrite, saveRegistry } from "../registry"
 import { componentRoot, incumbentMarketplace, materializeLinks, registerPlugins, removeLinks, removeMcpKeys } from "../install"
 import { pullRepo } from "../../loader/core.js"
-import { discoverMarketplace, readManifest } from "../discovery"
+import { discoverMarketplace, discoveryError, readManifest } from "../discovery"
 import { manifestName, parseSource, placeClone } from "../source"
 import type { ParsedSource } from "../source"
 import type { DiscoveredPlugin } from "../discovery"
@@ -60,7 +60,8 @@ export function add(source: string, options: AddOptions = {}): void {
     ? placeClone(parsed, wanted, ref, registry, options.name !== undefined)
     : { name: wanted, dir: parsed.url }
   const root = parsed.subdir ? join(dir, parsed.subdir) : dir
-  const plugins = [...discoverMarketplace(root).values()]
+  const discovered = discoverMarketplace(root)
+  const plugins = [...discovered.plugins.values()]
   if (!plugins.length) {
     discardClone(parsed, dir)
     throw new Error(
@@ -68,6 +69,12 @@ export function add(source: string, options: AddOptions = {}): void {
         `  expected plugins/<name>/{commands,agents,skills}/ at the repository root\n` +
         `  run \`ocm scan ${parsed.url}\` to see what was found`,
     )
+  }
+  reportWarnings(discovered.warnings)
+  const refusal = discoveryError(plugins)
+  if (refusal) {
+    discardClone(parsed, dir)
+    throw new Error(refusal)
   }
   const collision = collisionError(registry, name, plugins)
   if (collision) {
@@ -106,6 +113,8 @@ function reportAdded(name: string, plugins: DiscoveredPlugin[], mode: "auto" | "
     if (plugin.components.agent) parts.push(`${plugin.components.agent.length} agents`)
     if (plugin.components.command) parts.push(`${plugin.components.command.length} commands`)
     if (plugin.components.skill) parts.push(`${plugin.components.skill.length} skills`)
+    if (plugin.components.plugin) parts.push(`${plugin.components.plugin.length} plugins`)
+    if (plugin.components.mcp) parts.push(`${plugin.components.mcp.length} mcp servers`)
     const available = mode === "explicit" ? " — available, not installed" : ""
     console.log(`  ${plugin.name} (${parts.join(", ")})${available}`)
   }
@@ -136,6 +145,8 @@ export function remove(name: string): void {
     if (plugin.components.agent) parts.push(`${plugin.components.agent.length} agents`)
     if (plugin.components.command) parts.push(`${plugin.components.command.length} commands`)
     if (plugin.components.skill) parts.push(`${plugin.components.skill.length} skills`)
+    if (plugin.components.plugin) parts.push(`${plugin.components.plugin.length} plugins`)
+    if (plugin.components.mcp) parts.push(`${plugin.components.mcp.length} mcp servers`)
     console.log(`  ${pluginName}: ${parts.join(", ")} removed`)
   }
 }
@@ -169,8 +180,9 @@ export async function update(name?: string): Promise<void> {
     } else {
       console.log(`${marketplaceName} is local (${entry.url}), refreshing links`)
     }
-    const plugins = [...discoverMarketplace(componentRoot(entry)).values()]
-    registerPlugins(registry, marketplaceName, plugins)
+    const discovered = discoverMarketplace(componentRoot(entry))
+    reportWarnings(discovered.warnings)
+    registerPlugins(registry, marketplaceName, [...discovered.plugins.values()])
     const links = materializeLinks(marketplaceName, entry)
     reportWarnings(links.warnings)
     reportRestart(links.created)

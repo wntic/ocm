@@ -1,5 +1,10 @@
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { join } from "node:path"
+import { isRecord } from "./registry.js"
+
+// plugin names become command/agent namespaces and file-name prefixes, so
+// they must be lowercase kebab
+export const PLUGIN_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 // `commands` and `command` (likewise agents, skills) are both opencode-valid
 // source directories, so both are discovered
@@ -47,6 +52,48 @@ function listSkillDirs(pluginDir, dirs) {
   return [...found].sort()
 }
 
+// `plugin` and `plugins` are both opencode-valid source directories for
+// server plugin modules (spec 06)
+function listJsFiles(pluginDir, dirs) {
+  const names = new Set()
+  for (const dir of dirs) {
+    try {
+      for (const file of readdirSync(join(pluginDir, dir))) {
+        if (file.endsWith(".js") || file.endsWith(".ts")) names.add(file)
+      }
+    } catch {}
+  }
+  return [...names].sort()
+}
+
+// mcp.json holds opencode's mcp entry shape; the server names are its keys
+function listMcpServers(pluginDir) {
+  try {
+    const parsed = JSON.parse(readFileSync(join(pluginDir, "mcp.json"), "utf8"))
+    if (isRecord(parsed)) return Object.keys(parsed).sort()
+  } catch {}
+  return []
+}
+
+// a name defined in both the singular and plural form of a component
+// directory is a clash add refuses rather than guess (spec 06)
+export function dirClashes(pluginDir) {
+  const clashes = []
+  const pairs = [
+    ["commands", "command", listMdFiles],
+    ["agents", "agent", listMdFiles],
+    ["skills", "skill", listSkillDirs],
+    ["plugin", "plugins", listJsFiles],
+  ]
+  for (const [a, b, list] of pairs) {
+    const other = list(pluginDir, [b])
+    for (const name of list(pluginDir, [a])) {
+      if (other.includes(name)) clashes.push(`${name} in both "${a}" and "${b}"`)
+    }
+  }
+  return clashes
+}
+
 // does this directory hold a SKILL.md at any depth? such entries get their
 // own mirror, so they must never be linked into a sibling mirror
 export function containsSkillMd(dir, seen = new Set()) {
@@ -86,6 +133,10 @@ export function discoverPlugins(marketplaceDir) {
     if (agents.length) components.agent = agents
     const skills = listSkillDirs(pluginDir, ["skills", "skill"])
     if (skills.length) components.skill = skills
+    const pluginFiles = listJsFiles(pluginDir, ["plugin", "plugins"])
+    if (pluginFiles.length) components.plugin = pluginFiles
+    const mcpServers = listMcpServers(pluginDir)
+    if (mcpServers.length) components.mcp = mcpServers
     if (!Object.keys(components).length) return
     const name = pluginDir.replace(/\/+$/, "").split("/").pop()
     plugins.push({ name: name.toLowerCase(), dir: pluginDir, components })

@@ -2,12 +2,11 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, rmSync, rmdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { setSkillsPath } from "./config.js"
-import { discoverPlugins } from "./discovery.js"
+import { discoverPlugins, PLUGIN_NAME_RE } from "./discovery.js"
 import { gcTargets, isRenderedFile, link, mirror } from "./links.js"
-import { LINKS_DIR, DISPLACED_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR } from "./paths.js"
+import { syncMcp } from "./mcp.js"
+import { LINKS_DIR, DISPLACED_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "./paths.js"
 import { readRegistry } from "./registry.js"
-
-const PLUGIN_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 function managedDirs(dir, registry) {
   const dirs = [dir]
@@ -73,6 +72,7 @@ export function materialize(name, dir, options = {}) {
 
   const registry = readRegistry()
   const entry = (registry.marketplaces ?? {})[name]
+  const trusted = entry?.trust?.code === "granted"
   const revision = (entry && typeof entry.revision === "string" && entry.revision) || gitRevision(dir)
   const ctx = {
     name,
@@ -88,11 +88,14 @@ export function materialize(name, dir, options = {}) {
   const desiredCommands = new Set()
   const desiredAgents = new Set()
   const desiredMirrors = new Set()
+  const desiredPluginLinks = new Set()
 
   mkdirSync(OPENCODE_COMMANDS_DIR, { recursive: true })
   mkdirSync(OPENCODE_AGENTS_DIR, { recursive: true })
+  mkdirSync(OPENCODE_PLUGINS_DIR, { recursive: true })
 
-  for (const plugin of discoverPlugins(dir)) {
+  const discovered = discoverPlugins(dir)
+  for (const plugin of discovered) {
     if (enabled !== null && !enabled.has(plugin.name)) continue
     if (!PLUGIN_NAME_RE.test(plugin.name)) {
       warnings.push(`skipped plugin "${plugin.name}": name must match ${PLUGIN_NAME_RE}`)
@@ -135,11 +138,28 @@ export function materialize(name, dir, options = {}) {
       desiredMirrors.add(mirrorName)
       removed += mirror(sourceDir, join(skillsDir, mirrorName), { "SKILL.md": () => transformed }, ctx, plugin.name, rel)
     }
+    for (const file of plugin.components.plugin ?? []) {
+      const source = resolveSource(plugin.dir, ["plugin", "plugins"], file, ctx, plugin.name)
+      if (!source) continue
+      counts.plugin += 1
+      const dest = `ocm--${plugin.name}--${file}`
+      if (!trusted) {
+        warnings.push(`blocked (untrusted): ${plugin.name}:${file} not linked`)
+        continue
+      }
+      desiredPluginLinks.add(dest)
+      const status = link(source, join(OPENCODE_PLUGINS_DIR, dest), ctx, plugin.name, file)
+      if (status === "created") created += 1
+      else if (status !== "ok") skipped += 1
+    }
   }
 
   removed += gcTargets(OPENCODE_COMMANDS_DIR, desiredCommands, ctx)
   removed += gcTargets(OPENCODE_AGENTS_DIR, desiredAgents, ctx)
   removed += gcTargets(skillsDir, desiredMirrors, ctx, (path) => isRenderedFile(join(path, "SKILL.md")))
+  removed += gcTargets(OPENCODE_PLUGINS_DIR, desiredPluginLinks, ctx)
+
+  counts.mcp += syncMcp(discovered, dir, entry, enabled, trusted, warnings)
 
   const warning = setSkillsPath(skillsDir, counts.skill > 0)
   if (warning) warnings.push(warning)
@@ -169,6 +189,7 @@ export function removeLinksFor(name, marketplaceDir) {
   const ctx = { name, dir: marketplaceDir, managed: [], revision: null, warnings: [] }
   gcTargets(OPENCODE_COMMANDS_DIR, new Set(), ctx)
   gcTargets(OPENCODE_AGENTS_DIR, new Set(), ctx)
+  gcTargets(OPENCODE_PLUGINS_DIR, new Set(), ctx)
   const skillsDir = join(LINKS_DIR, name, "skills")
   gcTargets(skillsDir, new Set(), ctx, (path) => isRenderedFile(join(path, "SKILL.md")))
   // prune the cache dirs only when nothing unowned is left in them

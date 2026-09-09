@@ -85,15 +85,15 @@ export function registerPlugins(registry: Registry, name: string, plugins: Disco
     // was never chosen, so installedAt stays null (spec 02)
     let enabled = existing?.collision
       ? entry.mode === "auto" || existing.installedAt !== null
-      : existing?.enabled ?? entry.mode !== "explicit"
+      : existing?.enabled ?? (entry.mode !== "explicit" && plugin.manifest.defaultEnabled !== false)
     if (incumbent) enabled = false
     const record: MarketplacePlugin = {
       source: relative(root, plugin.dir),
       components: plugin.components,
       enabled,
-      installedAt: existing?.installedAt ?? (incumbent || entry.mode === "explicit" ? null : entry.addedAt),
-      version: existing?.version ?? null,
-      manifest: existing?.manifest ?? {},
+      installedAt: existing?.installedAt ?? (incumbent || entry.mode === "explicit" || !enabled ? null : entry.addedAt),
+      version: plugin.manifest.version ?? null,
+      manifest: plugin.manifest,
     }
     if (incumbent) record.collision = incumbent
     updated[plugin.name] = record

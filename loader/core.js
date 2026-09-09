@@ -18,7 +18,7 @@ export {
   REGISTRY_FILE,
   STAMP_FILE,
 } from "./paths.js"
-export { discoverPlugins } from "./discovery.js"
+export { dirClashes, discoverPlugins } from "./discovery.js"
 export { normalizeRegistry, readRegistry } from "./registry.js"
 export { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
 export { setSkillsPath } from "./config.js"

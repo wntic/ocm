@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/wntic/ocm/main/schema/plugin-v1.json",
+  "title": "ocm plugin manifest",
+  "description": "same fields as a marketplace plugins[] entry, minus source, defaultEnabled and mcpServers",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "must agree with the directory name" },
+    "description": { "type": "string" },
+    "version": { "type": "string" },
+    "author": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "url": { "type": "string" }
+      }
+    },
+    "category": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "keywords": { "type": "array", "items": { "type": "string" } },
+    "homepage": { "type": "string" },
+    "repository": { "type": "string" },
+    "license": { "type": "string" }
+  }
+}

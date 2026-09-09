@@ -1,10 +1,22 @@
 export type ComponentType = "agent" | "command" | "skill" | "plugin" | "mcp"
 
+// the merged manifest cached in the registry: marketplace entry >
+// plugin.json > filesystem inference (spec 06)
+export type PluginManifest = {
+  description?: string
+  category?: string
+  tags?: string[]
+  version?: string
+  defaultEnabled?: boolean
+  mcpServers?: string
+}
+
 export interface DiscoveredPlugin {
   name: string
   dir: string
   source: string
   components: Partial<Record<ComponentType, string[]>>
+  manifest: PluginManifest
 }
 
 export interface MarketplacePlugin {
@@ -16,7 +28,7 @@ export interface MarketplacePlugin {
   collision?: string
   installedAt: string | null
   version: string | null
-  manifest: Record<string, unknown>
+  manifest: PluginManifest
 }
 
 export interface MarketplaceEntry {

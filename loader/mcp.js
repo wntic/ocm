@@ -1,0 +1,95 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { PLUGIN_NAME_RE } from "./discovery.js"
+import { OPENCODE_CONFIG_FILE, OPENCODE_DIR } from "./paths.js"
+import { isRecord } from "./registry.js"
+
+// the mcp source file: the marketplace entry's mcpServers path when it
+// declares one, else the plugin directory's own mcp.json (spec 06)
+function mcpSourceFile(dir, entry, plugin) {
+  const declared = entry?.plugins?.[plugin.name]?.manifest?.mcpServers
+  return typeof declared === "string" ? join(dir, declared) : join(plugin.dir, "mcp.json")
+}
+
+// desired keys are ocm--<plugin>--<server>; every other key in the mcp object
+// is the user's and survives byte-identically outside the keys ocm owns
+function applyMcpKeys(desired, prefixes) {
+  let raw
+  try {
+    raw = readFileSync(OPENCODE_CONFIG_FILE, "utf8")
+  } catch {}
+  let config = {}
+  if (raw !== undefined) {
+    try {
+      config = JSON.parse(raw)
+    } catch {
+      return `skipped ${OPENCODE_CONFIG_FILE}: not valid JSON, left untouched`
+    }
+  }
+  if (!isRecord(config)) return `skipped ${OPENCODE_CONFIG_FILE}: not a JSON object`
+  if (config.mcp !== undefined && !isRecord(config.mcp)) {
+    return `skipped ${OPENCODE_CONFIG_FILE}: "mcp" is not an object`
+  }
+  const mcp = isRecord(config.mcp) ? config.mcp : {}
+  let changed = false
+  for (const key of Object.keys(mcp)) {
+    if (prefixes.some((prefix) => key.startsWith(prefix)) && !desired.has(key)) {
+      delete mcp[key]
+      changed = true
+    }
+  }
+  for (const [key, value] of desired) {
+    if (JSON.stringify(mcp[key]) !== JSON.stringify(value)) {
+      mcp[key] = value
+      changed = true
+    }
+  }
+  if (!changed) return null
+  if (Object.keys(mcp).length) config.mcp = mcp
+  else delete config.mcp
+  try {
+    mkdirSync(OPENCODE_DIR, { recursive: true })
+    const tmp = `${OPENCODE_CONFIG_FILE}.tmp`
+    writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`)
+    renameSync(tmp, OPENCODE_CONFIG_FILE)
+  } catch (err) {
+    return `failed ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}`
+  }
+  return null
+}
+
+// one pass over every discovered plugin: enabled and trusted plugins
+// contribute desired keys, everything else only the prefix that scopes the
+// stale keys removed for it (spec 06)
+export function syncMcp(plugins, dir, entry, enabled, trusted, warnings) {
+  const desired = new Map()
+  const prefixes = []
+  let count = 0
+  for (const plugin of plugins) {
+    if (!PLUGIN_NAME_RE.test(plugin.name)) continue
+    prefixes.push(`ocm--${plugin.name}--`)
+    if (enabled !== null && !enabled.has(plugin.name)) continue
+    const file = mcpSourceFile(dir, entry, plugin)
+    if (!(plugin.components.mcp ?? []).length && !existsSync(file)) continue
+    if (!trusted) {
+      warnings.push(`blocked (untrusted): ${plugin.name}: mcp servers not installed`)
+      continue
+    }
+    let servers = null
+    try {
+      const parsed = JSON.parse(readFileSync(file, "utf8"))
+      if (isRecord(parsed)) servers = parsed
+    } catch {}
+    if (servers === null) {
+      warnings.push(`skipped ${file}: not a JSON object`)
+      continue
+    }
+    count += Object.keys(servers).length
+    for (const [server, value] of Object.entries(servers)) {
+      desired.set(`ocm--${plugin.name}--${server}`, value)
+    }
+  }
+  const warning = applyMcpKeys(desired, prefixes)
+  if (warning) warnings.push(warning)
+  return count
+}
