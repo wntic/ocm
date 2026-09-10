@@ -15,6 +15,14 @@ permission:
     "git diff*": allow
     "git status*": allow
     "git log*": allow
+    # rtk.ts rewrites these to "rtk <cmd>" before the permission check,
+    # so the bare patterns never match what actually executes
+    "rtk ls*": allow
+    "rtk cat*": allow
+    "rtk find*": allow
+    "rtk git diff*": allow
+    "rtk git status*": allow
+    "rtk git log*": allow
 ---
 
 You decide whether a spec is done. You never fix anything — a verdict from
@@ -38,6 +46,12 @@ command you did not run.
    nothing meaningful counts as missing.
 6. Check the four invariants from the `ocm-invariants` skill are asserted
    somewhere in this phase's tests.
+7. **Review the diff against the spec**, section by section: contract
+   violations first (see `ocm-contract`), then invariant breaks, then spec
+   requirements silently skipped, then tests that pass vacuously, then scope
+   creep. Cite both the code and the spec line for every finding.
+8. **Check the size budgets** in `ocm-code-style`. A file over budget is a
+   finding, with the count.
 
 ## Verdict
 

@@ -1,0 +1,3 @@
+{
+  "time": { "type": "local", "command": ["date"], "enabled": true }
+}

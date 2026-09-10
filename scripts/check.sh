@@ -27,10 +27,13 @@ step() { printf '\n=== %s ===\n' "$1"; }
 # still runs where bun is not installed.
 if [ -n "$BUN" ]; then
   RUNTIME="bun ($("$BUN" --version 2>/dev/null))"
+  # Explicit file paths only. `bun test` and `bun test test/` walk the whole
+  # tree (both node_modules trees included) and hang indefinitely here; an
+  # explicit path list runs in milliseconds.
   TEST_CMD=("$BUN" test)
 else
   RUNTIME=node
-  TEST_CMD=(node --test "test/")
+  TEST_CMD=(node --test)
 fi
 
 if [ -x ./node_modules/.bin/tsc ]; then
@@ -52,8 +55,12 @@ else
 fi
 
 step "tests"
-if [ -d test ] && ls test/*.mjs >/dev/null 2>&1; then
-  if "${TEST_CMD[@]}"; then
+TEST_FILES=()
+if [ -d test ]; then
+  for f in test/*.mjs; do [ -e "$f" ] && TEST_FILES+=("$f"); done
+fi
+if [ "${#TEST_FILES[@]}" -gt 0 ]; then
+  if "${TEST_CMD[@]}" "${TEST_FILES[@]}"; then
     echo "tests: passed"
   else
     echo "tests: FAILED"

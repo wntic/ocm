@@ -1,9 +1,13 @@
-# 10 — TUI integration (`/ocm`)
+# 10b — TUI integration (`/ocm`)
 
-Depends on: [01](./01-loader.md) (module placement), [05](./05-install.md)
-(mutations), [06](./06-manifests.md) (metadata). Delivers what the current
-README lists as planned: install, uninstall, enable, disable, add and remove
-from inside the dialog.
+Depends on: [10a](./10a-core-mutations.md) (the shared mutation core),
+[01](./01-loader.md) (module placement), [05](./05-install.md) (mutations),
+[06](./06-manifests.md) (metadata). Delivers what the current README lists
+as planned: install, uninstall, enable, disable, add and remove from inside
+the dialog.
+
+Split out of the former spec 10; everything here is the dialog itself, built
+as a thin view over the core functions 10a exposed.
 
 ## Feasibility, re-verified
 
@@ -30,10 +34,10 @@ Against `@opencode-ai/plugin` 1.18.15's `dist/tui.d.ts` and opencode 1.18.20:
 
 ## Architecture
 
-`ocm/ui.js` is a **thin view over `ocm/core.js`** — the same module the CLI
-and the loader use, imported relative to its own module URL. No CLI spawning,
-no PATH dependency, no duplicated logic. Every mutation the dialog performs is
-a core function that the CLI also calls, so the two surfaces cannot drift.
+`ocm/ui.js` is a thin view over `ocm/core.js` — the module 10a built. No CLI
+spawning, no PATH dependency, no duplicated logic. Every mutation the dialog
+performs is a core function that the CLI also calls, so the two surfaces
+cannot drift.
 
 The plugin is plain JS with no JSX and no dependencies, because it is copied
 into the user's config directory and loaded raw.
@@ -97,7 +101,8 @@ errors listed rather than swallowed.
 
 Nothing reloads in-session ([00](./00-contract.md)). So every mutation ends
 with an explicit notice — "restart opencode to activate" — and the dialog must
-not imply otherwise.
+not imply otherwise. An update that pulled no changes is not a mutation and
+carries no notice.
 
 One improvement is available and worth attempting, in this order:
 
@@ -120,19 +125,19 @@ Same atomic read-merge-write rules as every other config write
 ([12](./12-validate-doctor.md)). `OPENCODE_PURE=1` disables it along with all
 external plugins; document that as the escape hatch.
 
-## Tests (`test/phase10-tui.mjs`)
+## Tests (`test/phase10b-tui-dialog.mjs`)
 
 The TUI cannot run headless, so test what can be:
 
 1. `ocm/ui.js` default export is `{ id, tui }`, `tui` is async, and there is
-   no `server` export.
+    no `server` export.
 2. It imports `./core.js` successfully from the installed location.
 3. `tui.json` management: the entry is added to a file with pre-existing keys
-   without touching them, added exactly once, and removed cleanly.
+    without touching them, added exactly once, and removed cleanly.
 4. A recorded fake `api` drives the flows end to end — main menu → browse →
-   confirm → install — asserting the core mutation ran and the toast fired.
-   The fake implements `DialogSelect`, `DialogConfirm`, `DialogPrompt`,
-   `toast`, `dialog` and `keymap.registerLayer` as promise-resolving stubs.
+    confirm → install — asserting the core mutation ran and the toast fired.
+    The fake implements `DialogSelect`, `DialogConfirm`, `DialogPrompt`,
+    `toast`, `dialog` and `keymap.registerLayer` as promise-resolving stubs.
 5. The same fake covers the failure paths: unreachable marketplace on update,
-   collision on add, blocked components on install.
+    collision on add, blocked components on install.
 6. Every mutation path ends by emitting the restart notice.

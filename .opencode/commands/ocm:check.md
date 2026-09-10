@@ -9,7 +9,7 @@ Return a verdict for spec `$ARGUMENTS`.
 Run every gate in your procedure yourself and report the real output. Start
 from this snapshot but do not trust it — re-run each command:
 
-!`./scripts/check.sh 2>&1 | tail -40`
+!`./scripts/with-timeout.sh 240 ./scripts/check.sh 2>&1 | tail -40`
 
 Changed files:
 

@@ -164,7 +164,7 @@ others:
 
 The `plugins.*` surface and `client` are new information relative to the old
 spec set and are what make in-dialog mutation viable
-([10](./10-tui.md)).
+([10b](./10b-tui-dialog.md)).
 
 ## Corrections to the previous spec set
 

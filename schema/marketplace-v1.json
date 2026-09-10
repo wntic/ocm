@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/wntic/ocm/main/schema/marketplace-v1.json",
+  "title": "ocm marketplace manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "name": { "type": "string", "description": "display name; seeds the marketplace name at ocm add time" },
+    "description": { "type": "string" },
+    "owner": { "$ref": "#/definitions/author" },
+    "homepage": { "type": "string" },
+    "renames": {
+      "type": "object",
+      "description": "consumed by ocm update (spec 08)",
+      "additionalProperties": { "type": ["string", "null"] }
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "source"],
+        "additionalProperties": true,
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+          "source": { "type": "string", "pattern": "^\\./", "description": "./-relative path inside the marketplace" },
+          "description": { "type": "string" },
+          "version": { "type": "string" },
+          "author": { "$ref": "#/definitions/author" },
+          "category": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "keywords": { "type": "array", "items": { "type": "string" } },
+          "homepage": { "type": "string" },
+          "repository": { "type": "string" },
+          "license": { "type": "string" },
+          "defaultEnabled": { "type": "boolean" },
+          "mcpServers": { "type": "string", "pattern": "^\\./", "description": "./-relative path to an mcp.json" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "author": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "url": { "type": "string" }
+      }
+    }
+  }
+}

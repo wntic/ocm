@@ -1,28 +1,21 @@
-import { syncAll } from "./ocm-core.js"
-
-function intervalMs() {
-  const raw = parseInt(process.env.OCM_SYNC_INTERVAL_MS ?? "", 10)
-  return Number.isFinite(raw) && raw >= 0 ? raw : 0
-}
+// namespace import, not named bindings: the loader must link even when
+// core.js exports less than this file uses, so a partially updated core
+// degrades the hook rather than the whole loader
+import * as core from "../ocm/core.js"
 
 export default {
   id: "ocm-loader",
-  setup: async (ctx) => {
-    let result
-    try {
-      result = await syncAll({ minIntervalMs: intervalMs() })
-    } catch {
-      return {}
-    }
-    if (result.changed) {
-      for (const reload of [ctx?.command?.reload, ctx?.agent?.reload]) {
-        if (typeof reload === "function") {
-          try {
-            await reload()
-          } catch {}
+  server: async () => {
+    void core.syncAll({ reason: "startup" }).catch(() => {})
+    return {
+      // spec 11: command bodies reference ${OCM_PLUGIN_ROOT}/plugins/<name>/…
+      // and Claude Code's ${CLAUDE_PLUGIN_ROOT}; both point at the
+      // marketplace root
+      "shell.env": async (_input, output) => {
+        if (output && typeof output.env === "object" && output.env !== null) {
+          Object.assign(output.env, core.pluginRootEnv())
         }
-      }
+      },
     }
-    return {}
   },
 }

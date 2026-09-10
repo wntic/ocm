@@ -11,20 +11,36 @@ order given by `docs/specs/README.md`. **The spec is the source of truth.** If
 the code and the spec disagree, the code is wrong. If two specs disagree, stop
 and say so — do not pick a side.
 
-The cycle for one spec, `NN`:
+One command per spec:
 
 ```
-/ocm:status          where am I, what runs next
-/ocm:plan NN         break the spec into tasks      -> docs/plans/NN.md
-/ocm:tests NN        write the failing tests        -> test/phaseNN-*.mjs
-/ocm:build NN        make them pass                 -> src/, loader/
-/ocm:check NN        run every gate, get a verdict
-/ocm:review NN       read the diff against the spec
+/ocm:spec 01
 ```
+
+That dispatches the whole cycle — tests, implementation, gate, review — and
+loops the implementer on a failure up to three times. Use `/ocm:status` to see
+where you are and `/ocm:probe` to ask the real opencode binary what it sees.
+
+If you want to drive a step by hand, `/ocm:tests NN`, `/ocm:implement NN` and
+`/ocm:check NN` each run one stage on their own. `/ocm:commit` verifies the
+gate, then stages and commits — never pushes, amends or resets.
 
 Tests are written before the implementation, by a different agent, and the
 implementer is not permitted to edit `test/`. That separation is the point: a
 test the implementer can change is not a check.
+
+**Write the smallest thing that passes.** The failure mode here is not bad
+syntax, it is building far more than the spec asked for. Size budgets live in
+the `ocm-code-style` skill and the evaluator enforces them.
+
+## Two traps specific to this repo
+
+**Never run bare `bun test`.** Directory traversal hangs indefinitely here;
+`./scripts/check.sh` passes explicit file paths and is the command to use.
+
+**Nothing expensive at module scope in a test file.** Module bodies run during
+discovery, outside any timeout, with no output — a probe call there looks like
+a hang.
 
 ## The gate
 
@@ -62,10 +78,14 @@ Four project skills carry the knowledge that is not in the code:
 
 | Skill | Load it when |
 |---|---|
+| `ocm-code-style` | writing any code — carries the size budgets |
 | `ocm-contract` | touching the loader, the materializer, or any config write |
 | `ocm-architecture` | deciding which file a change belongs in |
 | `ocm-invariants` | before calling any file-writing change done |
 | `ocm-test-harness` | writing anything under `test/` |
+
+Commit messages: imperative subject, prose body explaining *why*, no trailers
+of any kind. `git log` is the reference.
 
 Read the relevant one. Do not reconstruct these facts from memory — several of
 them contradict opencode's own documentation, and the specs record which was

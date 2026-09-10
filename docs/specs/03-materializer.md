@@ -147,7 +147,7 @@ because nothing reloads in-session ([00](./00-contract.md)).
 ## Consumed by
 
 [05](./05-install.md) drives it with an `enabled` set; [08](./08-update.md)
-calls it after every pull and diffs its report; [10](./10-tui.md) calls the
+calls it after every pull and diffs its report; [10b](./10b-tui-dialog.md) calls the
 same function.
 
 ## Tests (`test/phase03-materializer.mjs`)

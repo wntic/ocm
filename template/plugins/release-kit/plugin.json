@@ -1,0 +1,6 @@
+{
+  "description": "Ship a release and write its notes — the cross-tool demo kit",
+  "version": "0.1.0",
+  "category": "example",
+  "tags": ["release"]
+}

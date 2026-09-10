@@ -1,10 +1,13 @@
 {
-  "name": "ocm",
+  "name": "@wntic/ocm",
   "version": "0.1.0",
   "description": "File-based plugin marketplace for opencode: skills, agents, commands distributed via git repos",
   "type": "module",
   "bin": {
     "ocm": "./bin/ocm.ts"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "bun run ./bin/ocm.ts",

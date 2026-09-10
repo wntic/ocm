@@ -33,7 +33,9 @@ All three are verified by probe; see [00](./00-contract.md#plugin-module-contrac
 │   ├── core.js                  shared runtime core
 │   ├── core.d.ts
 │   ├── ui.js                    TUI plugin module
-│   └── registry.json            moved from plugins/ocm-registry.json
+│   ├── …                        every other *.js / *.d.ts module in loader/
+│   └── registry.json            moved from plugins/ocm-registry.json —
+│                                not an installed file
 └── tui.json                     managed: one entry, "./ocm/ui.js"
 ```
 
@@ -42,6 +44,10 @@ All three are verified by probe; see [00](./00-contract.md#plugin-module-contrac
 an `ocm/` sibling is invisible to all of them. `ocm-loader.js` imports
 `../ocm/core.js` by a path relative to its own module URL, so there is no PATH
 or cwd dependency.
+
+`ocm/` holds every runtime module from the repository's `loader/` directory
+(see Installation set); `registry.json` is moved there by migration, never
+installed.
 
 `plugins/ocm-loader.js` keeps its name and location so that the file the user
 already has is overwritten in place rather than orphaned.
@@ -79,7 +85,7 @@ Decisions:
 The superseded spec claimed commands and agents refresh in-session. They do
 not. Every user-visible message about an install must say **"restart opencode
 to activate"** — for all five component types, without exception. The TUI path
-in [10](./10-tui.md) is the only place where a live-session effect is
+in [10b](./10b-tui-dialog.md) is the only place where a live-session effect is
 possible, and only via `api.client`.
 
 ## TUI plugin registration
@@ -100,10 +106,23 @@ now lives outside `plugins/`, the server host no longer sees it.
 
 ## Installation set
 
-`src/loader.ts` installs four files (`plugins/ocm-loader.js`, `ocm/core.js`,
-`ocm/core.d.ts`, `ocm/ui.js`) and manages the `tui.json` entry. It runs on
-`ocm init`, on the first `ocm add`, and on every `ocm update` — the last so a
-stale core cannot silently no-op forever.
+`src/loader.ts` installs exactly the repository's `loader/` directory and
+manages the `tui.json` entry: `ocm-loader.js` installs to
+`plugins/ocm-loader.js`, and every other `*.js` / `*.d.ts` file in `loader/`
+installs to `ocm/<name>`. Nothing else ever lands in either directory. The
+directory is the shipped set by definition — hard rule 1 already treats all
+of `loader/*.js` as raw-loaded runtime — so a module can be added to the core
+without another coordinated amendment here, and the set stays exact: a
+partial install or a stray installed file still fails the pin. The `*.js` /
+`*.d.ts` filter keeps editor junk (e.g. `.DS_Store`) out of both the
+expectation and the install. It runs on `ocm init`, on the first `ocm add`,
+and on every `ocm update` — the last so a stale core cannot silently no-op
+forever.
+
+> The installed set was originally pinned as an enumerated four-file list.
+> [03](./03-materializer.md) grew `loader/core.js` past its size budget, and
+> the pin was relaxed to this derived rule so the core could be split into
+> modules.
 
 Each installed file carries a trailing comment line
 `// ocm-version: <package version> <sha256-8>` so [12](./12-validate-doctor.md)
@@ -119,7 +138,7 @@ On any ocm command, if `~/.config/opencode/plugins/ocm-core.js` or
 2. delete `plugins/ocm-core.js`, `plugins/ocm-ui.js`, and any
    `plugins/ocm-core.d.ts`
 3. rewrite the `tui.json` entry `./plugins/ocm-ui.js` → `./ocm/ui.js`
-4. reinstall the four files
+4. reinstall the installed set
 5. print one line naming what moved
 
 Idempotent, and safe to run when the old files are absent.
@@ -137,12 +156,14 @@ Idempotent, and safe to run when the old files are absent.
 ## Consumed by
 
 Every other spec. [02](./02-registry.md) reads the registry from its new path;
-[08](./08-update.md) owns `syncAll`; [10](./10-tui.md) owns `ocm/ui.js`.
+[08](./08-update.md) owns `syncAll`; [10b](./10b-tui-dialog.md) owns `ocm/ui.js`.
 
 ## Tests (`test/phase01-loader.mjs`)
 
-1. Installed set is exactly the four files; `plugins/` contains only
-   `ocm-loader.js`.
+1. Installed set is exactly the repository's `loader/` directory: every
+   `*.js` / `*.d.ts` file in `loader/` exists at its target (`ocm-loader.js`
+   in `plugins/`, the rest in `ocm/`); `plugins/` contains only
+   `ocm-loader.js`, and `ocm/` contains only the remaining files.
 2. `ocm-loader.js` default export has `id` and a `server` function and no
    `setup`; `ocm/ui.js` has `id` and `tui` and no `server`.
 3. `ocm-loader.js` imports `../ocm/core.js` successfully from the installed
