@@ -6,6 +6,8 @@ import { trust, untrust } from "./commands/trust"
 import { list } from "./commands/list"
 import { search } from "./commands/search"
 import { info } from "./commands/info"
+import { validate } from "./commands/validate"
+import { doctor } from "./commands/doctor"
 
 const HELP = `ocm - file-based plugin marketplace for opencode
 
@@ -32,6 +34,8 @@ usage:
   ocm trust <name>                  approve a marketplace's executable components
   ocm untrust <name>                revoke trust and remove executable components
   ocm scan <url|path|plugin>        dry-run: show what would be installed
+  ocm validate [path]               lint a marketplace repo (default: current directory)
+  ocm doctor [--fix]                diagnose this installation; --fix applies safe fixes
   ocm loader uninstall              remove auto-sync loader
 
 examples:
@@ -145,6 +149,12 @@ export async function main(argv: string[]): Promise<void> {
     case "scan":
       requireArg(positional[0], "missing url, path or plugin")
       scan(positional[0]!)
+      break
+    case "validate":
+      validate(positional[0])
+      break
+    case "doctor":
+      doctor(flags.has("fix"))
       break
     case "loader":
       if (positional[0] === "uninstall") {

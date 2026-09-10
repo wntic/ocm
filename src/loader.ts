@@ -132,6 +132,26 @@ function installFiles(sourceDir: string): void {
   ensureTuiPluginEntry()
 }
 
+// spec 12 doctor: the installed state of every loader file, by version
+// comment — a stale core silently no-ops, so drift is worth naming
+export interface LoaderFileStatus {
+  file: string
+  state: "current" | "stale" | "missing"
+}
+
+export function loaderStatus(): LoaderFileStatus[] {
+  const sourceDir = loaderSourceDir()
+  return loaderFiles(sourceDir).map((file) => {
+    let state: LoaderFileStatus["state"]
+    try {
+      state = readFileSync(file.target, "utf8") === stamped(join(sourceDir, file.source)) ? "current" : "stale"
+    } catch {
+      state = "missing"
+    }
+    return { file: file.source, state }
+  })
+}
+
 export function migrateLegacyLayout(): void {
   const triggered = ["ocm-core.js", "ocm-ui.js"].some((name) => existsSync(join(OPENCODE_PLUGINS_DIR, name)))
   if (!triggered) return
