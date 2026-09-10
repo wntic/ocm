@@ -106,7 +106,7 @@ export async function main(argv: string[]): Promise<void> {
       break
     case "pin":
       requireArg(positional[0], "missing marketplace name")
-      pin(positional[0]!, positional[1], flags.has("clear"))
+      await pin(positional[0]!, positional[1], flags.has("clear"))
       break
     case "list":
       list({ all: flags.has("all"), json: flags.has("json") })

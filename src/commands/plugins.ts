@@ -1,54 +1,15 @@
 import { existsSync, mkdtempSync, readlinkSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { isGitUrl, parseSource, resolvePlugin, setEnabled } from "../../loader/core.js"
+import type { CorePluginComponents } from "../../loader/core.js"
 import { OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
-import { componentRoot, materializeLinks } from "../install"
-import { discoverMarketplace, nameDisagreement } from "../discovery"
+import { discoverMarketplace } from "../discovery"
 import { clone } from "../git"
-import { isGitUrl, parseSource } from "../source"
 import { reportRestart, reportUpgrade, reportWarnings } from "../report"
-import type { MarketplaceEntry, Registry } from "../types"
 
-interface ResolvedPlugin {
-  marketplace: string
-  plugin: string
-  entry: MarketplaceEntry
-}
-
-// spec 05 argument resolution, shared by every verb that takes a plugin
-function resolvePlugin(registry: Registry, arg: string): ResolvedPlugin {
-  const at = arg.indexOf("@")
-  let marketplace: string | undefined
-  let plugin: string
-  if (at !== -1) {
-    plugin = arg.slice(0, at)
-    marketplace = arg.slice(at + 1)
-    if (!plugin) throw new Error(`missing plugin name in "${arg}" (ocm list --all)`)
-    if (!marketplace) throw new Error(`missing marketplace name in "${arg}" (ocm list)`)
-  } else {
-    plugin = arg
-    const providers = Object.entries(registry.marketplaces).filter(([, entry]) => entry.plugins[plugin])
-    if (!providers.length) {
-      throw new Error(`plugin "${plugin}" not found in any marketplace (ocm add <url|path>, or ocm update)`)
-    }
-    if (providers.length > 1) {
-      const names = providers.map(([name]) => name).join(", ")
-      throw new Error(`plugin "${plugin}" is provided by more than one marketplace: ${names} (use ${plugin}@<marketplace>)`)
-    }
-    marketplace = providers[0]![0]
-  }
-  const entry = registry.marketplaces[marketplace]
-  if (!entry) throw new Error(`marketplace "${marketplace}" not found (ocm list)`)
-  const record = entry.plugins[plugin]
-  if (!record) throw new Error(`plugin "${plugin}" not found in marketplace "${marketplace}" (ocm list --all)`)
-  if (!existsSync(join(componentRoot(entry), record.source))) {
-    throw new Error(`plugin "${plugin}" is registered but missing on disk in marketplace "${marketplace}" (run ocm update ${marketplace})`)
-  }
-  return { marketplace, plugin, entry }
-}
-
-function componentSummary(components: Partial<Record<string, string[]>>): string {
+function componentSummary(components: CorePluginComponents): string {
   const parts: string[] = []
   for (const [type, files] of Object.entries(components)) {
     if (files?.length) parts.push(`${files.length} ${type}${files.length === 1 ? "" : "s"}`)
@@ -56,40 +17,23 @@ function componentSummary(components: Partial<Record<string, string[]>>): string
   return parts.join(", ")
 }
 
+// spec 05 install: the core flips the record, saves and materializes; the
+// CLI renders — disagreement first, then the upgrade, then the links report
 export function install(arg: string, force = false): void {
-  const { registry, wasV1 } = loadRegistryForWrite()
-  const { marketplace, plugin, entry } = resolvePlugin(registry, arg)
-  const record = entry.plugins[plugin]!
-  // spec 06: a plugin.json name that disagrees with the directory name is a
-  // warning at install; the directory name wins
-  const disagreement = nameDisagreement(join(componentRoot(entry), record.source), plugin)
-  if (disagreement) reportWarnings([disagreement])
-  if (!(record.enabled && record.installedAt)) {
-    record.enabled = true
-    record.installedAt = new Date().toISOString()
-    saveRegistry(registry)
-    reportUpgrade(wasV1)
-  }
-  const links = materializeLinks(marketplace, entry, force)
-  reportWarnings(links.warnings)
-  console.log(`installed ${plugin}@${marketplace} (${componentSummary(record.components)})`)
-  reportRestart(links.created)
+  const result = setEnabled(arg, true, { force })
+  if (result.disagreement) reportWarnings([result.disagreement])
+  reportUpgrade(result.wasV1)
+  reportWarnings(result.report.warnings)
+  console.log(`installed ${result.plugin}@${result.marketplace} (${componentSummary(result.components)})`)
+  reportRestart(result.report.created)
 }
 
 export function uninstall(arg: string): void {
-  const { registry, wasV1 } = loadRegistryForWrite()
-  const { marketplace, plugin, entry } = resolvePlugin(registry, arg)
-  const record = entry.plugins[plugin]!
-  if (record.enabled || record.installedAt !== null) {
-    record.enabled = false
-    record.installedAt = null
-    saveRegistry(registry)
-    reportUpgrade(wasV1)
-  }
-  const links = materializeLinks(marketplace, entry)
-  reportWarnings(links.warnings)
-  reportRestart(links.removed)
-  console.log(`uninstalled ${plugin}@${marketplace}`)
+  const result = setEnabled(arg, false)
+  reportUpgrade(result.wasV1)
+  reportWarnings(result.report.warnings)
+  reportRestart(result.report.removed)
+  console.log(`uninstalled ${result.plugin}@${result.marketplace}`)
 }
 
 export function setMode(name: string, mode: string): void {
@@ -151,8 +95,7 @@ export function scan(source: string): void {
 }
 
 function scanPlugin(arg: string): void {
-  const registry = loadRegistry()
-  const { marketplace, plugin, entry } = resolvePlugin(registry, arg)
+  const { marketplace, plugin, entry } = resolvePlugin(loadRegistry(), arg)
   const record = entry.plugins[plugin]!
   console.log(`installing ${plugin}@${marketplace} would materialize:`)
   for (const file of record.components.command ?? []) {

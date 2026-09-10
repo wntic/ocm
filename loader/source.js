@@ -1,36 +1,50 @@
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { OCM_MARKETPLACES_DIR, marketplaceDir, marketplaceNameFromUrl, normaliseMarketplaceName } from "./paths"
-import { clone } from "./git"
-import { readManifest } from "./discovery"
-import type { Registry } from "./types"
+import { readManifest } from "./manifest.js"
+import { HOME, MARKETPLACES_DIR } from "./paths.js"
+import { git } from "./sync.js"
 
 const GITHUB_TREE_RE = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)(\/.*)?$/
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
-export function isGitUrl(source: string): boolean {
+export function isGitUrl(source) {
   return /^https?:|^git@|^file:\/\//.test(source)
 }
 
-export function expandPath(source: string): string {
-  return source.startsWith("~") ? join(process.env.HOME ?? "", source.replace(/^~\/?/, "")) : source
+function expandPath(source) {
+  return source.startsWith("~") ? join(HOME, source.replace(/^~\/?/, "")) : source
 }
 
-export interface ParsedSource {
-  url: string
-  name: string
-  subdir: string | null
-  isGit: boolean
-  ref: string | null
-}
-
-function basename(p: string): string {
+function basename(p) {
   return p.replace(/\/+$/, "").split("/").pop() ?? p
+}
+
+export function normaliseMarketplaceName(name) {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "marketplace"
+  )
+}
+
+export function marketplaceNameFromUrl(url) {
+  const cleaned = url
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "")
+    .replace(/^https?:\/\/[^/]+\//, "")
+    .replace(/^git@[^:]+:/, "")
+  return normaliseMarketplaceName(cleaned.split("/").filter(Boolean).slice(-2).join("--"))
+}
+
+export function marketplaceDir(name) {
+  return join(MARKETPLACES_DIR, name)
 }
 
 // spec 05 add step 1: git urls, github tree urls (repo + ref + subdir) and
 // local paths (absolute, relative or ~/)
-export function parseSource(source: string): ParsedSource {
+export function parseSource(source) {
   if (isGitUrl(source)) {
     const tree = source.match(GITHUB_TREE_RE)
     if (tree) {
@@ -40,7 +54,7 @@ export function parseSource(source: string): ParsedSource {
         name: marketplaceNameFromUrl(url),
         subdir: tree[4] ? tree[4].replace(/^\/+|\/+$/g, "") : null,
         isGit: true,
-        ref: tree[3]!,
+        ref: tree[3],
       }
     }
     return { url: source, name: marketplaceNameFromUrl(source), subdir: null, isGit: true, ref: null }
@@ -54,24 +68,27 @@ export function parseSource(source: string): ParsedSource {
 
 // a marketplace.json name is honoured only when it is already a valid
 // marketplace name (spec 05 add step 2)
-export function manifestName(name: string | undefined): string | undefined {
+export function manifestName(name) {
   return name && NAME_RE.test(name) ? name : undefined
+}
+
+async function clone(url, dir, ref) {
+  const args = ["clone", "--depth", "1"]
+  if (ref) args.push("--branch", ref)
+  args.push(url, dir)
+  const result = await git(args)
+  if (!result.ok) {
+    throw new Error(`git clone failed: ${result.stderr || result.stdout}`)
+  }
 }
 
 // clone under the url-derived name; a valid marketplace.json name renames
 // the clone after the fact unless --name already decided it (spec 05 add
-// step 2)
-export function placeClone(
-  parsed: ParsedSource,
-  name: string,
-  ref: string | null,
-  registry: Registry,
-  named: boolean,
-): { name: string; dir: string } {
+// step 2). The clone progress line is the CLI's — the core never prints.
+export async function placeClone(parsed, name, ref, registry, named) {
   const dir = marketplaceDir(name)
-  mkdirSync(OCM_MARKETPLACES_DIR, { recursive: true })
-  console.log(`cloning ${parsed.url}...`)
-  clone(parsed.url, dir, ref)
+  mkdirSync(MARKETPLACES_DIR, { recursive: true })
+  await clone(parsed.url, dir, ref)
   const declared = named ? undefined : manifestName(readManifest(parsed.subdir ? join(dir, parsed.subdir) : dir).name)
   if (!declared || declared === name) return { name, dir }
   if (registry.marketplaces[declared]) {

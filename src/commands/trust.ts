@@ -1,28 +1,13 @@
-import { executableComponents, trustFingerprint } from "../../loader/core.js"
+import { denyEntry, denyTrust, executableComponents, grantEntry, grantTrust, trustFingerprint } from "../../loader/core.js"
+import type { CoreExecutableComponent } from "../../loader/core.js"
 import { componentRoot, materializeLinks } from "../install"
 import { loadRegistryForWrite, saveRegistry } from "../registry"
 import { reportRestart, reportUpgrade, reportWarnings } from "../report"
-import type { CoreExecutableComponent } from "../../loader/core.js"
-import type { MarketplaceEntry, Registry } from "../types"
-
-export function grant(entry: MarketplaceEntry, components: CoreExecutableComponent[]): void {
-  entry.trust = {
-    code: "granted",
-    grantedAt: new Date().toISOString(),
-    fingerprint: trustFingerprint(components),
-    components: Object.fromEntries(components.map((c) => [c.rel, c.hash])),
-  }
-  delete entry.trustPending
-}
-
-export function deny(entry: MarketplaceEntry): void {
-  entry.trust = { code: "denied" }
-  delete entry.trustPending
-}
+import type { MarketplaceEntry } from "../types"
 
 // the block every trust decision prints before asking: what runs, where it
 // lives, and what it can do (spec 07)
-function printTrustBlock(name: string, entry: MarketplaceEntry, root: string, components: CoreExecutableComponent[]): void {
+function printTrustBlock(name: string, dir: string, components: CoreExecutableComponent[]): void {
   console.error(`marketplace "${name}" ships code that opencode will execute:`)
   for (const component of components) {
     if (component.kind === "plugin") {
@@ -37,7 +22,7 @@ function printTrustBlock(name: string, entry: MarketplaceEntry, root: string, co
     }
   }
   console.error("this code runs with your shell's permissions on every opencode start.")
-  console.error(`review it at ${entry.dir}`)
+  console.error(`review it at ${dir}`)
   console.error("trust this marketplace to run code? [y/N/skip]")
 }
 
@@ -51,33 +36,41 @@ async function readAnswer(): Promise<string> {
   }
 }
 
-// the add-time decision: --trust grants, --no-trust denies, a TTY prompts,
-// anything else prints the block and leaves trust unset (spec 07)
-export async function decideTrust(
+// the prompt half of a trust decision: renders the block and reads the
+// answer. The mutation is the caller's — the core never prompts (spec 10a)
+export async function promptTrust(
   name: string,
-  entry: MarketplaceEntry,
-  root: string,
-  flag?: boolean,
-): Promise<boolean> {
+  dir: string,
+  components: CoreExecutableComponent[],
+): Promise<"granted" | "denied" | "skipped"> {
+  printTrustBlock(name, dir, components)
+  if (!process.stdin.isTTY) return "skipped"
+  const answer = await readAnswer()
+  if (answer === "y" || answer === "yes") return "granted"
+  if (answer === "skip") return "skipped"
+  return "denied"
+}
+
+// the update-time decision, applied in memory: the update engine saves the
+// registry after reconcile, so a mid-update core call would be overwritten
+// by that later save
+async function decideTrust(name: string, entry: MarketplaceEntry, root: string, flag?: boolean): Promise<boolean> {
   const components = executableComponents(root, entry)
   if (!components.length) return false
   if (flag === true) {
-    grant(entry, components)
+    grantEntry(entry, components)
     return true
   }
   if (flag === false) {
-    deny(entry)
+    denyEntry(entry)
     return false
   }
-  printTrustBlock(name, entry, root, components)
-  if (!process.stdin.isTTY) return false
-  const answer = await readAnswer()
-  if (answer === "y" || answer === "yes") {
-    grant(entry, components)
+  const decision = await promptTrust(name, entry.dir, components)
+  if (decision === "granted") {
+    grantEntry(entry, components)
     return true
   }
-  if (answer === "skip") return false
-  deny(entry)
+  if (decision === "denied") denyEntry(entry)
   return false
 }
 
@@ -108,41 +101,46 @@ export async function decideUpdateTrust(
   return decideTrust(name, entry, root, flag)
 }
 
-function requireEntry(registry: Registry, name: string): MarketplaceEntry {
-  const entry = registry.marketplaces[name]
-  if (!entry) throw new Error(`marketplace "${name}" not found (ocm list)`)
-  return entry
-}
-
 export async function trust(name: string): Promise<void> {
   const { registry, wasV1 } = loadRegistryForWrite()
-  const entry = requireEntry(registry, name)
+  const entry = registry.marketplaces[name]
+  if (!entry) throw new Error(`marketplace "${name}" not found (ocm list)`)
   const root = componentRoot(entry)
   const components = executableComponents(root, entry)
   if (!components.length) {
     console.log(`marketplace "${name}" ships no code; nothing to trust`)
     return
   }
-  const granted = await decideTrust(name, entry, root)
+  const decision = await promptTrust(name, entry.dir, components)
+  if (decision === "granted") {
+    const result = grantTrust(name)
+    if (result.report) {
+      reportWarnings(result.report.warnings)
+      reportRestart(result.report.created)
+    }
+    console.log(`marketplace "${name}" trusted to run code`)
+    reportUpgrade(result.wasV1)
+    return
+  }
+  if (decision === "denied") {
+    const result = denyTrust(name)
+    reportWarnings(result.report.warnings)
+    reportRestart(result.report.created)
+    reportUpgrade(result.wasV1)
+    return
+  }
+  // skipped: the registry is still saved (a v1 migration) and materialized
   saveRegistry(registry)
   const links = materializeLinks(name, entry)
   reportWarnings(links.warnings)
   reportRestart(links.created)
-  if (granted) console.log(`marketplace "${name}" trusted to run code`)
   reportUpgrade(wasV1)
 }
 
 export async function untrust(name: string): Promise<void> {
-  const { registry, wasV1 } = loadRegistryForWrite()
-  const entry = requireEntry(registry, name)
-  // idempotent: a second untrust writes nothing (spec 07)
-  if (entry.trust.code !== "denied" || entry.trustPending) {
-    deny(entry)
-    saveRegistry(registry)
-  }
-  const links = materializeLinks(name, entry)
-  reportWarnings(links.warnings)
-  reportRestart(links.removed)
+  const result = denyTrust(name)
+  reportWarnings(result.report.warnings)
+  reportRestart(result.report.removed)
   console.log(`marketplace "${name}" no longer trusted; executable components removed`)
-  reportUpgrade(wasV1)
+  reportUpgrade(result.wasV1)
 }

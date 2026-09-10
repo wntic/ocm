@@ -81,6 +81,23 @@ export function componentKey(kind, plugin, name) {
   return `${kind}\n${plugin}\n${name}`
 }
 
+// the in-memory halves of a trust decision: applied to a loaded entry and
+// saved by the caller (spec 07)
+export function grantEntry(entry, components) {
+  entry.trust = {
+    code: "granted",
+    grantedAt: new Date().toISOString(),
+    fingerprint: trustFingerprint(components),
+    components: Object.fromEntries(components.map((c) => [c.rel, c.hash])),
+  }
+  delete entry.trustPending
+}
+
+export function denyEntry(entry) {
+  entry.trust = { code: "denied" }
+  delete entry.trustPending
+}
+
 // the materializer's per-component gate: approved iff the marketplace is
 // granted and the component's hash matches the grant record. A grant without
 // a record (written by hand before spec 07) approves everything.

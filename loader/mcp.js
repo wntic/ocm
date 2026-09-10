@@ -86,3 +86,39 @@ export function syncMcp(plugins, dir, entry, enabled, approved, warnings) {
   if (warning) warnings.push(warning)
   return count
 }
+
+// spec 05 ocm remove: every ocm--<plugin> and ocm--<plugin>--* mcp key of
+// these plugins goes, keeping the mcp object when the user has their own
+// servers left in it. Returns a warning instead of printing — the core
+// never prints.
+export function removeMcpKeys(pluginNames) {
+  let raw
+  try {
+    raw = readFileSync(OPENCODE_CONFIG_FILE, "utf8")
+  } catch {
+    return null
+  }
+  let config
+  try {
+    config = JSON.parse(raw)
+  } catch {
+    return `${OPENCODE_CONFIG_FILE} is not valid JSON, left untouched`
+  }
+  if (!isRecord(config) || !isRecord(config.mcp)) return null
+  const mcp = config.mcp
+  const owned = Object.keys(mcp).filter((key) =>
+    pluginNames.some((name) => key === `ocm--${name}` || key.startsWith(`ocm--${name}--`)),
+  )
+  if (!owned.length) return null
+  for (const key of owned) delete mcp[key]
+  if (!Object.keys(mcp).length) delete config.mcp
+  try {
+    mkdirSync(OPENCODE_DIR, { recursive: true })
+    const tmp = `${OPENCODE_CONFIG_FILE}.tmp`
+    writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`)
+    renameSync(tmp, OPENCODE_CONFIG_FILE)
+  } catch (err) {
+    return `cannot write ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}`
+  }
+  return null
+}

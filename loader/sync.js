@@ -10,7 +10,7 @@ export function isGitRepo(dir) {
   return existsSync(join(dir, ".git"))
 }
 
-function git(args, cwd) {
+export function git(args, cwd) {
   return new Promise((resolve) => {
     const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
@@ -100,7 +100,7 @@ function due(entry, now) {
 }
 
 export async function syncAll(options = {}) {
-  const result = { ran: false, changed: false, updated: [], failed: [] }
+  const result = { ran: false, changed: false, updated: [], unchanged: [], failed: [], errors: {} }
   if (process.env.OCM_SYNC_DISABLE === "1") return result
   const registry = readRegistry()
   const entries = Object.entries(registry.marketplaces ?? {})
@@ -120,12 +120,17 @@ export async function syncAll(options = {}) {
       const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null)
       if (!pull.ok) {
         result.failed.push(name)
+        result.errors[name] = pull.output
         recordSync(name, { at: new Date().toISOString(), ok: false, error: pull.output })
         continue
       }
       changed = pull.changed
       revision = pull.after
       if (changed) result.updated.push(name)
+      else result.unchanged.push(name)
+    } else {
+      // a local directory never pulls; its sync is unchanged by definition
+      result.unchanged.push(name)
     }
     // discovery roots at the subdir when the source was a tree url (spec 05);
     // git operations above ran against the clone root

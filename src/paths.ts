@@ -18,26 +18,3 @@ export const OCM_REGISTRY_FILE = join(OCM_DIR, "registry.json")
 export const OCM_LEGACY_REGISTRY_FILE = join(OPENCODE_PLUGINS_DIR, "ocm-registry.json")
 
 export const OCM_LOADER_NAME = "ocm-loader.js"
-
-export function marketplaceDir(name: string): string {
-  return join(OCM_MARKETPLACES_DIR, name)
-}
-
-export function normaliseMarketplaceName(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || "marketplace"
-  )
-}
-
-export function marketplaceNameFromUrl(url: string): string {
-  const cleaned = url
-    .replace(/\.git$/, "")
-    .replace(/\/+$/, "")
-    .replace(/^https?:\/\/[^/]+\//, "")
-    .replace(/^git@[^:]+:/, "")
-  return normaliseMarketplaceName(cleaned.split("/").filter(Boolean).slice(-2).join("--"))
-}

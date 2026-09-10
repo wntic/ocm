@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs"
-import { LEGACY_REGISTRY_FILE, MARKETPLACES_DIR, REGISTRY_FILE } from "./paths.js"
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { LEGACY_REGISTRY_FILE, MARKETPLACES_DIR, OCM_DIR, REGISTRY_FILE } from "./paths.js"
 
 export function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -66,6 +66,57 @@ export function readRegistry() {
     return normalizeRegistry(JSON.parse(readFileSync(LEGACY_REGISTRY_FILE, "utf8")))
   } catch {}
   return { version: 2, marketplaces: {} }
+}
+
+// Mutating commands report the v1 → v2 upgrade when they save the migrated
+// registry, so this load also says what version was on disk.
+export function loadRegistryForWrite() {
+  // pre-02 layout; read as a fallback, never written
+  const file = existsSync(REGISTRY_FILE) ? REGISTRY_FILE : LEGACY_REGISTRY_FILE
+  try {
+    const raw = JSON.parse(readFileSync(file, "utf8"))
+    return { registry: normalizeRegistry(raw), wasV1: isRecord(raw) && raw.version === 1 }
+  } catch {
+    return { registry: { version: 2, marketplaces: {} }, wasV1: false }
+  }
+}
+
+// Canonical key order: a no-op save must be byte-identical, and unknown
+// fields ride after the known ones so they survive round-trips.
+const MARKETPLACE_KEYS = [
+  "url", "dir", "local", "addedAt", "mode", "ref", "subdir", "revision",
+  "syncIntervalMs", "trust", "lastSync", "plugins",
+]
+const PLUGIN_KEYS = ["source", "components", "enabled", "collision", "installedAt", "version", "manifest"]
+
+function canonicalObject(source, keys) {
+  const out = {}
+  for (const key of keys) if (key in source) out[key] = source[key]
+  for (const key of Object.keys(source)) if (!keys.includes(key)) out[key] = source[key]
+  return out
+}
+
+function serializeRegistry(registry) {
+  const marketplaces = {}
+  for (const [name, entry] of Object.entries(registry.marketplaces ?? {})) {
+    const plugins = {}
+    for (const [pluginName, plugin] of Object.entries(entry.plugins ?? {})) {
+      plugins[pluginName] = canonicalObject(plugin, PLUGIN_KEYS)
+    }
+    marketplaces[name] = canonicalObject({ ...entry, plugins }, MARKETPLACE_KEYS)
+  }
+  return `${JSON.stringify(canonicalObject({ ...registry, version: 2, marketplaces }, ["version", "marketplaces"]), null, 2)}\n`
+}
+
+export function saveRegistry(registry) {
+  mkdirSync(OCM_DIR, { recursive: true })
+  const tmp = `${REGISTRY_FILE}.tmp`
+  try {
+    writeFileSync(tmp, serializeRegistry(registry))
+    renameSync(tmp, REGISTRY_FILE)
+  } catch (err) {
+    throw new Error(`cannot write ${REGISTRY_FILE}: ${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 // the loader's only registry write: flag that a marketplace's executable

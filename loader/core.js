@@ -19,8 +19,21 @@ export {
   STAMP_FILE,
 } from "./paths.js"
 export { dirClashes, discoverPlugins } from "./discovery.js"
-export { normalizeRegistry, readRegistry } from "./registry.js"
+export { loadRegistryForWrite, normalizeRegistry, readRegistry, saveRegistry } from "./registry.js"
 export { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
 export { setSkillsPath } from "./config.js"
-export { isGitRepo, pullRepo, syncAll } from "./sync.js"
-export { executableComponents, trustFingerprint } from "./trust.js"
+export { git, isGitRepo, pullRepo, syncAll } from "./sync.js"
+export { denyEntry, executableComponents, grantEntry, trustFingerprint } from "./trust.js"
+export { isGitUrl, manifestName, marketplaceNameFromUrl, normaliseMarketplaceName, parseSource } from "./source.js"
+export { discoveryError, discoverMarketplace, nameDisagreement, readManifest } from "./manifest.js"
+export {
+  addMarketplace,
+  componentRoot,
+  incumbentMarketplace,
+  pinMarketplace,
+  registerPlugins,
+  removeMarketplace,
+} from "./marketplace.js"
+export { denyTrust, grantTrust, resolvePlugin, revokeTrust, setEnabled } from "./mutations.js"
+export { removeMcpKeys } from "./mcp.js"
+export { searchPlugins } from "./search.js"

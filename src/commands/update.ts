@@ -142,7 +142,8 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport, 
       pruned.push(pluginName)
     }
   }
-  removeMcpKeys([...applied.removed, ...applied.renamed.map((rename) => rename.from), ...pruned])
+  const mcpWarning = removeMcpKeys([...applied.removed, ...applied.renamed.map((rename) => rename.from), ...pruned])
+  if (mcpWarning) report.warnings.push(mcpWarning)
   const versions = new Map(Object.entries(entry.plugins).map(([pluginName, plugin]) => [pluginName, plugin.version]))
   const known = new Set(Object.keys(entry.plugins))
   let registrable = plugins.filter((candidate) => !applied.excluded.has(candidate.name))
