@@ -6,6 +6,13 @@
   "bin": {
     "ocm": "./bin/ocm.ts"
   },
+  "files": [
+    "bin",
+    "src",
+    "loader",
+    "template",
+    "README.md"
+  ],
   "publishConfig": {
     "access": "public"
   },
