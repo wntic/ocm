@@ -207,10 +207,12 @@ export declare const DEFAULT_SYNC_INTERVAL_MS: number
 
 export declare function discoverPlugins(marketplaceDir: string): CoreDiscoveredPlugin[]
 export declare function dirClashes(pluginDir: string): string[]
+export declare function lintCrossTool(marketplaceDir: string): string[]
 export declare function isGitRepo(dir: string): boolean
 export declare function git(args: string[], cwd?: string): Promise<{ ok: boolean; stdout: string; stderr: string }>
 export declare function pullRepo(dir: string, ref?: string | null): Promise<CorePullResult>
 export declare function readRegistry(): CoreRegistry
+export declare function pluginRootEnv(): Record<string, string>
 export declare function normalizeRegistry(raw: unknown): CoreRegistry
 export declare function loadRegistryForWrite(): { registry: CoreRegistry; wasV1: boolean }
 export declare function saveRegistry(registry: CoreRegistry): void

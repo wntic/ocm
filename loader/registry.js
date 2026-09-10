@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { LEGACY_REGISTRY_FILE, MARKETPLACES_DIR, OCM_DIR, REGISTRY_FILE } from "./paths.js"
 
 export function isRecord(value) {
@@ -117,6 +118,32 @@ export function saveRegistry(registry) {
   } catch (err) {
     throw new Error(`cannot write ${REGISTRY_FILE}: ${err instanceof Error ? err.message : String(err)}`)
   }
+}
+
+// spec 11: the variables the loader's shell.env hook exports. Every added
+// marketplace root is available under both families — OCM_PLUGIN_ROOT for
+// bodies authored for opencode, CLAUDE_PLUGIN_ROOT as an alias so a Claude
+// Code command file runs unmodified. The flat pair exists only when one
+// marketplace is added: a flat name cannot say which of several roots it
+// means, and an unset variable fails louder than a silently wrong one.
+export function pluginRootEnv() {
+  const entries = Object.entries(readRegistry().marketplaces ?? {}).filter(
+    ([, entry]) => entry && typeof entry.dir === "string" && entry.dir,
+  )
+  const roots = entries.map(([name, entry]) => ({
+    suffix: name.replaceAll("-", "_").toUpperCase(),
+    root: entry.subdir ? join(entry.dir, entry.subdir) : entry.dir,
+  }))
+  const env = {}
+  for (const { suffix, root } of roots) {
+    env[`OCM_PLUGIN_ROOT_${suffix}`] = root
+    env[`CLAUDE_PLUGIN_ROOT_${suffix}`] = root
+  }
+  if (roots.length === 1) {
+    env.OCM_PLUGIN_ROOT = roots[0].root
+    env.CLAUDE_PLUGIN_ROOT = roots[0].root
+  }
+  return env
 }
 
 // the loader's only registry write: flag that a marketplace's executable

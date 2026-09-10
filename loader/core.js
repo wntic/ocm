@@ -19,7 +19,8 @@ export {
   STAMP_FILE,
 } from "./paths.js"
 export { dirClashes, discoverPlugins } from "./discovery.js"
-export { loadRegistryForWrite, normalizeRegistry, readRegistry, saveRegistry } from "./registry.js"
+export { lintCrossTool } from "./lint.js"
+export { loadRegistryForWrite, normalizeRegistry, pluginRootEnv, readRegistry, saveRegistry } from "./registry.js"
 export { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
 export { setSkillsPath } from "./config.js"
 export { git, isGitRepo, pullRepo, syncAll } from "./sync.js"
