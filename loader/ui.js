@@ -1,191 +1,88 @@
-import { existsSync } from "node:fs"
-import { join } from "node:path"
-import { enabledPlugins, isGitRepo, materialize, pullRepo, readRegistry, syncAll } from "./core.js"
+// The /ocm TUI dialog entry (spec 10b): registers the /ocm command and
+// renders the menu screens. Every mutation is a core function the CLI also
+// calls; the flows live in the ui-*.js siblings.
+import { readRegistry, searchPlugins } from "./core.js"
+import { alert, componentSummary, prompt, select } from "./ui-dialog.js"
+import { blocked, openPlugin } from "./ui-plugins.js"
+import { addMarketplaceFlow, openMarketplaces, runUpdateAll } from "./ui-marketplaces.js"
 
-function componentSummary(plugin) {
-  const components = plugin?.components ?? {}
-  const parts = []
-  if (components.command?.length) parts.push(`${components.command.length} commands`)
-  if (components.agent?.length) parts.push(`${components.agent.length} agents`)
-  if (components.skill?.length) parts.push(`${components.skill.length} skills`)
-  return parts.join(", ") || "no components"
-}
-
-function componentDetails(plugin) {
-  const components = plugin?.components ?? {}
-  const lines = []
-  if (components.command?.length) lines.push(`commands: ${components.command.join(", ")}`)
-  if (components.agent?.length) lines.push(`agents: ${components.agent.join(", ")}`)
-  if (components.skill?.length) lines.push(`skills: ${components.skill.join(", ")}`)
-  return lines.join("\n") || "no components"
-}
-
-function marketplaceEntries() {
-  const registry = readRegistry()
-  return Object.entries(registry.marketplaces ?? {}).filter(
-    ([, entry]) => entry && typeof entry.dir === "string" && existsSync(entry.dir),
-  )
-}
-
-function select(api, props) {
-  api.ui.dialog.replace(() => api.ui.DialogSelect(props))
-}
-
-function alert(api, title, message) {
-  api.ui.dialog.replace(() => api.ui.DialogAlert({ title, message, onConfirm: () => api.ui.dialog.clear() }))
-}
-
-function busy(api, message) {
-  api.ui.dialog.replace(() =>
-    api.ui.DialogSelect({ title: "ocm", options: [{ title: message, value: "busy", disabled: true }], onSelect: () => {} }),
-  )
-}
-
-function toast(api, variant, message) {
-  api.ui.toast({ variant, message })
-}
-
-function openMainMenu(api) {
-  if (!marketplaceEntries().length) {
-    alert(api, "ocm", "No marketplaces added yet.\n\nAdd one from your terminal:\n  ocm add <url|path>")
+export function openMainMenu(api) {
+  const marketplaces = Object.entries(readRegistry().marketplaces ?? {})
+  if (!marketplaces.length) {
+    alert(
+      api,
+      "ocm",
+      "No marketplaces added yet.\n\nAdd one from your terminal:\n  ocm add <url|path>\n\nOr add one here.",
+      () => addMarketplaceFlow(api, () => openMainMenu(api)),
+    )
     return
   }
+  const plugins = marketplaces.reduce((count, [, entry]) => count + Object.keys(entry.plugins ?? {}).length, 0)
   select(api, {
     title: "ocm",
     options: [
-      { title: "Browse plugins", value: "browse", description: "All plugins across marketplaces" },
+      { title: "Browse plugins", value: "browse", description: `${plugins} plugins across ${marketplaces.length} marketplaces` },
+      { title: "Search", value: "search", description: "Find a plugin by name, tag or command" },
+      { title: "Marketplaces", value: "marketplaces", description: "Add, update, remove" },
       { title: "Update all", value: "update-all", description: "Pull every marketplace now" },
-      { title: "Marketplaces", value: "marketplaces", description: "List and update marketplaces" },
     ],
     onSelect: (option) => {
       if (option.value === "browse") openBrowse(api)
-      else if (option.value === "update-all") runUpdateAll(api)
+      else if (option.value === "search") searchFlow(api)
       else if (option.value === "marketplaces") openMarketplaces(api)
+      else runUpdateAll(api)
     },
   })
 }
 
-function openBrowse(api) {
-  const options = []
-  const plugins = []
-  for (const [marketplace, entry] of marketplaceEntries()) {
-    for (const [name, plugin] of Object.entries(entry.plugins ?? {})) {
-      const index = plugins.length
-      plugins.push({ marketplace, name, plugin })
-      options.push({
-        title: `${name}@${marketplace}`,
-        value: String(index),
-        description: componentSummary(plugin),
-        category: marketplace,
-      })
-    }
+function pluginOption(registry, marketplace, name, value) {
+  const entry = registry.marketplaces[marketplace]
+  const record = entry.plugins[name]
+  const suffix = !record.enabled ? " (disabled)" : blocked(record, entry) ? " (blocked)" : ""
+  return {
+    title: `${name}@${marketplace}${suffix}`,
+    value,
+    description: record.manifest?.description || componentSummary(record),
+    category: marketplace,
   }
-  if (!options.length) {
-    alert(api, "ocm", "No plugins found in any marketplace.")
+}
+
+function openPluginList(api, title, items) {
+  const registry = readRegistry()
+  select(api, {
+    title,
+    options: items.map((item, i) => pluginOption(registry, item.marketplace, item.name, String(i))),
+    onSelect: (option) => {
+      const item = items[Number(option.value)]
+      if (item) openPlugin(api, item.marketplace, item.name)
+    },
+  })
+}
+
+export function openBrowse(api) {
+  const items = []
+  for (const [marketplace, entry] of Object.entries(readRegistry().marketplaces ?? {})) {
+    for (const name of Object.keys(entry.plugins ?? {})) items.push({ marketplace, name })
+  }
+  if (!items.length) {
+    alert(api, "ocm", "No plugins found in any marketplace.", () => openMainMenu(api))
     return
   }
-  select(api, {
-    title: "Browse plugins",
-    placeholder: "Search plugins...",
-    options,
-    onSelect: (option) => {
-      const found = plugins[Number(option.value)]
-      if (found) openPlugin(api, found)
-    },
-  })
+  openPluginList(api, "Browse plugins", items)
 }
 
-function openPlugin(api, { marketplace, name, plugin }) {
-  select(api, {
-    title: `${name}@${marketplace}`,
-    options: [
-      { title: "Details", value: "details", description: componentSummary(plugin) },
-      { title: `Update ${marketplace}`, value: "update", description: "Pull latest changes for this marketplace" },
-      { title: "Back", value: "back", description: "Back to the plugin list" },
-    ],
-    onSelect: (option) => {
-      if (option.value === "details") {
-        alert(
-          api,
-          `${name}@${marketplace}`,
-          `${componentDetails(plugin)}\n\nsource: ${plugin?.source ?? `${marketplace}/plugins/${name}`}`,
-        )
-      } else if (option.value === "update") {
-        updateMarketplace(api, marketplace, () => openPlugin(api, { marketplace, name, plugin }))
-      } else {
-        openBrowse(api)
-      }
-    },
-  })
-}
-
-function openMarketplaces(api) {
-  const entries = marketplaceEntries()
-  select(api, {
-    title: "Marketplaces",
-    options: entries.map(([name, entry]) => ({
-      title: name,
-      value: name,
-      description: entry.local ? `${entry.url} (local)` : entry.url,
-    })),
-    onSelect: (option) => {
-      const name = option.value
-      select(api, {
-        title: name,
-        options: [
-          { title: "Update", value: "update", description: "Pull latest changes and refresh links" },
-          { title: "Back", value: "back", description: "Back to the marketplace list" },
-        ],
-        onSelect: (inner) => {
-          if (inner.value === "update") updateMarketplace(api, name, () => openMarketplaces(api))
-          else openMarketplaces(api)
-        },
-      })
-    },
-  })
-}
-
-async function updateMarketplace(api, name, back) {
-  const entry = readRegistry().marketplaces?.[name]
-  if (!entry || typeof entry.dir !== "string" || !existsSync(entry.dir)) {
-    toast(api, "error", `marketplace "${name}" not found`)
-    back()
+async function searchFlow(api) {
+  const query = await prompt(api, "Search plugins", "Find a plugin by name, tag or command")
+  if (!query) {
+    openMainMenu(api)
     return
   }
-  busy(api, `Updating ${name}...`)
-  try {
-    let changed = false
-    if (entry.local === false && isGitRepo(entry.dir)) {
-      const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null)
-      if (!pull.ok) throw new Error(pull.output)
-      changed = pull.changed
-    }
-    // discovery roots at the subdir when the source was a tree url (spec 05);
-    // git operations above ran against the clone root
-    const root = entry.subdir ? join(entry.dir, entry.subdir) : entry.dir
-    const links = materialize(name, root, { enabled: enabledPlugins(entry, root) })
-    if (links.warnings.length) toast(api, "warning", links.warnings[0])
-    const restart = links.created > 0 ? "\nrestart opencode to activate" : ""
-    toast(api, "success", `${name}: ${changed ? "updated to new revision" : "already up to date"}${restart}`)
-  } catch (err) {
-    toast(api, "error", `${name}: ${err instanceof Error ? err.message : String(err)}`)
+  const matches = searchPlugins(query)
+  if (!matches.length) {
+    alert(api, "ocm", `No plugins match "${query}".`, () => openMainMenu(api))
+    return
   }
-  back()
-}
-
-async function runUpdateAll(api) {
-  busy(api, "Updating all marketplaces...")
-  try {
-    const result = await syncAll({ force: true })
-    const lines = []
-    if (result.updated?.length) lines.push(`updated: ${result.updated.join(", ")}`)
-    else lines.push("all marketplaces up to date")
-    if (result.failed?.length) lines.push(`failed: ${result.failed.join(", ")}`)
-    if (result.warnings?.length) lines.push(`warnings: ${result.warnings.length}`)
-    alert(api, "ocm", lines.join("\n"))
-  } catch (err) {
-    alert(api, "ocm", `Update failed: ${err instanceof Error ? err.message : String(err)}`)
-  }
+  openPluginList(api, `Search: ${query}`, matches.map((m) => ({ marketplace: m.marketplace, name: m.plugin })))
 }
 
 export default {
