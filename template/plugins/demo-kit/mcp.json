@@ -1,3 +1,7 @@
 {
-  "time": { "type": "local", "command": ["date"], "enabled": true }
+  "everything": {
+    "type": "local",
+    "command": ["npx", "-y", "@modelcontextprotocol/server-everything"],
+    "enabled": true
+  }
 }
