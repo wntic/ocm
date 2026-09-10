@@ -7,6 +7,11 @@
       "name": "demo-kit",
       "source": "./plugins/demo-kit",
       "description": "One component of every type ocm ships"
+    },
+    {
+      "name": "release-kit",
+      "source": "./plugins/release-kit",
+      "description": "Release helpers, authored for both opencode and Claude Code"
     }
   ]
 }

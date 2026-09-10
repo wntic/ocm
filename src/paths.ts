@@ -12,6 +12,8 @@ export const OPENCODE_PLUGINS_DIR = join(OPENCODE_GLOBAL_DIR, "plugins")
 export const OCM_CACHE_DIR = join(HOME, ".cache", "ocm")
 export const OCM_MARKETPLACES_DIR = join(OCM_CACHE_DIR, "marketplaces")
 export const OCM_LINKS_DIR = join(OCM_CACHE_DIR, "links")
+// pre-08 global sync stamp, folded into per-marketplace lastSync by the migration
+export const OCM_STAMP_FILE = join(OCM_CACHE_DIR, "last-sync.json")
 
 export const OCM_DIR = join(OPENCODE_GLOBAL_DIR, "ocm")
 export const OCM_REGISTRY_FILE = join(OCM_DIR, "registry.json")

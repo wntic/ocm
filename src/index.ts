@@ -1,4 +1,5 @@
 import { installLoader, migrateLegacyLayout, uninstallLoader } from "./loader"
+import { migrateInstallation } from "./migrate"
 import { add, pin, remove } from "./commands/marketplace"
 import { update } from "./commands/update"
 import { install, scan, setMode, uninstall } from "./commands/plugins"
@@ -84,6 +85,7 @@ function trustFlag(flags: Set<string>): boolean | undefined {
 
 export async function main(argv: string[]): Promise<void> {
   migrateLegacyLayout()
+  migrateInstallation()
   const [command, ...rest] = argv
   const { positional, flags, values } = parseArgs(rest)
 
