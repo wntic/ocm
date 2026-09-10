@@ -12,20 +12,20 @@ about opencode that turned out to be wrong (see
 | Spec | Status | Depends on |
 |---|---|---|
 | [00 — Verified opencode contract](./00-contract.md) | reference | — |
-| [01 — Loader & plugin-host correctness](./01-loader.md) | not started | 00 |
-| [02 — Registry v2](./02-registry.md) | not started | 00 |
-| [03 — Materializer & namespacing](./03-materializer.md) | not started | 00, 02 |
+| [01 — Loader & plugin-host correctness](./01-loader.md) | shipped | 00 |
+| [02 — Registry v2](./02-registry.md) | shipped | 00 |
+| [03 — Materializer & namespacing](./03-materializer.md) | shipped | 00, 02 |
 | [04 — Precedence & loading order](./04-precedence.md) | decision record | 00, 03 |
-| [05 — Per-plugin install/uninstall](./05-install.md) | not started | 02, 03 |
-| [06 — Manifests & component types](./06-manifests.md) | not started | 02, 03 |
-| [07 — Trust for code-executing components](./07-trust.md) | not started | 02, 06 |
-| [08 — Update engine](./08-update.md) | not started | 02, 03, 06 |
-| [09 — Search & info](./09-search.md) | not started | 06 |
-| [10a — Shared mutation core](./10a-core-mutations.md) | not started | 01, 05–09 |
-| [10b — TUI integration (`/ocm`)](./10b-tui-dialog.md) | not started | 10a |
-| [11 — Cross-tool authoring format](./11-cross-tool.md) | not started | 03, 06 |
-| [12 — Validate & doctor](./12-validate-doctor.md) | not started | 06, 07 |
-| [13 — Packaging & migration](./13-packaging.md) | not started | all |
+| [05 — Per-plugin install/uninstall](./05-install.md) | shipped | 02, 03 |
+| [06 — Manifests & component types](./06-manifests.md) | shipped | 02, 03 |
+| [07 — Trust for code-executing components](./07-trust.md) | shipped | 02, 06 |
+| [08 — Update engine](./08-update.md) | shipped | 02, 03, 06 |
+| [09 — Search & info](./09-search.md) | shipped | 06 |
+| [10a — Shared mutation core](./10a-core-mutations.md) | shipped | 01, 05–09 |
+| [10b — TUI integration (`/ocm`)](./10b-tui-dialog.md) | shipped | 10a |
+| [11 — Cross-tool authoring format](./11-cross-tool.md) | shipped | 03, 06 |
+| [12 — Validate & doctor](./12-validate-doctor.md) | shipped | 06, 07 |
+| [13 — Packaging & migration](./13-packaging.md) | shipped | all |
 
 ## Decisions locked before writing these specs
 
