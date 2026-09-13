@@ -8,6 +8,10 @@ import { error, warning, type Finding } from "./findings"
 
 export const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
+// spec 14 §2: pinned to 1.0.0, the published version — 1.1.0 is a Working
+// Draft and a floating identifier is forbidden by §5.2 of the standard
+const AP_PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+
 const STRING_FIELDS = ["description", "version", "category", "homepage", "repository", "license"]
 const ARRAY_FIELDS = ["tags", "keywords"]
 
@@ -126,6 +130,14 @@ export interface MarketplaceManifest {
 
 export function lintMarketplaceJson(root: string, findings: Finding[]): MarketplaceManifest {
   const manifest: MarketplaceManifest = { entries: new Map() }
+  // spec 14 §5: Codex's plugin manifest directory is not a catalog location,
+  // so this file is dead weight no client reads
+  const codexCatalog = join(root, ".codex-plugin", "marketplace.json")
+  if (existsSync(codexCatalog)) {
+    findings.push(
+      warning(`${relative(root, codexCatalog)}: not a catalog location — Codex reads .agents/plugins/marketplace.json; remove this file`),
+    )
+  }
   const file = join(root, "marketplace.json")
   if (!existsSync(file)) return manifest
   const rel = relative(root, file)
@@ -165,6 +177,22 @@ export function lintPluginJson(
   const parsed = parseJson(file, rel, findings)
   if (!parsed) return undefined
   lintFields(rel, parsed, findings)
+  // spec 14 §7: only an unrecognised $schema is an error — a non-conformant
+  // plugin still works perfectly well in opencode
+  if (parsed.$schema === undefined) {
+    findings.push(warning(`${rel}: no "$schema" — not installable by Codex; pin to ${AP_PLUGIN_SCHEMA}`))
+  } else if (parsed.$schema !== AP_PLUGIN_SCHEMA) {
+    findings.push(error(`${rel}: "$schema" ${JSON.stringify(parsed.$schema)} is not recognised — pin to ${AP_PLUGIN_SCHEMA}`))
+  }
+  const legacy = ["category", "tags"].filter((key) => parsed[key] !== undefined)
+  if (legacy.length) {
+    findings.push(
+      warning(`${rel}: top-level ${legacy.map((key) => `"${key}"`).join(", ")} — move under extensions["dev.wntic.ocm"]`),
+    )
+  }
+  if (parsed.extensions !== undefined && !isRecord(parsed.extensions)) {
+    findings.push(warning(`${rel}: "extensions" is not an object — reported and ignored`))
+  }
   if (parsed.author !== undefined && !isRecord(parsed.author)) {
     findings.push(error(`${rel}: "author" must be an object`))
   }
@@ -173,6 +201,20 @@ export function lintPluginJson(
   }
   if (typeof parsed.name === "string") lintName(rel, parsed.name, pluginName, findings)
   return parsed
+}
+
+// spec 14 §7: Agent Plugins discovers only immediate children of skills/, so
+// a deeper skill is invisible to Codex and Cursor even though ocm installs it
+export function lintSkillDepth(root: string, pluginDir: string, skills: string[], findings: Finding[]): void {
+  for (const dir of skills) {
+    if (!dir.includes("/")) continue
+    findings.push(
+      warning(
+        `${relative(root, pluginDir)}/skills/${dir}: skill nested deeper than an immediate child of skills/` +
+          " — ocm materializes it, but Codex and Cursor will not see it",
+      ),
+    )
+  }
 }
 
 export function lintMcpJson(root: string, pluginDir: string, findings: Finding[]): void {
@@ -184,11 +226,16 @@ export function lintMcpJson(root: string, pluginDir: string, findings: Finding[]
   // Either opencode's own shape — a bare map of server name to entry — or the
   // Agent Plugins shape, `{ $schema, mcpServers }`. Both are accepted, so one
   // file per plugin serves opencode, Codex and Cursor alike.
-  const servers = isRecord(parsed.mcpServers) ? parsed.mcpServers : parsed
+  const mcpServers = isRecord(parsed.mcpServers) ? parsed.mcpServers : undefined
+  const servers = mcpServers ?? parsed
   for (const [server, value] of Object.entries(servers)) {
     if (server === "$schema") continue
     if (!isRecord(value) || value.type === undefined) {
       findings.push(error(`${rel}: entry "${server}" is missing "type"`))
+    } else if (mcpServers !== undefined && value.type === "stdio" && typeof value.command !== "string") {
+      // AP requires "command", so the file is malformed; the entry is skipped
+      // at install time too (spec 14 §9)
+      findings.push(warning(`${rel}: entry "${server}" is missing "command" — skipped; Agent Plugins requires it`))
     }
   }
 }

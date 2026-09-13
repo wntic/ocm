@@ -6,10 +6,14 @@ import { join, relative } from "node:path"
 import { dirClashes, discoverPlugins, lintCrossTool } from "../../loader/core.js"
 import type { CoreDiscoveredPlugin } from "../../loader/core.js"
 import { error, reportFindings, warning, type Finding } from "../findings"
-import { NAME_RE, lintMarketplaceJson, lintMcpJson, lintPluginJson, type MarketplaceManifest } from "../manifest-lint"
+import { NAME_RE, lintMarketplaceJson, lintMcpJson, lintPluginJson, lintSkillDepth, type MarketplaceManifest } from "../manifest-lint"
 import { lintMarkdown, lintPluginJs, lintSkill } from "./validate-files"
 
 const TYPO_FILES = new Set(["plugin.ts", "SKILLS.md", "Skill.md"])
+
+// spec 14 §3: the Agent Plugins name charset — a-z 0-9 - ., alphanumeric at
+// both ends, 1–64 chars
+const AP_NAME_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/
 
 export function validate(path?: string): void {
   const root = path ?? process.cwd()
@@ -33,7 +37,20 @@ function lintPlugin(
   findings: Finding[],
 ): void {
   const rel = relative(root, plugin.dir) || "."
-  if (!NAME_RE.test(plugin.name)) findings.push(error(`${rel}: directory name must match ${NAME_RE}`))
+  if (!NAME_RE.test(plugin.name)) {
+    // spec 14 §3: an AP-valid name gets the namespacing explanation, not a
+    // bare regex failure — ocm's stricter rule stays
+    if (AP_NAME_RE.test(plugin.name) && plugin.name.length <= 64) {
+      findings.push(
+        error(
+          `${rel}: name "${plugin.name}" is valid Agent Plugins but not ocm — plugin names become command and agent` +
+            " namespaces on disk (<plugin>:<item>.md), and a dot there is a new failure surface; rename to kebab-case",
+        ),
+      )
+    } else {
+      findings.push(error(`${rel}: directory name must match ${NAME_RE}`))
+    }
+  }
   if (plugin.name.length > 64) findings.push(error(`${rel}: directory name is longer than 64 characters`))
   for (const clash of dirClashes(plugin.dir)) {
     findings.push(error(`${rel}: ${clash} — both produce the same materialized name`))
@@ -56,6 +73,7 @@ function lintPlugin(
   for (const dir of plugin.components.skill ?? []) {
     lintSkill(root, plugin, dir, skills, findings)
   }
+  lintSkillDepth(root, plugin.dir, plugin.components.skill ?? [], findings)
   for (const file of plugin.components.plugin ?? []) {
     lintPluginJs(root, plugin, file, findings)
   }

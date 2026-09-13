@@ -1,0 +1,12 @@
+{
+  "name": "demo-marketplace",
+  "owner": { "name": "ocm" },
+  "description": "Example marketplace shared by ocm and Claude Code",
+  "plugins": [
+    {
+      "name": "release-kit",
+      "source": "./plugins/release-kit",
+      "description": "Release helpers, authored for both opencode and Claude Code"
+    }
+  ]
+}

@@ -70,6 +70,9 @@ function listJsFiles(pluginDir, dirs) {
 // fields opencode has a home for survive: it has no equivalent of `cwd`.
 function toOpencodeServer(entry) {
   if (entry.type === "stdio") {
+    // AP requires "command"; without it the file is malformed and the entry
+    // is skipped rather than materialized as a broken server (spec 14 §9)
+    if (typeof entry.command !== "string") return null
     const args = Array.isArray(entry.args) ? entry.args : []
     const server = { type: "local", command: [entry.command, ...args], enabled: true }
     if (isRecord(entry.env)) server.environment = entry.env
@@ -98,7 +101,9 @@ export function readMcpServers(file) {
   if (!isRecord(parsed.mcpServers)) return parsed
   const servers = {}
   for (const [name, entry] of Object.entries(parsed.mcpServers)) {
-    if (isRecord(entry)) servers[name] = toOpencodeServer(entry)
+    if (!isRecord(entry)) continue
+    const server = toOpencodeServer(entry)
+    if (server !== null) servers[name] = server
   }
   return servers
 }

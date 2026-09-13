@@ -32,6 +32,13 @@ function metadataFrom(raw) {
   if (Array.isArray(raw.keywords) && raw.keywords.every((keyword) => typeof keyword === "string")) {
     manifest.keywords = raw.keywords
   }
+  // spec 14: category/tags under extensions["dev.wntic.ocm"] win over the
+  // top-level form, which stays readable for marketplaces that predate it
+  const ext = isRecord(raw.extensions) ? raw.extensions["dev.wntic.ocm"] : undefined
+  if (isRecord(ext)) {
+    if (typeof ext.category === "string") manifest.category = ext.category
+    if (Array.isArray(ext.tags) && ext.tags.every((tag) => typeof tag === "string")) manifest.tags = ext.tags
+  }
   return manifest
 }
 
