@@ -181,7 +181,12 @@ export function lintMcpJson(root: string, pluginDir: string, findings: Finding[]
   const rel = relative(root, file)
   const parsed = parseJson(file, rel, findings)
   if (!parsed) return
-  for (const [server, value] of Object.entries(parsed)) {
+  // Either opencode's own shape — a bare map of server name to entry — or the
+  // Agent Plugins shape, `{ $schema, mcpServers }`. Both are accepted, so one
+  // file per plugin serves opencode, Codex and Cursor alike.
+  const servers = isRecord(parsed.mcpServers) ? parsed.mcpServers : parsed
+  for (const [server, value] of Object.entries(servers)) {
+    if (server === "$schema") continue
     if (!isRecord(value) || value.type === undefined) {
       findings.push(error(`${rel}: entry "${server}" is missing "type"`))
     }

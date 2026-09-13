@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
-import { mcpSourceFile, PLUGIN_NAME_RE } from "./discovery.js"
+import { mcpSourceFile, PLUGIN_NAME_RE, readMcpServers } from "./discovery.js"
 import { OPENCODE_CONFIG_FILE, OPENCODE_DIR } from "./paths.js"
 import { isRecord } from "./registry.js"
 import { componentKey } from "./trust.js"
@@ -64,11 +64,7 @@ export function syncMcp(plugins, dir, entry, enabled, approved, warnings) {
     if (enabled !== null && !enabled.has(plugin.name)) continue
     const file = mcpSourceFile(dir, entry, plugin)
     if (!(plugin.components.mcp ?? []).length && !existsSync(file)) continue
-    let servers = null
-    try {
-      const parsed = JSON.parse(readFileSync(file, "utf8"))
-      if (isRecord(parsed)) servers = parsed
-    } catch {}
+    const servers = readMcpServers(file)
     if (servers === null) {
       warnings.push(`skipped ${file}: not a JSON object`)
       continue

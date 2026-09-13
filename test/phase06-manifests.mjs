@@ -248,3 +248,33 @@ phase("8. a tui-shaped module under plugin/ is rejected with the documented mess
   const registry = existsSync(registryFile(home)) ? readRegistry(home) : { marketplaces: {} }
   expect(registry.marketplaces.mp).toBeUndefined()
 })
+
+// Agent Plugins 1.0 ships mcp.json as { $schema, mcpServers } with transports
+// named stdio / streamable-http / sse. ocm accepts that shape alongside
+// opencode's own so one file per plugin serves opencode, Codex and Cursor.
+const MCP_AGENT_PLUGINS = {
+  $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  mcpServers: {
+    context7: { type: "stdio", command: "npx", args: ["-y", "@upstash/context7-mcp"] },
+    linear: { type: "sse", url: "https://mcp.linear.app/sse" },
+  },
+}
+
+phase("9. an Agent Plugins mcp.json materializes the same opencode keys as the native shape", async (home) => {
+  const configPath = join(cfg(home), "opencode.json")
+  writeTree(cfg(home), { "opencode.json": `${JSON.stringify({ model: "claude-sonnet-4-6" }, null, 2)}\n` })
+  addMp(home, { plugins: { adw: { commands: { "commit.md": COMMAND }, "mcp.json": `${JSON.stringify(MCP_AGENT_PLUGINS, null, 2)}\n` } } })
+  grantTrust(home)
+  expect(ocm(home, "install", "adw").status).toBe(0)
+  // discovery names the servers from mcpServers, not from the wrapper keys
+  expect(readRegistry(home).marketplaces.mp.plugins.adw.components.mcp).toEqual(["context7", "linear"])
+  const mcp = JSON.parse(readFileSync(configPath, "utf8")).mcp
+  expect(mcp["ocm--adw--context7"]).toEqual(MCP.context7) // stdio + args -> local + command array
+  expect(mcp["ocm--adw--linear"]).toEqual(MCP.linear) // sse -> remote
+  expect(mcp["ocm--adw--$schema"]).toBeUndefined()
+})
+
+phase("10. validate accepts both mcp.json shapes", async (home) => {
+  const [ap] = addMp(home, { plugins: { adw: { commands: { "commit.md": COMMAND }, "mcp.json": `${JSON.stringify(MCP_AGENT_PLUGINS, null, 2)}\n` } } })
+  expect(ocm(home, "validate", ap).status).toBe(0)
+})

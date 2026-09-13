@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { join, relative } from "node:path"
-import { discoverPlugins, mcpSourceFile } from "./discovery.js"
+import { discoverPlugins, mcpSourceFile, readMcpServers } from "./discovery.js"
 import { isRecord } from "./registry.js"
 
 // canonical JSON: keys sorted at every level, so reordering mcp.json leaves a
@@ -48,11 +48,9 @@ export function executableComponents(dir, entry) {
       })
     }
     const mcpFile = mcpSourceFile(dir, entry, plugin)
-    let servers = null
-    try {
-      const parsed = JSON.parse(readFileSync(mcpFile, "utf8"))
-      if (isRecord(parsed)) servers = parsed
-    } catch {}
+    // both mcp.json shapes, so the fingerprint covers the servers that will
+    // actually run rather than an Agent Plugins wrapper key
+    const servers = readMcpServers(mcpFile)
     for (const [server, value] of Object.entries(servers ?? {})) {
       components.push({
         rel: `${relative(dir, mcpFile)}:${server}`,

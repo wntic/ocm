@@ -66,13 +66,46 @@ function listJsFiles(pluginDir, dirs) {
   return [...names].sort()
 }
 
-// mcp.json holds opencode's mcp entry shape; the server names are its keys
-function listMcpServers(pluginDir) {
+// An Agent Plugins server entry, translated to opencode's mcp shape. Only the
+// fields opencode has a home for survive: it has no equivalent of `cwd`.
+function toOpencodeServer(entry) {
+  if (entry.type === "stdio") {
+    const args = Array.isArray(entry.args) ? entry.args : []
+    const server = { type: "local", command: [entry.command, ...args], enabled: true }
+    if (isRecord(entry.env)) server.environment = entry.env
+    return server
+  }
+  if (entry.type === "streamable-http" || entry.type === "sse") {
+    const server = { type: "remote", url: entry.url, enabled: true }
+    if (isRecord(entry.headers)) server.headers = entry.headers
+    return server
+  }
+  return entry
+}
+
+// A plugin's mcp.json is either opencode's own shape — a bare map of server
+// name to entry — or the Agent Plugins shape, `{ $schema, mcpServers }`, which
+// Codex and Cursor read. Accepting both means one file per plugin serves every
+// client and the two cannot drift apart.
+export function readMcpServers(file) {
+  let parsed
   try {
-    const parsed = JSON.parse(readFileSync(join(pluginDir, "mcp.json"), "utf8"))
-    if (isRecord(parsed)) return Object.keys(parsed).sort()
-  } catch {}
-  return []
+    parsed = JSON.parse(readFileSync(file, "utf8"))
+  } catch {
+    return null
+  }
+  if (!isRecord(parsed)) return null
+  if (!isRecord(parsed.mcpServers)) return parsed
+  const servers = {}
+  for (const [name, entry] of Object.entries(parsed.mcpServers)) {
+    if (isRecord(entry)) servers[name] = toOpencodeServer(entry)
+  }
+  return servers
+}
+
+function listMcpServers(pluginDir) {
+  const servers = readMcpServers(join(pluginDir, "mcp.json"))
+  return servers ? Object.keys(servers).sort() : []
 }
 
 // the mcp source file: the marketplace entry's mcpServers path when it
