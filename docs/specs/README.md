@@ -26,8 +26,25 @@ about opencode that turned out to be wrong (see
 | [11 — Cross-tool authoring format](./11-cross-tool.md) | shipped | 03, 06 |
 | [12 — Validate & doctor](./12-validate-doctor.md) | shipped | 06, 07 |
 | [13 — Packaging & migration](./13-packaging.md) | shipped | all |
-| [14 — Agent Plugins interop](./14-agent-plugins.md) | partially landed | 06, 11, 12 |
-| [15 — Manifest location & path resolution](./15-manifest-location.md) | not started | 06, 12 |
+| [14 — Agent Plugins interop](./14-agent-plugins.md) | shipped | 06, 11, 12 |
+| [15 — Manifest location & path resolution](./15-manifest-location.md) | shipped | 06, 12 |
+| [16 — Trust flow completion](./16-trust-flow.md) | planned · v0.3.0 | 07, 10a |
+| [17 — Add-path integrity](./17-add-integrity.md) | planned · v0.3.0 | 02, 03, 08 |
+| [18 — Collision correctness & scan](./18-collisions.md) | planned · v0.3.0 | 04, 05, 08, 12 |
+| [19 — Mandatory plugin manifests](./19-mandatory-manifests.md) | planned · v0.3.0 | 06, 12, 15 |
+| [20 — Doctor & config-write safety](./20-doctor-config-safety.md) | planned · v0.4.0 | 07, 08, 12 |
+| [21 — Displaced originals](./21-displaced-originals.md) | planned · v0.4.0 | 03, 05, 10a |
+| [22 — TUI fixes](./22-tui-fixes.md) | planned · v0.4.0 | 10b, 08 |
+| [23 — Truthful CLI reports](./23-truthful-reports.md) | planned · v0.5.0 | 05, 08, 10a |
+| [24 — Validate hardening](./24-validate-hardening.md) | planned · v0.5.0 | 06, 12, 15, 19 |
+| [25 — List, info & search display](./25-display.md) | planned · v0.5.0 | 07, 08, 09 |
+| [26 — Update engine hygiene](./26-update-hygiene.md) | planned · v0.5.0 | 08 |
+
+Specs 16–26 are the triage of two e2e rounds
+([round 1](../e2e-findings.md),
+[round 2](../e2e-findings-round2.md) — the triage table at its bottom
+maps every finding to its spec). Each spec's header names its release
+and its branch.
 
 ## Decisions locked before writing these specs
 
@@ -86,3 +103,60 @@ Parallelisable once 03 lands: 06+07 and 08 are independent of each other, and
 Two things are worth doing out of order if the schedule slips: the **migration
 in 13** can be folded into 01 as it is written (it is mostly 01's own file
 moves), and **04** can be written on day one since it is a decision record.
+
+Continuing after 13 (the e2e triage specs — severity first, then polish):
+
+| # | Spec | Why here |
+|---|---|---|
+| 14 | [16 — Trust flow](./16-trust-flow.md) | The security-adjacent UX: Ctrl+C half-installs, non-interactive trust is impossible, declines are unrecorded. Every trust interaction must state a true fact before anything else is built on it. |
+| 15 | [17 — Add-path integrity](./17-add-integrity.md) | The front door installs dead symlinks on relative paths and half-registers on bad names — pre-flight validation and absolute resolution unblock everything downstream. |
+| 16 | [18 — Collisions](./18-collisions.md) | The ownership model is right; every human surface around it lies. Fix the surfaces while the model is fresh. |
+| 17 | [19 — Mandatory manifests](./19-mandatory-manifests.md) | Breaking for authors, cheap only while there are no public users — the later it lands, the more expensive it gets. |
+| 18 | [20 — Doctor & config safety](./20-doctor-config-safety.md) | Doctor is the surface of last resort; it must stop deleting approved links and see the classes it owns. |
+| 19 | [21 — Displaced originals](./21-displaced-originals.md) | Small, self-contained; makes the ownership invariant practically true, not just technically. |
+| 20 | [22 — TUI fixes](./22-tui-fixes.md) | Visual batch: routing, sizing, navigation, versions. Independent of 20–21; order within v0.4.0 is free. |
+| 21 | [23 — Truthful reports](./23-truthful-reports.md) + [24](./24-validate-hardening.md)–[26](./26-update-hygiene.md) | Pure polish on a correct core — deliberately last. |
+
+Parallelisable: 16, 17, 18, 19 are independent of each other; 20, 21, 22
+likewise; 23–26 likewise. Within a batch, any order.
+
+## Releases & versioning
+
+npm package `@wntic/ocm`; semver; currently 0.x.
+
+| Version | Contents | Status |
+|---|---|---|
+| v0.1.0 | specs 01–13 | published 2026-09-10 |
+| v0.2.0 | specs 14–15 (implemented on `main`, unpushed) | **pending**: push `main`, bump `package.json` to 0.2.0, commit `Release v0.2.0`, tag `v0.2.0`, `npm publish` |
+| v0.3.0 | specs 16–19 | planned |
+| v0.4.0 | specs 20–22 | planned |
+| v0.5.0 | specs 23–26 | planned |
+
+Rules:
+
+- **Every spec names its target release in its header.** A spec that
+  changes shipped behaviour does not land without its release;
+  docs-only changes may ride any release.
+- While 0.x: one **minor** per milestone batch; **patch** only for
+  hotfixes of an already-published version.
+- Breaking changes (schema, CLI contract, author requirements) are
+  allowed only in a minor while 0.x, must be listed in the spec's
+  **Breaking** note, and are justified by the absence of public
+  users. After 1.0 they require a deprecation window.
+- `npm publish` runs only from `main`, only on a commit tagged
+  `vX.Y.Z`. The tag is the release record; the version in
+  `package.json` never lies about what is published.
+
+## Branches
+
+- **One branch per spec**: `spec/<NN>-<slug>` matching the spec's own
+  header — `spec/16-trust-flow`, `spec/17-add-integrity`, …. One spec
+  per branch, one branch per spec; the PR description names the spec.
+- PR into `main`; imperative subject, prose body explaining why (the
+  house commit style).
+- `develop` is **retired** — delete it after v0.2.0 ships. Per-spec
+  branches plus tagged releases replace it.
+- Hotfixes: `hotfix/vX.Y.Z` cut from the release tag, patch bump, PR
+  into `main`.
+- Release commit: `Release v0.3.0` — version bump and spec-status
+  flips only, no behaviour changes in the release commit itself.
