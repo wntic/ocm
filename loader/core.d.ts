@@ -241,6 +241,7 @@ export declare function discoverMarketplace(marketplaceDir: string): CoreDiscove
 export declare function discoveryError(plugins: CoreManifestPlugin[]): string | null
 export declare function nameDisagreement(pluginDir: string, pluginName: string): string | null
 export declare function readManifest(marketplaceDir: string): { name?: string; description?: string }
+export declare function marketplaceManifestFile(marketplaceDir: string): string
 export declare function componentRoot(entry: CoreMarketplaceEntry): string
 export declare function incumbentMarketplace(registry: CoreRegistry, self: string, pluginName: string): string | undefined
 export declare function registerPlugins(registry: CoreRegistry, name: string, plugins: CoreManifestPlugin[]): void

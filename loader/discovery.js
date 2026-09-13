@@ -114,10 +114,14 @@ function listMcpServers(pluginDir) {
 }
 
 // the mcp source file: the marketplace entry's mcpServers path when it
-// declares one, else the plugin directory's own mcp.json (spec 06)
+// declares one, else the plugin directory's own mcp.json (spec 06). The
+// declared path is plugin-relative; the marketplace root is a deprecated
+// fallback discovery has already warned about (spec 15 §3)
 export function mcpSourceFile(dir, entry, plugin) {
   const declared = entry?.plugins?.[plugin.name]?.manifest?.mcpServers
-  return typeof declared === "string" ? join(dir, declared) : join(plugin.dir, "mcp.json")
+  if (typeof declared !== "string") return join(plugin.dir, "mcp.json")
+  const pluginFile = join(plugin.dir, declared.slice(2))
+  return existsSync(pluginFile) ? pluginFile : join(dir, declared.slice(2))
 }
 
 // a name defined in both the singular and plural form of a component

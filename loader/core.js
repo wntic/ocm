@@ -26,7 +26,7 @@ export { setSkillsPath } from "./config.js"
 export { git, isGitRepo, pullRepo, syncAll } from "./sync.js"
 export { denyEntry, executableComponents, grantEntry, trustFingerprint } from "./trust.js"
 export { isGitUrl, manifestName, marketplaceNameFromUrl, normaliseMarketplaceName, parseSource } from "./source.js"
-export { discoveryError, discoverMarketplace, nameDisagreement, readManifest } from "./manifest.js"
+export { discoveryError, discoverMarketplace, marketplaceManifestFile, nameDisagreement, readManifest } from "./manifest.js"
 export {
   addMarketplace,
   componentRoot,

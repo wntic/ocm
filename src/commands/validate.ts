@@ -59,6 +59,7 @@ function lintPlugin(
   const record = lintPluginJson(root, plugin.dir, plugin.name, findings)
   lintMcpJson(root, plugin.dir, findings)
   const entry = manifest.entries.get(plugin.name)
+  lintMcpServersBase(root, plugin, entry, findings)
   const fromMarketplace = typeof entry?.version === "string" ? entry.version : undefined
   const fromPlugin = typeof record?.version === "string" ? record.version : undefined
   if (fromMarketplace && fromPlugin && fromMarketplace !== fromPlugin) {
@@ -77,6 +78,27 @@ function lintPlugin(
   for (const file of plugin.components.plugin ?? []) {
     lintPluginJs(root, plugin, file, findings)
   }
+}
+
+// spec 15 §3: mcpServers resolves against the plugin directory; a value
+// that resolves only against the marketplace root is deprecated
+function lintMcpServersBase(
+  root: string,
+  plugin: CoreDiscoveredPlugin,
+  entry: Record<string, unknown> | undefined,
+  findings: Finding[],
+): void {
+  const mcpServers = entry?.mcpServers
+  if (typeof mcpServers !== "string" || !mcpServers.startsWith("./") || mcpServers.split("/").includes("..")) return
+  const pluginFile = join(plugin.dir, mcpServers.slice(2))
+  const marketplaceFile = join(root, mcpServers.slice(2))
+  if (existsSync(pluginFile) || !existsSync(marketplaceFile)) return
+  findings.push(
+    warning(
+      `${relative(root, plugin.dir)}: mcpServers "${mcpServers}" resolves only against the marketplace root — deprecated; ` +
+        `expected ${relative(root, pluginFile)}, found ${relative(root, marketplaceFile)}`,
+    ),
+  )
 }
 
 function lintTypos(rel: string, pluginDir: string, findings: Finding[]): void {

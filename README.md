@@ -79,7 +79,8 @@ automatic migration (below) prints the old → new mapping when it relinks.
 
 ```
 my-marketplace/
-├── marketplace.json              # optional
+├── .opencode-plugin/
+│   └── marketplace.json      # optional
 └── plugins/
     ├── demo-kit/
     │   ├── plugin.json           # optional
@@ -123,6 +124,10 @@ marketplace root.
 
 ### `marketplace.json`
 
+The manifest lives at `.opencode-plugin/marketplace.json`. A root
+`marketplace.json` still works — `ocm validate` warns — but new marketplaces
+should use the new location.
+
 ```json
 {
   "name": "my-marketplace",
@@ -144,8 +149,10 @@ marketplace root.
 ```
 
 Only a plugin entry's `name` and `source` are required. `source` is a
-`./`-relative path inside the marketplace — `../` and absolute paths are
-rejected; the marketplace repo is the distribution unit. `defaultEnabled:
+`./`-relative path inside the marketplace — it says where the plugin is.
+`mcpServers` is `./`-relative inside the plugin directory — it says what is
+in the plugin. `../` and absolute paths are rejected; the marketplace repo is
+the distribution unit. `defaultEnabled:
 false` keeps a plugin disabled in an `auto` marketplace.
 
 ### `plugin.json`

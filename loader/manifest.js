@@ -54,10 +54,29 @@ export function nameDisagreement(pluginDir, pluginName) {
   )
 }
 
-function readEntries(marketplaceDir) {
+// spec 15: .opencode-plugin/marketplace.json wins; the root path stays legal
+export function marketplaceManifestFile(marketplaceDir) {
+  const preferred = join(marketplaceDir, ".opencode-plugin", "marketplace.json")
+  if (existsSync(preferred)) return preferred
+  return join(marketplaceDir, "marketplace.json")
+}
+
+function readEntries(marketplaceDir, warnings) {
   const entries = new Map()
-  const raw = readJsonRecord(join(marketplaceDir, "marketplace.json"))
-  if (!Array.isArray(raw?.plugins)) return entries
+  const file = marketplaceManifestFile(marketplaceDir)
+  if (!existsSync(file)) return entries
+  let raw
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8"))
+  } catch {
+    raw = undefined
+  }
+  if (!isRecord(raw)) {
+    // a broken manifest is reported, never routed around (spec 15 §4)
+    warnings.push(`${file}: not a valid JSON object — the manifest is ignored`)
+    return entries
+  }
+  if (!Array.isArray(raw.plugins)) return entries
   for (const entry of raw.plugins) {
     if (isRecord(entry) && typeof entry.name === "string") entries.set(entry.name, entry)
   }
@@ -66,7 +85,7 @@ function readEntries(marketplaceDir) {
 
 export function discoverMarketplace(marketplaceDir) {
   const warnings = []
-  const entries = readEntries(marketplaceDir)
+  const entries = readEntries(marketplaceDir, warnings)
   const plugins = new Map()
   for (const plugin of discoverPlugins(marketplaceDir)) {
     const entry = entries.get(plugin.name)
@@ -84,11 +103,27 @@ export function discoverMarketplace(marketplaceDir) {
     const components = { ...plugin.components }
     if (typeof entry?.defaultEnabled === "boolean") manifest.defaultEnabled = entry.defaultEnabled
     if (typeof entry?.mcpServers === "string") {
+      // spec 15 §3: plugin-relative first, the marketplace root is deprecated
       const rel = relativePath(entry.mcpServers)
-      const servers = rel === null ? undefined : readJsonRecord(join(marketplaceDir, rel))
+      const pluginFile = rel === null ? null : join(plugin.dir, rel)
+      const marketplaceFile = rel === null ? null : join(marketplaceDir, rel)
+      const inPlugin = pluginFile !== null && existsSync(pluginFile)
+      const inMarketplace = marketplaceFile !== null && existsSync(marketplaceFile)
+      const servers = inPlugin ? readJsonRecord(pluginFile) : inMarketplace ? readJsonRecord(marketplaceFile) : undefined
       if (servers) {
         manifest.mcpServers = entry.mcpServers
         components.mcp = Object.keys(servers).sort()
+        if (inPlugin && inMarketplace && pluginFile !== marketplaceFile) {
+          warnings.push(
+            `plugin "${plugin.name}": mcpServers "${entry.mcpServers}" resolves to both ${pluginFile} and ${marketplaceFile}` +
+              "; the plugin-relative file wins",
+          )
+        } else if (!inPlugin && inMarketplace) {
+          warnings.push(
+            `plugin "${plugin.name}": mcpServers "${entry.mcpServers}" resolves only against the marketplace root — deprecated;` +
+              ` expected ${pluginFile}, found ${marketplaceFile}`,
+          )
+        }
       } else {
         warnings.push(`plugin "${plugin.name}": mcpServers path "${entry.mcpServers}" is not a JSON object in ${marketplaceDir}`)
       }
@@ -151,7 +186,7 @@ function tuiModule(plugin) {
 }
 
 export function readManifest(marketplaceDir) {
-  const file = join(marketplaceDir, "marketplace.json")
+  const file = marketplaceManifestFile(marketplaceDir)
   if (!existsSync(file)) return {}
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8"))

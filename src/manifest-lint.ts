@@ -3,7 +3,7 @@
 // dependency; the schema files exist for editors).
 import { existsSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
-import { readRegistry } from "../loader/core.js"
+import { marketplaceManifestFile, readRegistry } from "../loader/core.js"
 import { error, warning, type Finding } from "./findings"
 
 export const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
@@ -138,7 +138,21 @@ export function lintMarketplaceJson(root: string, findings: Finding[]): Marketpl
       warning(`${relative(root, codexCatalog)}: not a catalog location — Codex reads .agents/plugins/marketplace.json; remove this file`),
     )
   }
-  const file = join(root, "marketplace.json")
+  // spec 15 §2: both manifest locations present — the new path wins
+  const rootFile = join(root, "marketplace.json")
+  const file = marketplaceManifestFile(root)
+  if (file !== rootFile && existsSync(rootFile)) {
+    findings.push(
+      warning(`${relative(root, rootFile)}: ignored — ${relative(root, file)} wins; remove one of the two manifests`),
+    )
+  }
+  // spec 15 §4: not ocm's business to police, but opencode reads .opencode/
+  // as project config when the repo is opened in it
+  if (existsSync(join(root, ".opencode"))) {
+    findings.push(
+      warning(".opencode/: opencode reads this directory as project config — opening this repo in opencode injects its contents"),
+    )
+  }
   if (!existsSync(file)) return manifest
   const rel = relative(root, file)
   const parsed = parseJson(file, rel, findings)

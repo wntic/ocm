@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { marketplaceManifestFile } from "../loader/core.js"
 import type { DiscoveredPlugin } from "./types"
 
 export { discoverMarketplace, discoveryError, nameDisagreement, readManifest } from "../loader/core.js"
@@ -31,6 +32,6 @@ function collectRenames(raw: Record<string, unknown> | undefined, into: Record<s
 export function readRenames(marketplaceDir: string, plugins: DiscoveredPlugin[]): Record<string, string | null> {
   const renames: Record<string, string | null> = {}
   for (const plugin of plugins) collectRenames(readJsonRecord(join(plugin.dir, "plugin.json")), renames)
-  collectRenames(readJsonRecord(join(marketplaceDir, "marketplace.json")), renames)
+  collectRenames(readJsonRecord(marketplaceManifestFile(marketplaceDir)), renames)
   return renames
 }
