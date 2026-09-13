@@ -32,7 +32,7 @@ usage:
   ocm enable <plugin>[@<mp>]        alias of install
   ocm disable <plugin>[@<mp>]       alias of uninstall
   ocm mode <name> <auto|explicit>   change when new upstream plugins install
-  ocm trust <name>                  approve a marketplace's executable components
+  ocm trust <name> [--yes]          approve a marketplace's executable components
   ocm untrust <name>                revoke trust and remove executable components
   ocm scan <url|path|plugin>        dry-run: show what would be installed
   ocm validate [path]               lint a marketplace repo (default: current directory)
@@ -142,7 +142,7 @@ export async function main(argv: string[]): Promise<void> {
       break
     case "trust":
       requireArg(positional[0], "missing marketplace name")
-      await trust(positional[0]!)
+      await trust(positional[0]!, flags.has("yes"))
       break
     case "untrust":
       requireArg(positional[0], "missing marketplace name")

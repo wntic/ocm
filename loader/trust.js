@@ -96,6 +96,36 @@ export function denyEntry(entry) {
   delete entry.trustPending
 }
 
+// the components a trust prompt is about: new ones, or ones whose hash
+// changed since the grant. A grant without per-component records (written by
+// hand before spec 07) approves everything, so nothing is pending (spec 16)
+export function pendingComponents(entry, components) {
+  const trust = entry?.trust
+  if (!trust || trust.code === "denied") return []
+  const recorded = isRecord(trust.components) ? trust.components : null
+  if (recorded === null) return trust.code === "none" ? components : []
+  return components.filter((c) => recorded[c.rel] !== c.hash && recorded[c.rel] !== `!${c.hash}`)
+}
+
+// a `skip` answer: record the shown set under the undecided code, so the
+// prompt returns only when something new arrives. Never called under a
+// grant — recording there would silently approve drift (spec 16)
+export function skipEntry(entry, components) {
+  const recorded = isRecord(entry.trust.components) ? entry.trust.components : {}
+  for (const component of components) recorded[component.rel] = component.hash
+  entry.trust.components = recorded
+}
+
+// a declined re-prompt: deny only the components it was about, recorded as
+// "!" + hash so the materializer's exact-match check blocks them; the rest
+// of the grant keeps running (spec 16)
+export function denyComponentsEntry(entry, pending) {
+  const recorded = isRecord(entry.trust.components) ? entry.trust.components : {}
+  for (const component of pending) recorded[component.rel] = `!${component.hash}`
+  entry.trust.components = recorded
+  delete entry.trustPending
+}
+
 // the materializer's per-component gate: approved iff the marketplace is
 // granted and the component's hash matches the grant record. A grant without
 // a record (written by hand before spec 07) approves everything.

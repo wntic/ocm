@@ -243,6 +243,23 @@ their marketplace (`ocm trust <name>`); until then they are reported as
 component — an upstream change to an executable component re-blocks it until
 re-approved.
 
+The prompt offers three answers:
+
+- **`y`** — grant. The listed components are linked and run from the next
+  opencode start.
+- **`N`** — deny. A decline at first sight (add time) denies the whole
+  marketplace: every executable component stays blocked. A decline of a
+  changed-code re-prompt denies only the new or changed components — what the
+  existing grant still covers keeps running — and the same change never
+  prompts again.
+- **`skip`** — decide nothing this run. The components stay blocked, and the
+  question returns only when something new arrives.
+
+`ocm trust <name> --yes` grants without reading stdin, exactly as an
+interactive `y` — the scriptable path. Without a TTY and without `--yes`,
+`ocm trust` prints the question, then
+`stdin is not interactive — re-run with --yes to grant`, and exits 1.
+
 ## Loader (auto-sync)
 
 `ocm add` installs `~/.config/opencode/plugins/ocm-loader.js` — the only ocm
