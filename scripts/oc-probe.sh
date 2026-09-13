@@ -101,9 +101,12 @@ for spec in (d.get("plugin") or []):
     print("plugin:  ", spec if isinstance(spec, str) else spec[0])
 PY
 
-( cd "$ROOT" && OPENCODE_CONFIG_DIR="$PROBE" opencode debug skill ) 2>/dev/null \
-  | python3 -c 'import json,sys; print("skills:  ", ", ".join(sorted(s["name"] for s in json.load(sys.stdin))))' \
-  2>/dev/null || echo "skills:   (unreadable)"
+# Redirect to a file rather than piping: the skill dump runs to hundreds of
+# kilobytes and gets truncated at the pipe buffer, which showed up as a bogus
+# "unreadable" once enough skills were installed.
+( cd "$ROOT" && OPENCODE_CONFIG_DIR="$PROBE" opencode debug skill ) >"$WORK/skills.json" 2>/dev/null
+python3 -c 'import json,sys; print("skills:  ", ", ".join(sorted(s["name"] for s in json.load(open(sys.argv[1])))))' \
+  "$WORK/skills.json" 2>/dev/null || echo "skills:   (unreadable)"
 
 # opencode reports load-stage failures but swallows import-stage ones, so a
 # module whose own imports are broken looks clean in the log. Check directly.
