@@ -26,6 +26,8 @@ about opencode that turned out to be wrong (see
 | [11 — Cross-tool authoring format](./11-cross-tool.md) | shipped | 03, 06 |
 | [12 — Validate & doctor](./12-validate-doctor.md) | shipped | 06, 07 |
 | [13 — Packaging & migration](./13-packaging.md) | shipped | all |
+| [14 — Agent Plugins interop](./14-agent-plugins.md) | partially landed | 06, 11, 12 |
+| [15 — Manifest location & path resolution](./15-manifest-location.md) | not started | 06, 12 |
 
 ## Decisions locked before writing these specs
 
