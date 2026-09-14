@@ -1,8 +1,8 @@
-import { addMarketplace, denyTrust, grantTrust, isGitUrl, normaliseMarketplaceName, parseSource, pinMarketplace, readRegistry, removeMarketplace } from "../../loader/core.js"
+import { addMarketplace, denyTrust, grantTrust, isGitUrl, normaliseMarketplaceName, parseSource, pinMarketplace, readRegistry, removeMarketplace, skipTrust } from "../../loader/core.js"
 import type { CoreAddResult } from "../../loader/core.js"
 import { installLoader } from "../loader"
 import { reportRestart, reportUpgrade, reportWarnings } from "../report"
-import { promptTrust } from "./trust"
+import { printTrustListing, promptTrust } from "./trust-prompt"
 
 export interface AddOptions {
   explicit?: boolean
@@ -32,13 +32,24 @@ export async function add(source: string, options: AddOptions = {}): Promise<voi
     throw err
   }
   reportWarnings(result.warnings)
+  // the loader files do not depend on the trust decision, so they precede the
+  // prompt: an interrupt cannot skip them (spec 16)
+  installLoader()
   // a prompted decision re-materializes: the two passes are reported as one —
   // created links sum, warnings union. A grant makes pass 1's "blocked
   // (untrusted)" lines false, so they do not carry over
   let created = result.report.created
   let warnings = result.report.warnings
+  if (options.trust === true && result.trustComponents.length) {
+    // a blind grant is a security decision made without seeing the question
+    printTrustListing(result.name, result.dir, result.trustComponents)
+  }
   if (result.trustComponents.length && options.trust === undefined) {
-    const decision = await promptTrust(result.name, result.dir, result.trustComponents)
+    const decision = await promptTrust(result.name, result.dir, result.trustComponents, () => {
+      console.error(`interrupted — marketplace "${result.name}" is added and materialized`)
+      console.error("  trust: undecided (executable components are blocked)")
+      console.error(`  run \`ocm trust ${result.name}\` to decide, or \`ocm remove ${result.name}\` to undo`)
+    })
     if (decision === "granted" || decision === "denied") {
       const second = decision === "granted" ? await grantTrust(result.name) : await denyTrust(result.name)
       if (second.report) {
@@ -48,11 +59,12 @@ export async function add(source: string, options: AddOptions = {}): Promise<voi
           : warnings
         warnings = [...new Set([...carry, ...second.report.warnings])]
       }
+    } else {
+      skipTrust(result.name)
     }
   }
   reportWarnings(warnings)
   reportRestart(created)
-  installLoader()
   reportUpgrade(result.wasV1)
   reportAdded(result)
 }

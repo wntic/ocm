@@ -4,7 +4,7 @@ import { nameDisagreement } from "./manifest.js"
 import { componentRoot } from "./marketplace.js"
 import { enabledPlugins, materialize } from "./materialize.js"
 import { loadRegistryForWrite, saveRegistry } from "./registry.js"
-import { denyEntry, executableComponents, grantEntry } from "./trust.js"
+import { denyEntry, executableComponents, grantEntry, skipEntry } from "./trust.js"
 
 // spec 05 argument resolution, shared by every verb that takes a plugin
 export function resolvePlugin(registry, arg) {
@@ -81,6 +81,17 @@ export function grantTrust(name) {
   saveRegistry(registry)
   const report = materialize(name, root, { enabled: enabledPlugins(entry, root) })
   return { granted: true, report, wasV1 }
+}
+
+// a `skip` answer persisted: records the shown set so an unchanged
+// marketplace never prompts again (spec 16)
+export function skipTrust(name) {
+  const { registry } = loadRegistryForWrite()
+  const entry = registry.marketplaces[name]
+  if (!entry) throw new Error(`marketplace "${name}" not found (ocm list)`)
+  if (entry.trust.code !== "none") return
+  skipEntry(entry, executableComponents(componentRoot(entry), entry))
+  saveRegistry(registry)
 }
 
 // idempotent: a second deny writes nothing (spec 07)

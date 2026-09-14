@@ -54,7 +54,7 @@ function applyMcpKeys(desired, prefixes) {
 // one pass over every discovered plugin: enabled plugins contribute desired
 // keys for their approved servers, everything else only the prefix that
 // scopes the stale keys removed for it (specs 06, 07)
-export function syncMcp(plugins, dir, entry, enabled, approved, warnings) {
+export function syncMcp(plugins, dir, entry, enabled, approved, warnings, name) {
   const desired = new Map()
   const prefixes = []
   let count = 0
@@ -71,7 +71,7 @@ export function syncMcp(plugins, dir, entry, enabled, approved, warnings) {
     }
     for (const [server, value] of Object.entries(servers)) {
       if (!approved.get(componentKey("mcp", plugin.name, server))) {
-        warnings.push(`blocked (untrusted): ${plugin.name}:mcp/${server} not installed`)
+        warnings.push(`blocked (untrusted): ${plugin.name}:mcp/${server} not installed — run \`ocm trust ${name}\` to approve`)
         continue
       }
       count += 1

@@ -228,6 +228,9 @@ export declare function executableComponents(dir: string, entry: unknown): CoreE
 export declare function trustFingerprint(components: CoreExecutableComponent[]): string
 export declare function grantEntry(entry: CoreMarketplaceEntry, components: CoreExecutableComponent[]): void
 export declare function denyEntry(entry: CoreMarketplaceEntry): void
+export declare function pendingComponents(entry: CoreMarketplaceEntry, components: CoreExecutableComponent[]): CoreExecutableComponent[]
+export declare function skipEntry(entry: CoreMarketplaceEntry, components: CoreExecutableComponent[]): void
+export declare function denyComponentsEntry(entry: CoreMarketplaceEntry, pending: CoreExecutableComponent[]): void
 export declare function syncAll(options?: {
   force?: boolean
   reason?: string
@@ -251,6 +254,7 @@ export declare function pinMarketplace(name: string, ref?: string | null): Promi
 export declare function resolvePlugin(registry: CoreRegistry, arg: string): CoreResolvedPlugin
 export declare function setEnabled(arg: string, enabled: boolean, options?: { force?: boolean }): CoreSetEnabledResult
 export declare function grantTrust(name: string): CoreGrantResult
+export declare function skipTrust(name: string): void
 export declare function denyTrust(name: string): CoreDenyResult
 export declare function revokeTrust(name: string): CoreDenyResult
 export declare function removeMcpKeys(pluginNames: string[]): string | null

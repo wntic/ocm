@@ -167,7 +167,7 @@ export function materialize(name, dir, options = {}) {
   removed += gcTargets(skillsDir, desiredMirrors, ctx, (path) => isRenderedFile(join(path, "SKILL.md")), only === null ? undefined : `${only}--`)
   removed += gcTargets(OPENCODE_PLUGINS_DIR, desiredPluginLinks, ctx, undefined, only === null ? undefined : `ocm--${only}--`)
 
-  counts.mcp += syncMcp(active, dir, entry, enabled, approved, warnings)
+  counts.mcp += syncMcp(active, dir, entry, enabled, approved, warnings, name)
 
   // a scoped pass never unregisters the skills path: other plugins'
   // rendered skills may still live there

@@ -46,15 +46,13 @@ export async function update(target?: string, options: UpdateOptions = {}): Prom
     return
   }
   const reports: MarketplaceReport[] = []
-  let installedLoader = false
+  // before any prompt: the loader files do not depend on the trust decision,
+  // so an interrupt at a re-prompt cannot skip them (spec 16)
+  installLoader()
   for (const name of names) {
     const report = await updateOne(registry, name, options.trust, plugin)
     reports.push(report)
     if (!options.json) renderMarketplace(report, options.quiet === true)
-    if (report.ok && !installedLoader) {
-      installLoader()
-      installedLoader = true
-    }
   }
   if (options.json) console.log(JSON.stringify({ marketplaces: reports }, null, 2))
   reportUpgrade(wasV1)

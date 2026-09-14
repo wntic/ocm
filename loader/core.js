@@ -24,7 +24,7 @@ export { loadRegistryForWrite, normalizeRegistry, pluginRootEnv, readRegistry, s
 export { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
 export { setSkillsPath } from "./config.js"
 export { git, isGitRepo, pullRepo, syncAll } from "./sync.js"
-export { denyEntry, executableComponents, grantEntry, trustFingerprint } from "./trust.js"
+export { denyComponentsEntry, denyEntry, executableComponents, grantEntry, pendingComponents, skipEntry, trustFingerprint } from "./trust.js"
 export { isGitUrl, manifestName, marketplaceNameFromUrl, normaliseMarketplaceName, parseSource } from "./source.js"
 export { discoveryError, discoverMarketplace, marketplaceManifestFile, nameDisagreement, readManifest } from "./manifest.js"
 export {
@@ -35,6 +35,6 @@ export {
   registerPlugins,
   removeMarketplace,
 } from "./marketplace.js"
-export { denyTrust, grantTrust, resolvePlugin, revokeTrust, setEnabled } from "./mutations.js"
+export { denyTrust, grantTrust, resolvePlugin, revokeTrust, setEnabled, skipTrust } from "./mutations.js"
 export { removeMcpKeys } from "./mcp.js"
 export { searchPlugins } from "./search.js"
