@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import { pullRepo } from "../../loader/core.js"
+import { pluginLimitViolation, pullRepo } from "../../loader/core.js"
 import { componentRoot, materializeLinks, registerPlugins, removeMcpKeys } from "../install"
 import { discoverMarketplace, readRenames } from "../discovery"
 import { applyRenames, resolveChains } from "../renames"
@@ -69,7 +69,7 @@ async function pullMarketplace(entry: MarketplaceEntry, report: MarketplaceRepor
     // a local directory is the user's: reported and skipped, never re-created
     if (!existsSync(entry.dir)) report.note = `directory missing (${entry.dir}), skipping`
   } else if (existsSync(entry.dir)) {
-    const pull = await pullRepo(entry.dir, entry.ref)
+    const pull = await pullRepo(entry.dir, entry.ref, entry.url)
     if (!pull.ok) throw new Error(pull.output)
     report.before = pull.before
     report.after = pull.after
@@ -148,6 +148,13 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport, 
   // a plugin-scoped update registers no newly shipped plugin: auto-install
   // is the full pass's job, not this one's (spec 08)
   if (plugin) registrable = registrable.filter((candidate) => candidate.name in entry.plugins)
+  // spec 17: an upstream name that breaks a length limit skips that plugin
+  // with the limit named; the rest of the update proceeds
+  registrable = registrable.filter((candidate) => {
+    const violation = pluginLimitViolation(candidate)
+    if (violation) report.warnings.push(`${violation}; rename it in the marketplace and update again`)
+    return !violation
+  })
   registerPlugins(registry, name, registrable)
   Object.assign(entry.plugins, applied.kept)
   report.renamed = applied.renamed

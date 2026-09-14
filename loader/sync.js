@@ -10,9 +10,17 @@ export function isGitRepo(dir) {
   return existsSync(join(dir, ".git"))
 }
 
+// spec 17: git never prompts — a private repo over https in a tty would hang
+// at git's username prompt forever; a user's own GIT_SSH_COMMAND wins
+function gitEnv() {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0" }
+  if (!env.GIT_SSH_COMMAND) env.GIT_SSH_COMMAND = "ssh -o BatchMode=yes"
+  return env
+}
+
 export function git(args, cwd) {
   return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: gitEnv() })
     let stdout = ""
     let stderr = ""
     let settled = false
@@ -36,16 +44,16 @@ export function git(args, cwd) {
 // spec 08: fetch the pinned ref when there is one, else the remote's HEAD —
 // a --branch clone is single-branch, so a bare fetch would follow the
 // cloned branch rather than the default. Then hard-reset to FETCH_HEAD,
-// with @{u} as the fallback.
-export async function pullRepo(dir, ref) {
+// with @{u} as the fallback. An unreachable source fails as an ocm error
+// naming the url (spec 17).
+export async function pullRepo(dir, ref, url) {
   const before = (await git(["rev-parse", "HEAD"], dir)).stdout
   const dirty = (await git(["status", "--porcelain"], dir)).stdout !== ""
   const fetch = await git(["fetch", "--depth", "1", "origin", ref || "HEAD"], dir)
   if (!fetch.ok) {
-    const detail = fetch.stderr || fetch.stdout
     return {
       ok: false, changed: false, before, after: before, dirty,
-      output: ref ? `cannot fetch ref "${ref}": ${detail}` : detail,
+      output: `cannot access ${url}${ref ? ` (ref "${ref}")` : ""} — the repository is private, unreachable, or the URL is wrong`,
     }
   }
   let reset = await git(["reset", "--hard", "FETCH_HEAD"], dir)
@@ -117,7 +125,7 @@ export async function syncAll(options = {}) {
     // `local === false` rather than `!entry.local`: an entry missing the
     // field must never be treated as an ocm-managed clone
     if (entry.local === false && isGitRepo(entry.dir)) {
-      const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null)
+      const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null, entry.url)
       if (!pull.ok) {
         result.failed.push(name)
         result.errors[name] = pull.output

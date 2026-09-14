@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs"
+import { join, resolve } from "node:path"
 import { readManifest } from "./manifest.js"
 import { HOME, MARKETPLACES_DIR } from "./paths.js"
 import { git } from "./sync.js"
@@ -11,8 +11,12 @@ export function isGitUrl(source) {
   return /^https?:|^git@|^file:\/\//.test(source)
 }
 
+// spec 17: ~/… is expanded by ocm itself (a shell-quoted tilde reaches us
+// raw) and resolved against the cwd, so the registry never holds a relative
+// path and links survive a cwd change
 function expandPath(source) {
-  return source.startsWith("~") ? join(HOME, source.replace(/^~\/?/, "")) : source
+  const expanded = source.startsWith("~") ? join(HOME, source.replace(/^~\/?/, "")) : source
+  return resolve(expanded)
 }
 
 function basename(p) {
@@ -20,13 +24,17 @@ function basename(p) {
 }
 
 export function normaliseMarketplaceName(name) {
-  return (
+  const normalised =
     name
       .toLowerCase()
       .replace(/[^a-z0-9-]+/g, "-")
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "") || "marketplace"
-  )
+  // spec 17: the marketplace name limit, refused before any write
+  if (normalised.length > 64) {
+    throw new Error(`marketplace "${normalised}" exceeds 64 chars (${normalised.length})\n  add it again with --name <a shorter name>`)
+  }
+  return normalised
 }
 
 export function marketplaceNameFromUrl(url) {
@@ -43,8 +51,9 @@ export function marketplaceDir(name) {
 }
 
 // spec 05 add step 1: git urls, github tree urls (repo + ref + subdir) and
-// local paths (absolute, relative or ~/)
+// local paths (absolute, relative or ~/). Arguments are trimmed (spec 17).
 export function parseSource(source) {
+  source = source.trim()
   if (isGitUrl(source)) {
     const tree = source.match(GITHUB_TREE_RE)
     if (tree) {
@@ -61,15 +70,23 @@ export function parseSource(source) {
   }
   const absolute = expandPath(source)
   if (!existsSync(absolute)) {
-    throw new Error(`path does not exist: ${source}`)
+    // spec 17: a bare owner/repo is a common shorthand mistake — hint at the
+    // full spellings rather than a bare not-found
+    const shorthand = /^[\w.-]+\/[\w.-]+$/.test(source)
+      ? `\n  looks like a repository shorthand — use git@github.com:${source}.git or https://github.com/${source}`
+      : ""
+    throw new Error(`path does not exist: ${source}${shorthand}`)
   }
-  return { url: absolute, name: normaliseMarketplaceName(basename(absolute)), subdir: null, isGit: false, ref: null }
+  // realpath so a symlinked marketplace directory is stored post-resolution
+  // and moving the link cannot orphan the install (spec 17)
+  return { url: realpathSync(absolute), name: normaliseMarketplaceName(basename(absolute)), subdir: null, isGit: false, ref: null }
 }
 
 // a marketplace.json name is honoured only when it is already a valid
-// marketplace name (spec 05 add step 2)
+// marketplace name (spec 05 add step 2); an over-long one is ignored like an
+// invalid one (spec 17)
 export function manifestName(name) {
-  return name && NAME_RE.test(name) ? name : undefined
+  return name && NAME_RE.test(name) && name.length <= 64 ? name : undefined
 }
 
 async function clone(url, dir, ref) {
@@ -78,7 +95,7 @@ async function clone(url, dir, ref) {
   args.push(url, dir)
   const result = await git(args)
   if (!result.ok) {
-    throw new Error(`git clone failed: ${result.stderr || result.stdout}`)
+    throw new Error(`cannot access ${url} — the repository is private, unreachable, or the URL is wrong`)
   }
 }
 
@@ -88,13 +105,22 @@ async function clone(url, dir, ref) {
 export async function placeClone(parsed, name, ref, registry, named) {
   const dir = marketplaceDir(name)
   mkdirSync(MARKETPLACES_DIR, { recursive: true })
-  await clone(parsed.url, dir, ref)
+  try {
+    await clone(parsed.url, dir, ref)
+  } catch (err) {
+    // a failed add leaves no clone behind (spec 05)
+    rmSync(dir, { recursive: true, force: true })
+    throw err
+  }
+  // spec 17: a fresh clone records its provenance immediately, so search
+  // cannot call a just-added marketplace stale
+  const head = (await git(["rev-parse", "HEAD"], dir)).stdout
   const declared = named ? undefined : manifestName(readManifest(parsed.subdir ? join(dir, parsed.subdir) : dir).name)
-  if (!declared || declared === name) return { name, dir }
+  if (!declared || declared === name) return { name, dir, head }
   if (registry.marketplaces[declared]) {
     rmSync(dir, { recursive: true, force: true })
     throw new Error(`marketplace "${declared}" already added (use "ocm update ${declared}")`)
   }
   renameSync(dir, marketplaceDir(declared))
-  return { name: declared, dir: marketplaceDir(declared) }
+  return { name: declared, dir: marketplaceDir(declared), head }
 }

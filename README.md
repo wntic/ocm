@@ -207,6 +207,10 @@ ocm init                                         # reinstall the auto-sync loade
 ocm loader uninstall                             # remove the auto-sync loader
 ```
 
+`ocm add` expands a leading `~` itself, so `ocm add "~/plugins/my-marketplace"`
+works whether or not the shell expands it; relative paths are resolved to an
+absolute real path before anything is written.
+
 A marketplace with ten plugins and two installs is the normal case. In `auto`
 mode (the default) every discovered plugin is enabled on add and new upstream
 plugins install as they appear; `--explicit` (or `ocm mode <mp> explicit`)
