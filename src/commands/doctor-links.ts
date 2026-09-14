@@ -1,8 +1,8 @@
 // spec 12 doctor: the link-layer checks — stray ocm files, broken symlinks,
 // drifted materialization and paths under directories ocm never owns. Every
 // removal proves ownership first; an unowned path is reported, never touched.
-import { existsSync, readFileSync, readdirSync, readlinkSync, rmSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { existsSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs"
+import { dirname, join, relative } from "node:path"
 import { componentRoot, discoverPlugins, enabledPlugins } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { materializeLinks } from "../install"
@@ -17,6 +17,24 @@ function errText(err: unknown): string {
 // against a realpath'd directory (macOS puts temp dirs behind /var)
 function insideDir(target: string, dir: string): boolean {
   return target === dir || target.startsWith(dir + "/")
+}
+
+// spec 17 stores local marketplace dirs post-realpath while a symlink target
+// keeps whatever spelling created it, so the raw compare alone can disown a
+// link that resolves inside a managed root: resolve the target's deepest
+// existing ancestor before giving up on it
+function resolvesInside(target: string, dir: string): boolean {
+  if (insideDir(target, dir)) return true
+  let ancestor = dirname(target)
+  for (;;) {
+    try {
+      return insideDir(join(realpathSync(ancestor), relative(ancestor, target)), dir)
+    } catch {
+      const parent = dirname(ancestor)
+      if (parent === ancestor) return false
+      ancestor = parent
+    }
+  }
 }
 
 function managedRoots(registry: CoreRegistry): string[] {
@@ -72,7 +90,7 @@ export function checkBrokenLinks(registry: CoreRegistry, findings: Finding[], fi
         continue
       }
       if (existsSync(path)) continue
-      if (!managed.some((root) => insideDir(target, root))) {
+      if (!managed.some((root) => resolvesInside(target, root))) {
         findings.push(error(`${path}: broken symlink → ${target} (not ocm's, left in place)`))
       } else if (fix) {
         removePath(path, findings)

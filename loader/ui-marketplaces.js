@@ -88,7 +88,7 @@ export async function updateFlow(api, name, back) {
   try {
     let changed = false
     if (entry.local === false) {
-      const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null)
+      const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null, entry.url)
       if (!pull.ok) throw new Error(pull.output)
       changed = pull.changed
     }

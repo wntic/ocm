@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { DEFAULT_SYNC_INTERVAL_MS, searchPlugins } from "../../loader/core.js"
 import type { CoreSearchMatch } from "../../loader/core.js"
 import { loadRegistry } from "../registry"
@@ -37,6 +38,9 @@ function componentSummary(components: Partial<Record<string, string[]>>): string
 
 // a stale or failed sync is a common cause of a plugin appearing not to exist
 function staleSync(entry: MarketplaceEntry): boolean {
+  // a local marketplace has nothing to sync: a null lastSync is its steady
+  // state, not a failure — only a missing directory is suspect (spec 17)
+  if (entry.local && !entry.lastSync) return !existsSync(entry.dir)
   const sync = entry.lastSync
   if (!sync || !sync.ok) return true
   const at = Date.parse(sync.at)

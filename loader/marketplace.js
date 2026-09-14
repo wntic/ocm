@@ -3,6 +3,7 @@ import { join, relative } from "node:path"
 import { setSkillsPath } from "./config.js"
 import { discoverMarketplace, discoveryError, readManifest } from "./manifest.js"
 import { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
+import { limitRefusal } from "./limits.js"
 import { removeMcpKeys } from "./mcp.js"
 import { LINKS_DIR } from "./paths.js"
 import { loadRegistryForWrite, saveRegistry } from "./registry.js"
@@ -88,9 +89,9 @@ export async function addMarketplace(source, options = {}) {
   if (registry.marketplaces[wanted]) {
     throw new Error(`marketplace "${wanted}" already added (use "ocm update ${wanted}")`)
   }
-  const { name, dir } = parsed.isGit
+  const { name, dir, head } = parsed.isGit
     ? await placeClone(parsed, wanted, ref, registry, options.name !== undefined)
-    : { name: wanted, dir: parsed.url }
+    : { name: wanted, dir: parsed.url, head: "" }
   const root = parsed.subdir ? join(dir, parsed.subdir) : dir
   const discovered = discoverMarketplace(root)
   const plugins = [...discovered.plugins.values()]
@@ -102,7 +103,7 @@ export async function addMarketplace(source, options = {}) {
       discovered.warnings, parsed, dir,
     )
   }
-  const refusal = discoveryError(plugins)
+  const refusal = discoveryError(plugins) ?? limitRefusal(plugins)
   if (refusal) addRefusal(refusal, discovered.warnings, parsed, dir)
   const collision = collisionError(registry, name, plugins)
   if (collision) addRefusal(collision, discovered.warnings, parsed, dir)
@@ -114,10 +115,10 @@ export async function addMarketplace(source, options = {}) {
     mode,
     ref: parsed.isGit ? ref : null,
     subdir: parsed.subdir,
-    revision: null,
+    revision: head || null,
     syncIntervalMs: null,
     trust: { code: "none" },
-    lastSync: null,
+    lastSync: head ? { at: new Date().toISOString(), ok: true, error: null } : null,
     plugins: {},
   }
   registry.marketplaces[name] = entry
