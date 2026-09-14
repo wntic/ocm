@@ -23,7 +23,8 @@ export function list(options: ListOptions = {}): void {
     const short = entry.revision ? entry.revision.slice(0, 7) : null
     if (short) console.log(`  revision: ${short}`)
     if (options.all && entry.lastSync && !entry.lastSync.ok) {
-      console.log(`  \x1b[31mlast sync failed: ${entry.lastSync.error}\x1b[0m`)
+      // spec 23 §1: a problem line — stderr, and never styled red
+      console.error(`  last sync failed: ${entry.lastSync.error}`)
     }
     for (const [pluginName, plugin] of Object.entries(entry.plugins)) {
       if (!options.all && !plugin.enabled) continue

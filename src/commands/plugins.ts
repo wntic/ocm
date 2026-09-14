@@ -7,7 +7,7 @@ import { OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLO
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
 import { discoverMarketplace } from "../discovery"
 import { clone } from "../git"
-import { reportRestart, reportUpgrade, reportWarnings } from "../report"
+import { reportMutationWarnings, reportRestart, reportUpgrade, reportWarnings } from "../report"
 
 function componentSummary(components: CorePluginComponents): string {
   const parts: string[] = []
@@ -24,7 +24,7 @@ export function install(arg: string, force = false): void {
   const result = setEnabled(arg, true, { force })
   if (result.disagreement) reportWarnings([result.disagreement])
   reportUpgrade(result.wasV1)
-  reportWarnings(result.report.warnings)
+  reportMutationWarnings(result.report.warnings, result.marketplace)
   if (result.takeover) console.log(`took over "${result.plugin}" from marketplace "${result.takeover}"`)
   else if (result.already) console.log(`already installed ${result.plugin}@${result.marketplace}`)
   else console.log(`installed ${result.plugin}@${result.marketplace} (${componentSummary(result.components)})`)
@@ -34,10 +34,13 @@ export function install(arg: string, force = false): void {
 export function uninstall(arg: string): void {
   const result = setEnabled(arg, false)
   reportUpgrade(result.wasV1)
-  reportWarnings(result.report.warnings)
-  reportRestart(result.report.removed)
-  console.log(`uninstalled ${result.plugin}@${result.marketplace}`)
+  reportMutationWarnings(result.report.warnings, result.marketplace)
+  // spec 23 §3: a no-op uninstall states it; §6: the headline precedes the
+  // restart notice
+  if (result.already) console.log(`${result.plugin}@${result.marketplace} not installed`)
+  else console.log(`uninstalled ${result.plugin}@${result.marketplace}`)
   for (const line of result.restore) console.log(line)
+  reportRestart(result.report.removed)
 }
 
 export function setMode(name: string, mode: string): void {

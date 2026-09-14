@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { componentRoot, isGitRepo, readRegistry } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
-import { installLoader, loaderStatus, type LoaderFileStatus } from "../loader"
+import { installLoader, loaderStatus, reportTuiPlugin, type LoaderFileStatus } from "../loader"
 import { materializeLinks } from "../install"
 import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OCM_REGISTRY_FILE } from "../paths"
 import { error, fixed, reportFindings, warning, type Finding } from "../findings"
@@ -75,7 +75,7 @@ function checkLoader(findings: Finding[], fix: boolean): void {
   if (!broken.length) return
   if (fix) {
     try {
-      installLoader()
+      if (installLoader()) reportTuiPlugin()
       findings.push(fixed(`reinstalled ${broken.length} loader file(s) (restart opencode to activate)`))
     } catch (err) {
       findings.push(error(`cannot reinstall the loader — ${errText(err)}`))

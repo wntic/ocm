@@ -39,7 +39,7 @@ function loaderFiles(sourceDir: string): { source: string; target: string }[] {
     }))
 }
 
-function packageVersion(): string {
+export function packageVersion(): string {
   const here = dirname(fileURLToPath(import.meta.url))
   const parsed = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as { version?: unknown }
   return typeof parsed.version === "string" ? parsed.version : "0"
@@ -71,21 +71,22 @@ function warnTuiManual(reason: string): void {
   console.error(`warning: add "${TUI_PLUGIN_ENTRY}" to its "plugin" array manually for the /ocm TUI command`)
 }
 
-function ensureTuiPluginEntry(): void {
+function ensureTuiPluginEntry(): boolean {
   const config = readTuiConfig()
   if (!config) {
     warnTuiManual("is not valid JSON or not a JSON object")
-    return
+    return false
   }
   const plugin = config.plugin
   if (plugin !== undefined && !Array.isArray(plugin)) {
     warnTuiManual('has a "plugin" key that is not an array')
-    return
+    return false
   }
   const entries = Array.isArray(plugin) ? plugin : []
-  if (entries.includes(TUI_PLUGIN_ENTRY)) return
+  if (entries.includes(TUI_PLUGIN_ENTRY)) return false
   config.plugin = [...entries, TUI_PLUGIN_ENTRY]
   writeTuiConfig(config)
+  return true
 }
 
 function removeTuiPluginEntry(): void {
@@ -111,12 +112,13 @@ function rewriteLegacyTuiPluginEntry(): void {
   writeTuiConfig(config)
 }
 
-function installFiles(sourceDir: string): void {
+function installFiles(sourceDir: string): { loader: boolean; tui: boolean } {
   if (existsSync(OCM_DIR) && !statSync(OCM_DIR).isDirectory()) {
     throw new Error(`${OCM_DIR} exists but is not a directory; remove it or move it aside, then re-run ocm init`)
   }
   mkdirSync(OPENCODE_PLUGINS_DIR, { recursive: true })
   mkdirSync(OCM_DIR, { recursive: true })
+  let loader = false
   for (const file of loaderFiles(sourceDir)) {
     const content = stamped(join(sourceDir, file.source))
     let current: string | undefined
@@ -127,8 +129,9 @@ function installFiles(sourceDir: string): void {
     }
     if (current === content) continue
     writeFileSync(file.target, content)
+    loader = true
   }
-  ensureTuiPluginEntry()
+  return { loader, tui: ensureTuiPluginEntry() }
 }
 
 // spec 12 doctor: the installed state of every loader file, by version
@@ -167,11 +170,22 @@ export function migrateLegacyLayout(): void {
   console.log(`migrated ocm registry to ${join(OCM_DIR, "registry.json")}`)
 }
 
-export function installLoader(): void {
+// spec 23 §2: the lines state what happened — files written are "installed",
+// an already-current loader is acknowledged only where the user asked for
+// the install (init re-run, doctor --fix); a no-op update reports nothing.
+// Returns whether the TUI plugin entry was written: the files must install
+// before a trust prompt (spec 16), but the line is a notice and prints after
+// the verb's headline (spec 23 §6)
+export function installLoader(acknowledgeCurrent = true): boolean {
   migrateLegacyLayout()
-  installFiles(loaderSourceDir())
-  console.error(`installed auto-sync loader (${join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME)})`)
-  console.error(`installed TUI plugin (/ocm in the opencode TUI, restart opencode to activate)`)
+  const written = installFiles(loaderSourceDir())
+  if (written.loader) console.log(`installed auto-sync loader (${join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME)})`)
+  else if (acknowledgeCurrent) console.log("auto-sync loader already current")
+  return written.tui
+}
+
+export function reportTuiPlugin(): void {
+  console.log(`installed TUI plugin (/ocm in the opencode TUI, restart opencode to activate)`)
 }
 
 export function uninstallLoader(): void {

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { addMarketplace, denyTrust, grantTrust, isGitUrl, normaliseMarketplaceName, parseSource, pinMarketplace, readRegistry, removeMarketplace, skipTrust } from "../../loader/core.js"
 import type { CoreAddResult } from "../../loader/core.js"
-import { installLoader } from "../loader"
+import { installLoader, reportTuiPlugin } from "../loader"
 import { OCM_LINKS_DIR, OPENCODE_GLOBAL_CONFIG } from "../paths"
 import { reportRestart, reportUpgrade, reportWarnings } from "../report"
 import { printTrustListing, promptTrust } from "./trust-prompt"
@@ -36,8 +36,10 @@ export async function add(source: string, options: AddOptions = {}): Promise<voi
   }
   reportWarnings(result.warnings)
   // the loader files do not depend on the trust decision, so they precede the
-  // prompt: an interrupt cannot skip them (spec 16)
-  installLoader()
+  // prompt: an interrupt cannot skip them (spec 16). A re-print of an
+  // already-current loader is not news (spec 23 §2); the TUI line is a
+  // notice and waits for the headline (spec 23 §6)
+  const tuiInstalled = installLoader(false)
   // a prompted decision re-materializes: the two passes are reported as one —
   // created links sum, warnings union. A grant makes pass 1's "blocked
   // (untrusted)" lines false, so they do not carry over
@@ -74,9 +76,11 @@ export async function add(source: string, options: AddOptions = {}): Promise<voi
     console.error("skills.paths NOT written — opencode.json is not valid JSON")
     console.error(`  add "${join(OCM_LINKS_DIR, result.name, "skills")}" to skills.paths by hand`)
   }
+  // spec 23 §6: the headline precedes the notices
+  reportAdded(result, skillsNotWritten)
+  if (tuiInstalled) reportTuiPlugin()
   reportRestart(created)
   reportUpgrade(result.wasV1)
-  reportAdded(result, skillsNotWritten)
 }
 
 // undefined and valid are both fine: only a present-but-unparseable config
@@ -108,7 +112,13 @@ function reportAdded(result: CoreAddResult, skillsNotWritten: boolean): void {
     const available = result.mode === "explicit" ? " — available, not installed" : ""
     console.log(`  ${plugin.name} (${parts.join(", ")})${available}`)
   }
-  console.log("commands and agents are available as /<plugin>:<name> in every project")
+  // spec 23 §8: in explicit mode nothing is installed — the closing line
+  // names the verb that activates
+  if (result.mode === "explicit") {
+    console.log(`${result.plugins.length} plugins available — ocm install <name> to activate`)
+  } else {
+    console.log("commands and agents are available as /<plugin>:<name> in every project")
+  }
 }
 
 export function remove(name: string): void {
