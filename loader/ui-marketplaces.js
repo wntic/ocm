@@ -122,7 +122,8 @@ async function removeFlow(api, name) {
   try {
     const result = removeMarketplace(name)
     if (result.warnings.length) toast(api, "warning", result.warnings.join("\n"))
-    toast(api, "success", `removed marketplace "${name}" — ${NOTICE}`)
+    const restore = result.restore.length ? `${result.restore.join("\n")}\n` : ""
+    toast(api, "success", `${restore}removed marketplace "${name}" — ${NOTICE}`)
   } catch (err) {
     toast(api, "error", message(err))
   }

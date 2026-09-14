@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { installRefusal, nameHolder } from "./collisions.js"
+import { restoreDisplaced } from "./displaced.js"
 import { nameDisagreement } from "./manifest.js"
 import { componentRoot } from "./marketplace.js"
 import { enabledPlugins, materialize } from "./materialize.js"
@@ -92,6 +93,9 @@ export function setEnabled(arg, enabled, options = {}) {
     force: options.force === true,
   })
   report.warnings.push(...warnings)
+  // spec 21: an uninstall surfaces every displaced original it can restore.
+  // The holder teardown above is a takeover, which displaces nothing.
+  const restore = enabled ? [] : restoreDisplaced({ plugin: resolved.plugin })
   return {
     marketplace: resolved.marketplace,
     plugin: resolved.plugin,
@@ -100,6 +104,7 @@ export function setEnabled(arg, enabled, options = {}) {
     already: Boolean(current),
     takeover: holder,
     wasV1: wasV1 && saved,
+    restore,
     report,
   }
 }

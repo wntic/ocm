@@ -12,6 +12,7 @@ import {
 } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import { containsSkillMd } from "./discovery.js"
+import { appendDisplacement, displayPath } from "./displaced.js"
 
 const RENDERED_MARKER = "ocm: rendered from "
 
@@ -31,8 +32,9 @@ function owningPlugin(target) {
 }
 
 // --force takes over an unowned path by moving it under the displaced dir,
-// never deleting: a mistake stays recoverable and the path is reported
-function takeOver(dest, ctx) {
+// never deleting: a mistake stays recoverable and the path is reported. The
+// displacement is recorded so a later teardown can restore it (spec 21).
+function takeOver(dest, ctx, plugin) {
   if (!ctx.force) {
     ctx.warnings.push(`skipped ${dest}: not managed by ocm`)
     return false
@@ -45,7 +47,8 @@ function takeOver(dest, ctx) {
     ctx.warnings.push(`failed to displace ${dest}: ${err instanceof Error ? err.message : String(err)}`)
     return false
   }
-  ctx.warnings.push(`displaced ${dest} -> ${target}`)
+  appendDisplacement({ marketplace: ctx.name, plugin, dest, dir: ctx.displacedDir })
+  ctx.warnings.push(`displaced your ${displayPath(dest)} → ${target}`)
   return true
 }
 
@@ -70,11 +73,11 @@ export function link(source, dest, ctx, plugin, component) {
     stat = lstatSync(dest)
   } catch {}
   if (stat && !stat.isSymbolicLink()) {
-    if (!takeOver(dest, ctx)) return "skipped"
+    if (!takeOver(dest, ctx, plugin)) return "skipped"
   }
   if (existing !== undefined && existsSync(dest)) {
     if (!targetsInside(existing, ctx.managed)) {
-      if (!takeOver(dest, ctx)) return "skipped"
+      if (!takeOver(dest, ctx, plugin)) return "skipped"
     } else {
       const owner = owningPlugin(existing) ?? ctx.name
       if (owner !== plugin || !insideDir(existing, ctx.dir)) {
@@ -98,7 +101,7 @@ export function link(source, dest, ctx, plugin, component) {
 }
 
 // render: dest is owned iff it carries the rendered marker
-function render(source, dest, transform, ctx) {
+function render(source, dest, transform, ctx, plugin) {
   let output
   try {
     const body = transform(readFileSync(source, "utf8"))
@@ -116,13 +119,13 @@ function render(source, dest, transform, ctx) {
   if (stat) {
     if (stat.isSymbolicLink()) {
       if (existsSync(dest)) {
-        if (!takeOver(dest, ctx)) return "skipped"
+        if (!takeOver(dest, ctx, plugin)) return "skipped"
       }
       try {
         rmSync(dest, { force: true })
       } catch {}
     } else if (!stat.isFile()) {
-      if (!takeOver(dest, ctx)) return "skipped"
+      if (!takeOver(dest, ctx, plugin)) return "skipped"
     } else {
       let current
       try {
@@ -130,7 +133,7 @@ function render(source, dest, transform, ctx) {
       } catch {}
       if (current === output) return "ok"
       if (current === undefined || !current.includes(RENDERED_MARKER)) {
-        if (!takeOver(dest, ctx)) return "skipped"
+        if (!takeOver(dest, ctx, plugin)) return "skipped"
       }
     }
   }
@@ -186,7 +189,7 @@ export function mirror(sourceDir, destDir, plan, ctx, plugin, component) {
     if (containsSkillMd(join(sourceDir, entry))) continue
     desired.add(entry)
     const transform = plan[entry]
-    if (transform) render(join(sourceDir, entry), join(destDir, entry), transform, ctx)
+    if (transform) render(join(sourceDir, entry), join(destDir, entry), transform, ctx, plugin)
     else link(join(sourceDir, entry), join(destDir, entry), ctx, plugin, component)
   }
   return gcTargets(destDir, desired, ctx, isRenderedFile)

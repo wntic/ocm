@@ -12,6 +12,9 @@ export const CACHE_DIR = join(HOME, ".cache", "ocm")
 export const MARKETPLACES_DIR = join(CACHE_DIR, "marketplaces")
 export const LINKS_DIR = join(CACHE_DIR, "links")
 export const DISPLACED_DIR = join(CACHE_DIR, "displaced")
+// spec 21: the displacement index lives beside the tree, not in it — the
+// tree holds nothing but <ts>/<absolute-original-path> copies
+export const DISPLACED_RECORD_FILE = join(CACHE_DIR, "displaced-records.json")
 export const REGISTRY_FILE = join(OCM_DIR, "registry.json")
 // pre-01 layout; read as a fallback for one release
 export const LEGACY_REGISTRY_FILE = join(OPENCODE_PLUGINS_DIR, "ocm-registry.json")

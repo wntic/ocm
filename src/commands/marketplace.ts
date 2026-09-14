@@ -125,6 +125,7 @@ export function remove(name: string): void {
     if (plugin.components.mcp) parts.push(`${plugin.components.mcp.length} mcp servers`)
     console.log(`  ${plugin.name}: ${parts.join(", ")} removed`)
   }
+  for (const line of result.restore) console.log(line)
 }
 
 // spec 08: pinning is branch- and tag-following, never commit-freezing; the
