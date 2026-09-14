@@ -161,5 +161,5 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport, 
   report.removed = applied.removed
   report.pruned = pruned
   report.refused = applied.refused
-  report.plugins = pluginReports(plugins, entry.plugins, versions, known, pluginFileChanges(entry, report.before, report.after, plugins))
+  report.plugins = pluginReports(plugins, entry.plugins, versions, known, pluginFileChanges(entry, report.before, report.after, plugins), name)
 }

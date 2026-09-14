@@ -69,6 +69,7 @@ export function pluginReports(
   versions: Map<string, string | null>,
   known: Set<string>,
   files: Map<string, FileChange[]>,
+  marketplace: string,
 ): PluginReport[] {
   const reports: PluginReport[] = []
   for (const plugin of plugins) {
@@ -78,8 +79,9 @@ export function pluginReports(
     const fresh = !known.has(plugin.name)
     const pluginFiles = files.get(plugin.name) ?? []
     if (!fresh && from === record.version && !pluginFiles.length) continue
+    // spec 18: a collision encountered during update is reported, not acted on
     const note = record.collision
-      ? `not installed (name provided by ${record.collision})`
+      ? `name owned by marketplace "${record.collision}" — kept disabled; ocm install ${plugin.name}@${marketplace} --force to take over`
       : fresh
         ? "installed (auto)"
         : null

@@ -27,6 +27,7 @@ export function doctor(fix: boolean): void {
   const registryUsable = checkRegistryFile(findings)
   checkStrays(registry, findings, fix && registryUsable)
   checkMarketplaces(registry, findings)
+  checkCollisions(registry, findings)
   checkBrokenLinks(registry, findings, fix)
   checkConfig(findings, registry, fix, registryUsable)
   checkMaterialized(registry, findings, fix)
@@ -139,6 +140,22 @@ function checkMarketplaces(registry: CoreRegistry, findings: Finding[]): void {
       const minutes = Number.isFinite(age) ? Math.max(0, Math.round(age / 60_000)) : 0
       const first = lastSync.error?.split("\n").map((line) => line.trim()).find(Boolean) ?? "unknown error"
       findings.push(error(`marketplace "${name}": last sync failed ${minutes}m ago: ${first}`))
+    }
+  }
+}
+
+// spec 18: a recorded collision is a user decision, not a repair — the
+// finding names the holder and the takeover command, and --fix changes nothing
+function checkCollisions(registry: CoreRegistry, findings: Finding[]): void {
+  for (const [name, entry] of Object.entries(registry.marketplaces)) {
+    for (const [plugin, record] of Object.entries(entry.plugins)) {
+      if (!record.collision || record.enabled) continue
+      findings.push(
+        error(
+          `plugin "${plugin}" from marketplace "${name}" is disabled — the name is owned by marketplace "${record.collision}"\n` +
+            `    install with ocm install ${plugin}@${name} --force, or remove one marketplace`,
+        ),
+      )
     }
   }
 }

@@ -117,7 +117,13 @@ function lintPlugins(
       findings.push(error(`${rel}: plugins[] entry needs a "name"`))
     } else {
       lintName(rel, entry.name, undefined, findings)
-      manifest.entries.set(entry.name, entry)
+      // spec 18: a duplicate name silently clobbers the registry record at
+      // add time — the first entry wins, matching this map's keep-first
+      if (manifest.entries.has(entry.name)) {
+        findings.push(error(`${rel}: plugin "${entry.name}" listed twice — the second entry is ignored today`))
+      } else {
+        manifest.entries.set(entry.name, entry)
+      }
     }
     lintSource(rel, entry, root, findings)
   }
