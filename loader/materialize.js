@@ -196,7 +196,11 @@ export function enabledPlugins(entry, dir) {
       if (isRecord(other?.plugins)) for (const name of Object.keys(other.plugins)) taken.add(name)
     }
     for (const plugin of discoverPlugins(dir)) {
-      if (!(plugin.name in registered) && !taken.has(plugin.name)) enabled.add(plugin.name)
+      if (plugin.name in registered || taken.has(plugin.name)) continue
+      // spec 19: a manifest-less plugin is never auto-installed; registered
+      // ones are grandfathered via the registry branch above
+      if (!existsSync(join(plugin.dir, "plugin.json"))) continue
+      enabled.add(plugin.name)
     }
   }
   return enabled

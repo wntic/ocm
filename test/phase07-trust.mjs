@@ -54,6 +54,8 @@ function addAt(home, rel, tree, ...flags) {
 
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const SKILL = "---\nname: python-style\ndescription: Python style guidance\n---\n\n# Python style\n\nUse ruff.\n"
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
 const JS_PLUGIN = 'export default { id: "adw-notify", server: async () => ({}) }\n'
 const JS_PLUGIN_CHANGED = `// v2\n${JS_PLUGIN}`
 const JS_PLUGIN_PING = 'export default { id: "adw-ping", server: async () => ({}) }\n'
@@ -67,6 +69,7 @@ const mcpJson = (servers) => `${JSON.stringify(servers, null, 2)}\n`
 // one plugin carrying both kinds of executable component plus stuff
 function trustedTree(plugin = "adw") {
   return { plugins: { [plugin]: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "commit.md": COMMAND },
     skills: { "python-style": { "SKILL.md": SKILL } },
     plugin: { "notify.js": JS_PLUGIN },
@@ -76,6 +79,7 @@ function trustedTree(plugin = "adw") {
 
 phase("1. a marketplace with no executable component never prompts and records code \"none\"", async (home) => {
   const [mp, result] = addAt(home, "mp", { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "commit.md": COMMAND },
     skills: { "python-style": { "SKILL.md": SKILL } },
   } } })

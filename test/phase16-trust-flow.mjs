@@ -73,6 +73,7 @@ const MCP = { db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabl
 // one plugin carrying both kinds of executable component plus stuff
 function trustedTree(plugin = "adw") {
   return { plugins: { [plugin]: {
+    "plugin.json": json({ description: "demo plugin" }), // spec 19
     commands: { "commit.md": COMMAND }, plugin: { "notify.js": JS_PLUGIN },
     "mcp.json": `${JSON.stringify(MCP, null, 2)}\n`,
   } } }

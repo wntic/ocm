@@ -2,6 +2,7 @@
 // runs last, after any fixes, so its report reflects the repaired state.
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 import { componentRoot, isGitRepo, readRegistry } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { installLoader, loaderStatus, type LoaderFileStatus } from "../loader"
@@ -27,6 +28,7 @@ export function doctor(fix: boolean): void {
   const registryUsable = checkRegistryFile(findings)
   checkStrays(registry, findings, fix && registryUsable)
   checkMarketplaces(registry, findings)
+  checkLegacyManifests(registry, findings)
   checkCollisions(registry, findings)
   checkBrokenLinks(registry, findings, fix)
   checkConfig(findings, registry, fix, registryUsable)
@@ -140,6 +142,20 @@ function checkMarketplaces(registry: CoreRegistry, findings: Finding[]): void {
       const minutes = Number.isFinite(age) ? Math.max(0, Math.round(age / 60_000)) : 0
       const first = lastSync.error?.split("\n").map((line) => line.trim()).find(Boolean) ?? "unknown error"
       findings.push(error(`marketplace "${name}": last sync failed ${minutes}m ago: ${first}`))
+    }
+  }
+}
+
+// spec 19: plugins installed while plugin.json was optional are grandfathered
+// — they keep working, and doctor names each once so the boundary move is
+// visible. A warning, exit-code-neutral: nothing is broken yet
+function checkLegacyManifests(registry: CoreRegistry, findings: Finding[]): void {
+  for (const entry of Object.values(registry.marketplaces)) {
+    const root = componentRoot(entry)
+    if (!existsSync(root)) continue
+    for (const [plugin, record] of Object.entries(entry.plugins)) {
+      if (existsSync(join(root, record.source, "plugin.json"))) continue
+      findings.push(warning(`legacy: "${plugin}" has no plugin.json — add one before its next update`))
     }
   }
 }

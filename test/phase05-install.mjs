@@ -43,9 +43,11 @@ const skillsLinks = (home) => join(home, ".cache", "ocm", "links", "mp", "skills
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const AGENT = "---\ndescription: code reviewer\n---\n\nReviewer body.\n"
 const SKILL = "---\nname: python-style\ndescription: Python style guidance\n---\n\n# Python style\n\nUse ruff.\n"
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
 const TWO_PLUGINS = {
-  adw: { commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } },
-  beta: { commands: { "lint.md": COMMAND } },
+  adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } },
+  beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } },
 }
 
 function addMp(home, plugins = TWO_PLUGINS, ...flags) {
@@ -151,7 +153,7 @@ phase("5. install --force displaces an unowned file into ~/.cache/ocm/displaced/
   const agentDest = join(cfg(home), "agents", "adw:reviewer.md")
   writeTree(cfg(home), { commands: { "adw:commit.md": "# my own commit command\n" },
     agents: { "adw:reviewer.md": "# my own reviewer\n" } })
-  const [mp] = addMp(home, { adw: { commands: { "commit.md": COMMAND }, agents: { "reviewer.md": AGENT } } }, "--explicit")
+  const [mp] = addMp(home, { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, agents: { "reviewer.md": AGENT } } }, "--explicit")
   // invariant: ownership — without --force, no ownership proof means no touch
   const plain = ocm(home, "install", "adw")
   expect(plain.status).toBe(0) // a refusal is never fatal to the operation
@@ -189,7 +191,7 @@ phase("6. ocm remove leaves zero ocm-- traces in opencode.json, no links, no ski
 
 phase("7. scan of a URL leaves no temp directory and no registry change", async (home) => {
   const remote = join(home, "remote", "mp")
-  writeTree(remote, { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+  writeTree(remote, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
   const git = (...args) => spawnSync("git", args, { cwd: remote, encoding: "utf8" })
   for (const args of [["init"], ["add", "-A"], ["-c", "user.email=ocm@test", "-c", "user.name=ocm", "commit", "-m", "fixture"]]) {
     expect(git(...args).status).toBe(0)
@@ -229,9 +231,9 @@ phase("add of a marketplace with zero plugins errors naming the expected layout 
 phase("add checks plugin-name collisions against the whole registry before writing anything", async (home) => {
   const incumbent = join(home, "mp-a")
   const rival = join(home, "mp-b")
-  writeTree(incumbent, { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+  writeTree(incumbent, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
   expect(ocm(home, "add", incumbent).status).toBe(0)
-  writeTree(rival, { plugins: { adw: { commands: { "deploy.md": COMMAND } } } })
+  writeTree(rival, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "deploy.md": COMMAND } } } })
   fails(home, ["add", rival], "mp-a", "mp-b", '"adw"')
   expect(readRegistry(home).marketplaces["mp-b"]).toBeUndefined()
   assertAbsent(join(cfg(home), "commands", "adw:deploy.md"))

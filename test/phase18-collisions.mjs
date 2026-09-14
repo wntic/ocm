@@ -46,17 +46,19 @@ const AGENT = "---\ndescription: code reviewer\n---\n\nReviewer body.\n"
 const SKILL = "---\nname: style\ndescription: style guidance\n---\n\n# Style\n\nBody.\n"
 const JS_PLUGIN = 'export default { id: "phase18-notify", server: async () => ({}) }\n'
 const MCP = json({ db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } })
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = json({ description: "demo plugin" })
 
 // the retroactive collision: "collide" ships "review-tools" only after both
 // marketplaces are already registered, so the update — not add — meets it
 function colliding(home) {
   const big = join(home, "big")
   const collide = join(home, "collide")
-  writeTree(big, { plugins: { "review-tools": { commands: { "review.md": COMMAND } } } })
-  writeTree(collide, { plugins: { filler: { commands: { "fill.md": COMMAND } } } })
+  writeTree(big, { plugins: { "review-tools": { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND } } } })
+  writeTree(collide, { plugins: { filler: { "plugin.json": PLUGIN_JSON, commands: { "fill.md": COMMAND } } } })
   expect(ocm(home, ["add", big]).status).toBe(0)
   expect(ocm(home, ["add", collide]).status).toBe(0)
-  writeTree(collide, { plugins: { "review-tools": { commands: { "review.md": COMMAND } } } })
+  writeTree(collide, { plugins: { "review-tools": { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND } } } })
   const updated = ocm(home, ["update", "collide"])
   expect(updated.status).toBe(0)
   return { big, collide, updated }
@@ -118,17 +120,17 @@ phase("3. update reports the collision as a line, not an action, and never flips
 
 phase("4. add-time refusal lists every colliding plugin with its paths, capped at 10 with an ellipsis", async (home) => {
   const big = join(home, "big")
-  writeTree(big, { plugins: { "review-tools": { commands: { "review.md": COMMAND } }, "lint-tools": { commands: { "lint.md": COMMAND } } } })
+  writeTree(big, { plugins: { "review-tools": { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND } }, "lint-tools": { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } } } })
   expect(ocm(home, ["add", big]).status).toBe(0)
   const rival = join(home, "rival")
-  writeTree(rival, { plugins: { "review-tools": { commands: { "review.md": COMMAND } }, "lint-tools": { commands: { "lint.md": COMMAND } } } })
+  writeTree(rival, { plugins: { "review-tools": { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND } }, "lint-tools": { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } } } })
   const refused = ocm(home, ["add", rival])
   if (refused.status === 0) throw new Error(`expected a non-zero exit from "ocm add ${rival}"`)
   for (const needle of ['"review-tools"', "review.md", '"lint-tools"', "lint.md"]) expect(refused.output).toContain(needle)
   expect(readRegistry(home).marketplaces.rival).toBeUndefined()
   // the cap: 12 colliding names list 10, then point at the rest
   const names = Array.from({ length: 12 }, (_, i) => `tool-${String(i + 1).padStart(2, "0")}`)
-  const wide = (dir) => writeTree(dir, { plugins: Object.fromEntries(names.map((n) => [n, { commands: { "work.md": COMMAND } }])) })
+  const wide = (dir) => writeTree(dir, { plugins: Object.fromEntries(names.map((n) => [n, { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }])) })
   wide(join(home, "wide"))
   expect(ocm(home, ["add", join(home, "wide")]).status).toBe(0)
   const wideRival = join(home, "wide-rival")
@@ -155,6 +157,7 @@ phase("5. doctor reports a recorded collision with the install remedy and exits 
 phase("6. scan of an uninstalled plugin: every component 'would create', executables '(trust-gated)', zero collision lines; the real install then needs no --force", async (home) => {
   const mp = join(home, "mp")
   writeTree(mp, { plugins: { "review-tools": {
+    "plugin.json": PLUGIN_JSON,
     commands: { "review.md": COMMAND }, agents: { "reviewer.md": AGENT }, skills: { style: { "SKILL.md": SKILL } },
     plugin: { "notify.js": JS_PLUGIN }, "mcp.json": MCP,
   } } })
@@ -191,9 +194,9 @@ phase("8. validate flags duplicate plugins[] entries and a cross-plugin basename
       { name: "alpha", source: "./plugins/alpha" }, { name: "beta", source: "./plugins/beta" },
     ] }),
     plugins: {
-      dup: { commands: { "work.md": COMMAND } },
-      alpha: { commands: { "commit.md": COMMAND } },
-      beta: { commands: { "commit.md": COMMAND } },
+      dup: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } },
+      alpha: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } },
+      beta: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } },
     },
   })
   const result = ocm(home, ["validate", dir])
@@ -209,6 +212,7 @@ phase("8. validate flags duplicate plugins[] entries and a cross-plugin basename
 phase("scan of an installed plugin reads 'already linked' for every component, with no collision noise", async (home) => {
   const mp = join(home, "mp")
   writeTree(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "commit.md": COMMAND }, agents: { "reviewer.md": AGENT },
     skills: { style: { "SKILL.md": SKILL } }, plugin: { "notify.js": JS_PLUGIN },
   } } })
@@ -226,7 +230,7 @@ phase("scan of an installed plugin reads 'already linked' for every component, w
 
 phase("scan with a hand-written file at a destination reports that one collision, names the file, and leaves it untouched", async (home) => {
   const mp = join(home, "mp")
-  writeTree(mp, { plugins: { adw: { commands: { "review.md": COMMAND }, agents: { "reviewer.md": AGENT } } } })
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND }, agents: { "reviewer.md": AGENT } } } })
   expect(ocm(home, ["add", mp, "--explicit"]).status).toBe(0)
   const foreign = join(cfg(home), "commands", "adw:review.md")
   writeTree(join(cfg(home), "commands"), { "adw:review.md": "# my own review command\n" })

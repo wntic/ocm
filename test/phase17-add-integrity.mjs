@@ -76,10 +76,12 @@ const snapOutput = (home) => [join(home, ".cache", "ocm", "links"), join(cfg(hom
 
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const SKILL = "---\nname: python-style\ndescription: Python style guidance\n---\n\n# Python style\n\nUse ruff.\n"
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
 
 phase("1. a relative path from $HOME installs live links and survives ocm update from an unrelated cwd", async (home) => {
   const mp = join(home, "mp")
-  writeTree(mp, { plugins: { adw: { commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
   const added = ocm(home, ["add", "mp"], { cwd: home })
   if (added.status !== 0) throw new Error(`ocm add mp (relative, cwd $HOME) exited ${added.status}: ${added.output}`)
   const real = realpathSync(mp)
@@ -106,7 +108,7 @@ phase("1. a relative path from $HOME installs live links and survives ocm update
 test("2. the relative and absolute spellings of one marketplace produce identical registry bytes", async () => {
   const scratch = mkdtempSync(join(tmpdir(), "ocm-shared-"))
   const mp = join(scratch, "mp")
-  writeTree(mp, { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
   const bytes = []
   for (const [arg, cwd] of [["mp", scratch], [mp, tmpdir()]]) {
     await withFakeHome(async (home) => {
@@ -140,11 +142,11 @@ phase("4. a 200-char plugin name is refused whole before any write: one error na
     commands: { "mine.md": "# my own command\n" },
   })
   const good = join(home, "good")
-  writeTree(good, { plugins: { keep: { commands: { "keep.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
+  writeTree(good, { plugins: { keep: { "plugin.json": PLUGIN_JSON, commands: { "keep.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
   expect(ocm(home, ["add", good]).status).toBe(0)
   const longName = "a".repeat(200)
   const bad = join(home, "bad")
-  writeTree(bad, { plugins: { [longName]: { commands: { "work.md": COMMAND } }, fine: { commands: { "fine.md": COMMAND } } } })
+  writeTree(bad, { plugins: { [longName]: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, fine: { "plugin.json": PLUGIN_JSON, commands: { "fine.md": COMMAND } } } })
   const registryBytes = readFileSync(registryFile(home), "utf8")
   const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
   const links = snapOutput(home)
@@ -215,7 +217,7 @@ phase("5. an unreachable repo under a tty fails fast with the ocm error instead 
 
 phase("6. add --ref records the cloned revision and a successful lastSync at add time", async (home) => {
   const remote = join(home, "remote")
-  gitRepo(remote, { plugins: { tool: { commands: { "work.md": COMMAND } } } })
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
   git(remote, ["checkout", "-b", "feature"])
   writeFileSync(join(remote, "plugins", "tool", "commands", "feature.md"), COMMAND)
   commitAll(remote, "feature work")
@@ -232,7 +234,7 @@ phase("6. add --ref records the cloned revision and a successful lastSync at add
 })
 
 phase("7. a no-match search on a local marketplace does not hint at a stale sync", async (home) => {
-  writeTree(join(home, "mp"), { plugins: { solo: { commands: { "work.md": COMMAND } } } })
+  writeTree(join(home, "mp"), { plugins: { solo: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
   expect(ocm(home, ["add", join(home, "mp")]).status).toBe(0)
   const result = ocm(home, ["search", "zzz-nothing"])
   expect(result.status).toBe(1)
@@ -243,7 +245,7 @@ phase("7. a no-match search on a local marketplace does not hint at a stale sync
 
 test("8. a quoted ~/ argument is expanded by ocm itself, and a bare owner/repo gains the repository-shorthand hint", async () => {
   await withFakeHome(async (home) => {
-    writeTree(join(home, "mp"), { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+    writeTree(join(home, "mp"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
     // the shell passed the tilde through unexpanded; the cwd is unrelated,
     // so only ocm's own expansion can find the directory
     const result = ocm(home, ["add", "~/mp"], { cwd: tmpdir() })

@@ -78,6 +78,8 @@ function finding(output, severity, ...needles) {
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const JS_PLUGIN = 'export default { id: "phase15-notify", server: async () => ({}) }\n'
 const MCP = { db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } }
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = json({ description: "demo plugin" })
 
 phase("1. a marketplace with only .opencode-plugin/marketplace.json is added, discovered and listed exactly as a root-manifest one is", async (home) => {
   const mp = join(home, "mp")
@@ -87,7 +89,7 @@ phase("1. a marketplace with only .opencode-plugin/marketplace.json is added, di
       description: "moved marketplace",
       plugins: [{ name: "adw", source: "./plugins/adw", description: "from the new location", version: "2.0.0", category: "review", tags: ["mp-tag"] }],
     }) },
-    plugins: { adw: { commands: { "commit.md": COMMAND } } },
+    plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } },
   })
   const added = ocm(home, "add", mp)
   if (added.status !== 0) throw new Error(`ocm add ${mp} exited ${added.status}: ${added.stderr}`)
@@ -132,7 +134,7 @@ phase("2. a marketplace with only the root manifest still works, unchanged", asy
       name: "rootonly",
       plugins: [{ name: "adw", source: "./plugins/adw", description: "from the root", version: "1.0.0" }],
     }),
-    plugins: { adw: { commands: { "commit.md": COMMAND } } },
+    plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } },
   })
   const added = ocm(home, "add", mp)
   if (added.status !== 0) throw new Error(`ocm add ${mp} exited ${added.status}: ${added.stderr}`)
@@ -151,7 +153,7 @@ phase("3. both manifest locations present: the .opencode-plugin/ one wins and va
   writeTree(mp, {
     ".opencode-plugin": { "marketplace.json": json({ plugins: [{ name: "adw", source: "./plugins/adw", description: "from the new location", version: "2.0.0" }] }) },
     "marketplace.json": json({ plugins: [{ name: "adw", source: "./plugins/adw", description: "from the root", version: "1.0.0" }] }),
-    plugins: { adw: { commands: { "commit.md": COMMAND } } },
+    plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } },
   })
   const added = ocm(home, "add", mp)
   if (added.status !== 0) throw new Error(`ocm add ${mp} exited ${added.status}: ${added.stderr}`)
@@ -174,7 +176,7 @@ phase("4. a malformed .opencode-plugin/marketplace.json is reported and does not
   writeTree(mp, {
     ".opencode-plugin": { "marketplace.json": "{ not json\n" },
     "marketplace.json": json({ name: "rootname", plugins: [{ name: "adw", source: "./plugins/adw", description: "from the root", version: "1.0.0" }] }),
-    plugins: { adw: { commands: { "commit.md": COMMAND } } },
+    plugins: { adw: { "plugin.json": json({ description: "self-described" }), commands: { "commit.md": COMMAND } } },
   })
   const added = ocm(home, "add", mp)
   const output = `${added.stdout}\n${added.stderr}`
@@ -190,7 +192,9 @@ phase("4. a malformed .opencode-plugin/marketplace.json is reported and does not
   }
   const entry = registry.marketplaces.mp
   if (!entry) throw new Error(`expected marketplace "mp" in ${registryFile(home)}`)
-  expect(entry.plugins.adw.manifest.description).toBeUndefined()
+  // no fallback: the only metadata reaching the registry is the plugin's own
+  // plugin.json — the root manifest's "from the root" reaches nothing
+  expect(entry.plugins.adw.manifest.description).toBe("self-described")
   expect(entry.plugins.adw.version).toBeNull()
   // the command still materializes: the scan never needed the manifest
   assertResolves(commandLink(home, "adw", "commit.md"), join(mp, "plugins", "adw", "commands", "commit.md"))
@@ -205,7 +209,7 @@ phase("5. mcpServers resolves inside the plugin directory and its servers materi
   const mp = join(home, "mp")
   writeTree(mp, {
     "marketplace.json": json({ plugins: [{ name: "adw", source: "./plugins/adw", mcpServers: "./mcp.custom.json" }] }),
-    plugins: { adw: { commands: { "commit.md": COMMAND }, "mcp.custom.json": json(MCP) } },
+    plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, "mcp.custom.json": json(MCP) } },
   })
   const added = ocm(home, "add", mp, "--trust")
   if (added.status !== 0) throw new Error(`ocm add ${mp} exited ${added.status}: ${added.stderr}`)
@@ -218,7 +222,7 @@ phase("6. the same mcpServers value resolving only marketplace-relative still wo
   writeTree(mp, {
     "marketplace.json": json({ plugins: [{ name: "adw", source: "./plugins/adw", mcpServers: "./mcp.custom.json" }] }),
     "mcp.custom.json": json(MCP), // resolves marketplace-relative only
-    plugins: { adw: { commands: { "commit.md": COMMAND } } },
+    plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } },
   })
   const added = ocm(home, "add", mp, "--trust")
   if (added.status !== 0) throw new Error(`ocm add ${mp} exited ${added.status}: ${added.stderr}`)
@@ -244,9 +248,9 @@ phase("7. mcpServers escaping the plugin with ../ is refused", async (home) => {
   writeTree(mp, {
     "marketplace.json": json({ plugins: [{ name: "adw", source: "./plugins/adw", mcpServers: "../other-plugin/mcp.json" }] }),
     plugins: {
-      adw: { commands: { "commit.md": COMMAND } },
+      adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } },
       // the escape target exists: a careless plugin-relative resolution would serve it
-      "other-plugin": { "mcp.json": json(MCP) },
+      "other-plugin": { "plugin.json": PLUGIN_JSON, "mcp.json": json(MCP) },
     },
   })
   const added = ocm(home, "add", mp, "--trust")

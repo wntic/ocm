@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs"
-import { dirname } from "node:path"
+import { dirname, join } from "node:path"
 import { pluginLimitViolation, pullRepo } from "../../loader/core.js"
 import { componentRoot, materializeLinks, registerPlugins, removeMcpKeys } from "../install"
 import { discoverMarketplace, readRenames } from "../discovery"
@@ -144,6 +144,7 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport, 
   if (mcpWarning) report.warnings.push(mcpWarning)
   const versions = new Map(Object.entries(entry.plugins).map(([pluginName, plugin]) => [pluginName, plugin.version]))
   const known = new Set(Object.keys(entry.plugins))
+  const fileChanges = pluginFileChanges(entry, report.before, report.after, plugins)
   let registrable = plugins.filter((candidate) => !applied.excluded.has(candidate.name))
   // a plugin-scoped update registers no newly shipped plugin: auto-install
   // is the full pass's job, not this one's (spec 08)
@@ -155,11 +156,23 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport, 
     if (violation) report.warnings.push(`${violation}; rename it in the marketplace and update again`)
     return !violation
   })
+  // spec 19: a manifest-less plugin is refused — new upstream ones are not
+  // installed, and an installed one is grandfathered only until it changes
+  registrable = registrable.filter((candidate) => {
+    if (existsSync(join(candidate.dir, "plugin.json"))) return true
+    const changed = (fileChanges.get(candidate.name) ?? []).length > 0
+    if (candidate.name in entry.plugins && !changed) return true
+    report.warnings.push(
+      `plugin "${candidate.name}": plugins/${candidate.name}/plugin.json is missing — not installed; ` +
+        'add one ({ "description": "…" }) and update again',
+    )
+    return false
+  })
   registerPlugins(registry, name, registrable)
   Object.assign(entry.plugins, applied.kept)
   report.renamed = applied.renamed
   report.removed = applied.removed
   report.pruned = pruned
   report.refused = applied.refused
-  report.plugins = pluginReports(plugins, entry.plugins, versions, known, pluginFileChanges(entry, report.before, report.after, plugins), name)
+  report.plugins = pluginReports(plugins, entry.plugins, versions, known, fileChanges, name)
 }

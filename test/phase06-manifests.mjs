@@ -61,6 +61,8 @@ function grantTrust(home) {
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const AGENT = "---\ndescription: code reviewer\n---\n\nReviewer body.\n"
 const SKILL = "---\nname: python-style\ndescription: Python style guidance\n---\n\n# Python style\n\nUse ruff.\n"
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
 // opencode's module contract: default-export { id, server } (ocm-contract)
 const JS_PLUGIN = 'export default { id: "adw-notify", server: async () => ({}) }\n'
 const USER_PLUGIN = 'export default { id: "mine", server: async () => ({}) }\n'
@@ -104,14 +106,14 @@ phase("2. an unlisted plugin directory is still discovered; a bad source warns a
       { name: "ghost", source: "./plugins/ghost" },
     ]),
     plugins: {
-      adw: { commands: { "commit.md": COMMAND } },
-      beta: { commands: { "lint.md": COMMAND } }, // not listed anywhere
+      adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } },
+      beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } }, // not listed in marketplace.json
     },
   })
   expect(result.status).toBe(0) // a bad source never fails the whole add
   const plugins = readRegistry(home).marketplaces.mp.plugins
   expect(plugins.adw).toBeDefined()
-  expect(plugins.beta).toBeDefined() // manifests add metadata; they never hide a plugin
+  expect(plugins.beta).toBeDefined() // spec 19: unlisted but manifest-carrying, so still discovered
   expect(`${result.stdout}\n${result.stderr}`).toContain("warning")
   expect(`${result.stdout}\n${result.stderr}`).toContain("ghost") // the bad source is named
   assertResolves(join(cfg(home), "commands", "beta:lint.md"), join(mp, "plugins", "beta", "commands", "lint.md"))
@@ -121,7 +123,7 @@ phase("3. a JS plugin links as ocm--<p>--<file>.js when trusted, is reported blo
   const dest = join(pluginsDir(home), "ocm--adw--notify.js")
   // the user's own plugin file predates every ocm run (ownership invariant)
   writeTree(pluginsDir(home), { "my-own.js": USER_PLUGIN })
-  const [mp, added] = addMp(home, { plugins: { adw: { commands: { "commit.md": COMMAND }, plugin: { "notify.js": JS_PLUGIN } } } })
+  const [mp, added] = addMp(home, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, plugin: { "notify.js": JS_PLUGIN } } } })
   expect(`${added.stdout}\n${added.stderr}`).toContain("blocked")
   expect(`${added.stdout}\n${added.stderr}`).toContain("untrusted")
   expect(readRegistry(home).marketplaces.mp.plugins.adw.components.plugin).toEqual(["notify.js"]) // discovered and recorded
@@ -150,7 +152,7 @@ phase("3. a JS plugin links as ocm--<p>--<file>.js when trusted, is reported blo
 phase("4. MCP keys are written namespaced, removed for a disabled plugin, user keys untouched, and the mcp object dropped when only ocm keys remain", async (home) => {
   const configPath = join(cfg(home), "opencode.json")
   writeTree(cfg(home), { "opencode.json": `${JSON.stringify({ model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }, null, 2)}\n` })
-  const [mp] = addMp(home, { plugins: { adw: { commands: { "commit.md": COMMAND }, "mcp.json": `${JSON.stringify(MCP, null, 2)}\n` } } })
+  const [mp] = addMp(home, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, "mcp.json": `${JSON.stringify(MCP, null, 2)}\n` } } })
   grantTrust(home)
   expect(ocm(home, "install", "adw").status).toBe(0)
   expect(readRegistry(home).marketplaces.mp.plugins.adw.components.mcp).toEqual(["context7", "linear"])
@@ -179,7 +181,7 @@ phase("5. config safety across an MCP write: user keys survive outside ocm-owned
     mcp: { "user-server": { type: "local", command: ["echo"] } },
   }
   writeTree(cfg(home), { "opencode.json": `${JSON.stringify(userConfig, null, 2)}\n` })
-  addMp(home, { plugins: { adw: { commands: { "commit.md": COMMAND }, "mcp.json": `${JSON.stringify(MCP, null, 2)}\n` } } })
+  addMp(home, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, "mcp.json": `${JSON.stringify(MCP, null, 2)}\n` } } })
   grantTrust(home)
   expect(ocm(home, "install", "adw").status).toBe(0)
   const after = JSON.parse(readFileSync(configPath, "utf8"))
@@ -200,8 +202,8 @@ phase("6. defaultEnabled: false stays disabled in an auto marketplace until expl
       { name: "beta", source: "./plugins/beta" },
     ]),
     plugins: {
-      adw: { commands: { "commit.md": COMMAND } },
-      beta: { commands: { "lint.md": COMMAND } },
+      adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } },
+      beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } },
     },
   })
   const plugins = readRegistry(home).marketplaces.mp.plugins
@@ -216,6 +218,7 @@ phase("6. defaultEnabled: false stays disabled in an auto marketplace until expl
 phase("7. singular and plural component directories are both discovered; a name clash between them errors", async (home) => {
   const solo = join(home, "solo-mp")
   writeTree(solo, { plugins: { solo: {
+    "plugin.json": PLUGIN_JSON,
     command: { "deploy.md": COMMAND },
     agent: { "reviewer.md": AGENT },
     skill: { "python-style": { "SKILL.md": SKILL } },
@@ -226,6 +229,7 @@ phase("7. singular and plural component directories are both discovered; a name 
   expect(lstatSync(join(skillsLinks(home, "solo-mp"), "solo--python-style")).isDirectory()).toBe(true)
   const clash = join(home, "clash-mp")
   writeTree(clash, { plugins: { duo: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "commit.md": COMMAND },
     command: { "commit.md": COMMAND },
   } } })
@@ -238,7 +242,7 @@ phase("7. singular and plural component directories are both discovered; a name 
 
 phase("8. a tui-shaped module under plugin/ is rejected with the documented message", async (home) => {
   const mp = join(home, "mp")
-  writeTree(mp, { plugins: { adw: { commands: { "commit.md": COMMAND }, plugin: { "ui.js": TUI_MODULE } } } })
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, plugin: { "ui.js": TUI_MODULE } } } })
   const result = ocm(home, "add", mp)
   expect(result.status).not.toBe(0)
   const output = `${result.stdout}\n${result.stderr}`
@@ -263,7 +267,7 @@ const MCP_AGENT_PLUGINS = {
 phase("9. an Agent Plugins mcp.json materializes the same opencode keys as the native shape", async (home) => {
   const configPath = join(cfg(home), "opencode.json")
   writeTree(cfg(home), { "opencode.json": `${JSON.stringify({ model: "claude-sonnet-4-6" }, null, 2)}\n` })
-  addMp(home, { plugins: { adw: { commands: { "commit.md": COMMAND }, "mcp.json": `${JSON.stringify(MCP_AGENT_PLUGINS, null, 2)}\n` } } })
+  addMp(home, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, "mcp.json": `${JSON.stringify(MCP_AGENT_PLUGINS, null, 2)}\n` } } })
   grantTrust(home)
   expect(ocm(home, "install", "adw").status).toBe(0)
   // discovery names the servers from mcpServers, not from the wrapper keys
@@ -275,6 +279,6 @@ phase("9. an Agent Plugins mcp.json materializes the same opencode keys as the n
 })
 
 phase("10. validate accepts both mcp.json shapes", async (home) => {
-  const [ap] = addMp(home, { plugins: { adw: { commands: { "commit.md": COMMAND }, "mcp.json": `${JSON.stringify(MCP_AGENT_PLUGINS, null, 2)}\n` } } })
+  const [ap] = addMp(home, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, "mcp.json": `${JSON.stringify(MCP_AGENT_PLUGINS, null, 2)}\n` } } })
   expect(ocm(home, "validate", ap).status).toBe(0)
 })
