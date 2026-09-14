@@ -28,10 +28,10 @@ about opencode that turned out to be wrong (see
 | [13 — Packaging & migration](./13-packaging.md) | shipped | all |
 | [14 — Agent Plugins interop](./14-agent-plugins.md) | shipped | 06, 11, 12 |
 | [15 — Manifest location & path resolution](./15-manifest-location.md) | shipped | 06, 12 |
-| [16 — Trust flow completion](./16-trust-flow.md) | planned · v0.3.0 | 07, 10a |
-| [17 — Add-path integrity](./17-add-integrity.md) | planned · v0.3.0 | 02, 03, 08 |
-| [18 — Collision correctness & scan](./18-collisions.md) | planned · v0.3.0 | 04, 05, 08, 12 |
-| [19 — Mandatory plugin manifests](./19-mandatory-manifests.md) | planned · v0.3.0 | 06, 12, 15 |
+| [16 — Trust flow completion](./16-trust-flow.md) | shipped | 07, 10a |
+| [17 — Add-path integrity](./17-add-integrity.md) | shipped | 02, 03, 08 |
+| [18 — Collision correctness & scan](./18-collisions.md) | shipped | 04, 05, 08, 12 |
+| [19 — Mandatory plugin manifests](./19-mandatory-manifests.md) | shipped | 06, 12, 15 |
 | [20 — Doctor & config-write safety](./20-doctor-config-safety.md) | planned · v0.4.0 | 07, 08, 12 |
 | [21 — Displaced originals](./21-displaced-originals.md) | planned · v0.4.0 | 03, 05, 10a |
 | [22 — TUI fixes](./22-tui-fixes.md) | planned · v0.4.0 | 10b, 08 |
@@ -127,8 +127,8 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | Version | Contents | Status |
 |---|---|---|
 | v0.1.0 | specs 01–13 | published 2026-09-10 |
-| v0.2.0 | specs 14–15 (implemented on `main`, unpushed) | **pending**: push `main`, bump `package.json` to 0.2.0, commit `Release v0.2.0`, tag `v0.2.0`, `npm publish` |
-| v0.3.0 | specs 16–19 | planned |
+| v0.2.0 | specs 14–15 (implemented on `main`, unpushed) | published 2026-09-13 |
+| v0.3.0 | specs 16–19 | published 2026-09-14 |
 | v0.4.0 | specs 20–22 | planned |
 | v0.5.0 | specs 23–26 | planned |
 
