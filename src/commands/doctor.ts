@@ -6,17 +6,26 @@ import { join } from "node:path"
 import { componentRoot, isGitRepo, readRegistry } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { installLoader, loaderStatus, type LoaderFileStatus } from "../loader"
-import { OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OCM_REGISTRY_FILE } from "../paths"
+import { materializeLinks } from "../install"
+import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OCM_REGISTRY_FILE } from "../paths"
 import { error, fixed, reportFindings, warning, type Finding } from "../findings"
 import { ocmPluginErrors } from "../probe"
 import { checkConfig } from "./doctor-config"
-import { checkBrokenLinks, checkForbiddenPaths, checkMaterialized, checkStrays } from "./doctor-links"
+import { checkBrokenLinks, checkForbiddenPaths, checkMaterialized } from "./doctor-links"
+import { checkOrphanMirrors, checkStrays } from "./doctor-orphans"
+import { recloneMarketplace } from "./update"
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
 export function doctor(fix: boolean): void {
+  // spec 20 F1: diagnostics explain a broken install, not an absent one
+  if (!existsSync(OCM_DIR)) {
+    console.error("error: ocm is not installed here — run ocm init")
+    process.exitCode = 1
+    return
+  }
   console.log("doctor")
   const findings: Finding[] = []
   const registry = readRegistry()
@@ -27,11 +36,12 @@ export function doctor(fix: boolean): void {
   // fixed, or --fix would uninstall everything at once
   const registryUsable = checkRegistryFile(findings)
   checkStrays(registry, findings, fix && registryUsable)
-  checkMarketplaces(registry, findings)
+  checkMarketplaces(registry, findings, fix)
   checkLegacyManifests(registry, findings)
   checkCollisions(registry, findings)
   checkBrokenLinks(registry, findings, fix)
   checkConfig(findings, registry, fix, registryUsable)
+  checkOrphanMirrors(registry, findings, fix && registryUsable)
   checkMaterialized(registry, findings, fix)
   checkForbiddenPaths(registry, findings)
   for (const line of ocmPluginErrors()) findings.push(error(`${line} (ocm update)`))
@@ -126,11 +136,24 @@ function checkLegacyRegistryFile(findings: Finding[]): boolean {
   return true
 }
 
-function checkMarketplaces(registry: CoreRegistry, findings: Finding[]): void {
+// spec 20 F27: --fix re-clones a missing git marketplace and re-materializes;
+// a local directory is the user's — the remedy is restore-or-remove (F46)
+function checkMarketplaces(registry: CoreRegistry, findings: Finding[], fix: boolean): void {
   for (const [name, entry] of Object.entries(registry.marketplaces)) {
     const root = componentRoot(entry)
     if (!existsSync(root)) {
-      findings.push(error(`marketplace "${name}": directory missing (${root}) — ocm update re-clones`))
+      if (entry.local || !fix) {
+        const remedy = entry.local ? `restore the directory, or run ocm remove ${name}` : "ocm update re-clones"
+        findings.push(error(`marketplace "${name}": directory missing (${root}) — ${remedy}`))
+        continue
+      }
+      try {
+        recloneMarketplace(entry)
+        materializeLinks(name, entry)
+        findings.push(fixed(`marketplace "${name}": re-cloned and re-materialized (restart opencode to activate)`))
+      } catch (err) {
+        findings.push(error(`marketplace "${name}": cannot re-clone — ${errText(err)}`))
+      }
       continue
     }
     if (!entry.local && !isGitRepo(entry.dir)) {

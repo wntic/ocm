@@ -5,6 +5,7 @@ export const HOME = homedir()
 
 export const OPENCODE_GLOBAL_DIR = join(HOME, ".config", "opencode")
 export const OPENCODE_GLOBAL_CONFIG = join(OPENCODE_GLOBAL_DIR, "opencode.json")
+export const OPENCODE_TUI_CONFIG = join(OPENCODE_GLOBAL_DIR, "tui.json")
 export const OPENCODE_COMMANDS_DIR = join(OPENCODE_GLOBAL_DIR, "commands")
 export const OPENCODE_AGENTS_DIR = join(OPENCODE_GLOBAL_DIR, "agents")
 export const OPENCODE_PLUGINS_DIR = join(OPENCODE_GLOBAL_DIR, "plugins")

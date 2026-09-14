@@ -1,5 +1,8 @@
+import { accessSync, constants } from "node:fs"
+import { basename } from "node:path"
 import { installLoader, migrateLegacyLayout, uninstallLoader } from "./loader"
 import { migrateInstallation } from "./migrate"
+import { OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG } from "./paths"
 import { add, pin, remove } from "./commands/marketplace"
 import { update } from "./commands/update"
 import { install, scan, setMode, uninstall } from "./commands/plugins"
@@ -83,6 +86,18 @@ function trustFlag(flags: Set<string>): boolean | undefined {
   return undefined
 }
 
+// spec 20 F29: the atomic rename would silently bypass a read-only config —
+// refuse the mutation before its first write instead
+function preflightWritable(files: string[]): void {
+  for (const file of files) {
+    try {
+      accessSync(file, constants.W_OK)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`error: ${basename(file)} is read-only — ocm will not bypass it\n  chmod +w ${file}, then re-run`)
+    }
+  }
+}
+
 export async function main(argv: string[]): Promise<void> {
   migrateLegacyLayout()
   migrateInstallation()
@@ -97,17 +112,21 @@ export async function main(argv: string[]): Promise<void> {
       console.log(HELP)
       break
     case "init":
+      preflightWritable([OPENCODE_TUI_CONFIG])
       installLoader()
       break
     case "add":
       requireArg(positional[0], "missing marketplace url or path")
+      preflightWritable([OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG])
       await add(positional[0]!, { explicit: flags.has("explicit"), name: values.name, ref: values.ref, trust: trustFlag(flags) })
       break
     case "remove":
       requireArg(positional[0], "missing marketplace name")
+      preflightWritable([OPENCODE_GLOBAL_CONFIG])
       remove(positional[0]!)
       break
     case "update":
+      preflightWritable([OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG])
       await update(positional[0], { quiet: flags.has("quiet"), json: flags.has("json"), trust: trustFlag(flags) })
       break
     case "pin":
@@ -128,11 +147,13 @@ export async function main(argv: string[]): Promise<void> {
     case "install":
     case "enable":
       requireArg(positional[0], "missing plugin name")
+      preflightWritable([OPENCODE_GLOBAL_CONFIG])
       install(positional[0]!, flags.has("force"))
       break
     case "uninstall":
     case "disable":
       requireArg(positional[0], "missing plugin name")
+      preflightWritable([OPENCODE_GLOBAL_CONFIG])
       uninstall(positional[0]!)
       break
     case "mode":
@@ -142,10 +163,12 @@ export async function main(argv: string[]): Promise<void> {
       break
     case "trust":
       requireArg(positional[0], "missing marketplace name")
+      preflightWritable([OPENCODE_GLOBAL_CONFIG])
       await trust(positional[0]!, flags.has("yes"))
       break
     case "untrust":
       requireArg(positional[0], "missing marketplace name")
+      preflightWritable([OPENCODE_GLOBAL_CONFIG])
       await untrust(positional[0]!)
       break
     case "scan":
@@ -156,10 +179,12 @@ export async function main(argv: string[]): Promise<void> {
       validate(positional[0])
       break
     case "doctor":
+      if (flags.has("fix")) preflightWritable([OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG])
       doctor(flags.has("fix"))
       break
     case "loader":
       if (positional[0] === "uninstall") {
+        preflightWritable([OPENCODE_TUI_CONFIG])
         uninstallLoader()
       } else {
         throw new Error('unknown loader command, expected "ocm loader uninstall"')

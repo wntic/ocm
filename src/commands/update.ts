@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs"
-import { dirname, join } from "node:path"
-import { pluginLimitViolation, pullRepo } from "../../loader/core.js"
-import { componentRoot, materializeLinks, registerPlugins, removeMcpKeys } from "../install"
+import { dirname } from "node:path"
+import { pullRepo, reconcilePluginRecords } from "../../loader/core.js"
+import { componentRoot, materializeLinks, removeMcpKeys } from "../install"
 import { discoverMarketplace, readRenames } from "../discovery"
 import { applyRenames, resolveChains } from "../renames"
 import { clone, git } from "../git"
@@ -62,6 +62,16 @@ export async function update(target?: string, options: UpdateOptions = {}): Prom
   }
 }
 
+// spec 20: the re-clone behind both `ocm update` and `ocm doctor --fix` —
+// one code path, so a missing cache is repaired the same way everywhere
+export function recloneMarketplace(entry: MarketplaceEntry): string {
+  if (!entry.url) throw new Error(`clone directory missing (${entry.dir}) and no url recorded; remove and re-add the marketplace`)
+  console.error(`clone directory missing, re-cloning ${entry.url}...`)
+  mkdirSync(dirname(entry.dir), { recursive: true })
+  clone(entry.url, entry.dir, entry.ref)
+  return git(["rev-parse", "HEAD"], entry.dir).stdout
+}
+
 // pull, or re-clone a cleared cache (spec 08 edge cases); the revision
 // pair and the re-clone note land on the report
 async function pullMarketplace(entry: MarketplaceEntry, report: MarketplaceReport): Promise<void> {
@@ -75,11 +85,7 @@ async function pullMarketplace(entry: MarketplaceEntry, report: MarketplaceRepor
     report.after = pull.after
     if (pull.dirty) report.warnings.push(`${entry.dir} has local changes; discarded (the cache is not an editing surface)`)
   } else {
-    if (!entry.url) throw new Error(`clone directory missing (${entry.dir}) and no url recorded; remove and re-add the marketplace`)
-    console.error(`clone directory missing, re-cloning ${entry.url}...`)
-    mkdirSync(dirname(entry.dir), { recursive: true })
-    clone(entry.url, entry.dir, entry.ref)
-    report.after = git(["rev-parse", "HEAD"], entry.dir).stdout
+    report.after = recloneMarketplace(entry)
   }
 }
 
@@ -122,7 +128,8 @@ async function updateOne(registry: Registry, name: string, trust?: boolean, plug
   return report
 }
 
-// discover, apply renames, reconcile against the registry (spec 08 step 4)
+// discover, apply renames, reconcile against the registry (spec 08 step 4);
+// the record reconciliation itself is the core's shared function (spec 20)
 function reconcile(registry: Registry, name: string, report: MarketplaceReport, plugin?: string): void {
   const entry = registry.marketplaces[name]!
   const root = componentRoot(entry)
@@ -133,42 +140,18 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport, 
   const { resolved, cycles } = resolveChains(renames)
   for (const cycle of cycles) report.warnings.push(`rename cycle ignored: ${cycle.join(" → ")} → ${cycle[0]}`)
   const applied = applyRenames(registry, name, entry, discovered.plugins, resolved)
-  const pruned: string[] = []
-  for (const pluginName of Object.keys(entry.plugins)) {
-    if (!discovered.plugins.has(pluginName) && !(pluginName in resolved)) {
-      delete entry.plugins[pluginName]
-      pruned.push(pluginName)
-    }
-  }
-  const mcpWarning = removeMcpKeys([...applied.removed, ...applied.renamed.map((rename) => rename.from), ...pruned])
-  if (mcpWarning) report.warnings.push(mcpWarning)
+  // snapshotted before the shared prune: a pruned plugin is never discovered,
+  // so pluginReports never looks its entries up
   const versions = new Map(Object.entries(entry.plugins).map(([pluginName, plugin]) => [pluginName, plugin.version]))
   const known = new Set(Object.keys(entry.plugins))
   const fileChanges = pluginFileChanges(entry, report.before, report.after, plugins)
-  let registrable = plugins.filter((candidate) => !applied.excluded.has(candidate.name))
-  // a plugin-scoped update registers no newly shipped plugin: auto-install
-  // is the full pass's job, not this one's (spec 08)
-  if (plugin) registrable = registrable.filter((candidate) => candidate.name in entry.plugins)
-  // spec 17: an upstream name that breaks a length limit skips that plugin
-  // with the limit named; the rest of the update proceeds
-  registrable = registrable.filter((candidate) => {
-    const violation = pluginLimitViolation(candidate)
-    if (violation) report.warnings.push(`${violation}; rename it in the marketplace and update again`)
-    return !violation
+  const changed = new Set([...fileChanges].filter(([, files]) => files.length > 0).map(([pluginName]) => pluginName))
+  const { warnings, pruned } = reconcilePluginRecords(registry, name, root, {
+    discovered: plugins, excluded: applied.excluded, plugin, resolved, changed,
   })
-  // spec 19: a manifest-less plugin is refused — new upstream ones are not
-  // installed, and an installed one is grandfathered only until it changes
-  registrable = registrable.filter((candidate) => {
-    if (existsSync(join(candidate.dir, "plugin.json"))) return true
-    const changed = (fileChanges.get(candidate.name) ?? []).length > 0
-    if (candidate.name in entry.plugins && !changed) return true
-    report.warnings.push(
-      `plugin "${candidate.name}": plugins/${candidate.name}/plugin.json is missing — not installed; ` +
-        'add one ({ "description": "…" }) and update again',
-    )
-    return false
-  })
-  registerPlugins(registry, name, registrable)
+  const mcpWarning = removeMcpKeys([...applied.removed, ...applied.renamed.map((rename) => rename.from), ...pruned])
+  if (mcpWarning) report.warnings.push(mcpWarning)
+  report.warnings.push(...warnings)
   Object.assign(entry.plugins, applied.kept)
   report.renamed = applied.renamed
   report.removed = applied.removed

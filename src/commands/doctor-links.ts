@@ -1,5 +1,5 @@
-// spec 12 doctor: the link-layer checks — stray ocm files, broken symlinks,
-// drifted materialization and paths under directories ocm never owns. Every
+// spec 12 doctor: the link-layer checks — broken symlinks, drifted
+// materialization and paths under directories ocm never owns. Every
 // removal proves ownership first; an unowned path is reported, never touched.
 import { existsSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
@@ -41,34 +41,12 @@ function managedRoots(registry: CoreRegistry): string[] {
   return Object.values(registry.marketplaces).map((entry) => componentRoot(entry))
 }
 
-function removePath(path: string, findings: Finding[]): void {
+export function removePath(path: string, findings: Finding[]): void {
   try {
     rmSync(path, { force: true, recursive: true })
     findings.push(fixed(`${path}: removed`))
   } catch (err) {
     findings.push(error(`${path}: cannot remove — ${errText(err)}`))
-  }
-}
-
-// spec 01: no ocm file other than ocm-loader.js may live in plugins/
-export function checkStrays(registry: CoreRegistry, findings: Finding[], fix: boolean): void {
-  const claimed = new Set<string>()
-  for (const entry of Object.values(registry.marketplaces)) {
-    for (const [name, plugin] of Object.entries(entry.plugins ?? {})) {
-      for (const file of plugin.components?.plugin ?? []) claimed.add(`ocm--${name}--${file}`)
-    }
-  }
-  let entries: string[]
-  try {
-    entries = readdirSync(OPENCODE_PLUGINS_DIR)
-  } catch {
-    return
-  }
-  for (const name of entries) {
-    if (!name.startsWith("ocm--") || claimed.has(name)) continue
-    const path = join(OPENCODE_PLUGINS_DIR, name)
-    if (fix) removePath(path, findings)
-    else findings.push(error(`${path}: stray ocm file — no registry entry owns it`))
   }
 }
 

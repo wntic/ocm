@@ -252,6 +252,23 @@ re-installing is instant and offline.
   `lastSync.ok = false` and leaves that marketplace's links intact; every
   other marketplace still syncs.
 
+## Config safety
+
+- **Atomic writes, ocm's keys only.** Every ocm write to `opencode.json`,
+  `tui.json` and the registry is atomic (temp file + rename) and touches
+  only keys ocm owns: `ocm--*` prefixes, ocm's own `skills.paths` entries,
+  and the single `tui.json` plugin entry. Your own keys survive
+  byte-identically outside those.
+- **Re-serialization is real and stays.** When ocm does write one of these
+  files, it re-serializes it with 2-space indentation, preserving key order
+  and content exactly. A diff-averse user sees a whitespace-only diff the
+  first time ocm touches their config; this is inherent to the atomic-write
+  design and will not change.
+- **A config that does not parse is never rewritten.** ocm warns and prints
+  the exact manual edit instead.
+- **A read-only config is never bypassed.** The mutation is refused before
+  any write — `chmod +w` the file, then re-run.
+
 ## Trust
 
 JS plugins and MCP servers execute. They materialize only after you approve

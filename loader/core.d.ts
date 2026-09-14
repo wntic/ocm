@@ -121,6 +121,25 @@ export interface CoreParsedSource {
   ref: string | null
 }
 
+export interface CoreReconcileOptions {
+  // the discovered plugins to register; discovered fresh when omitted
+  discovered?: CoreManifestPlugin[]
+  // rename targets refused for a cross-marketplace collision
+  excluded?: Set<string>
+  // a plugin-scoped pass registers no newly shipped plugin
+  plugin?: string
+  // resolved renames: a pruned name that is a rename source survives
+  resolved?: Record<string, string | null>
+  // plugins whose files changed in this pull; a changed manifest-less
+  // install loses its grandfather
+  changed?: Set<string>
+}
+
+export interface CoreReconcileResult {
+  warnings: string[]
+  pruned: string[]
+}
+
 export interface CoreAddOptions {
   explicit?: boolean
   name?: string
@@ -251,6 +270,12 @@ export declare function marketplaceManifestFile(marketplaceDir: string): string
 export declare function componentRoot(entry: CoreMarketplaceEntry): string
 export declare function incumbentMarketplace(registry: CoreRegistry, self: string, pluginName: string): string | undefined
 export declare function registerPlugins(registry: CoreRegistry, name: string, plugins: CoreManifestPlugin[]): void
+export declare function reconcilePluginRecords(
+  registry: CoreRegistry,
+  name: string,
+  root: string,
+  options?: CoreReconcileOptions,
+): CoreReconcileResult
 export declare function addMarketplace(source: string, options?: CoreAddOptions): Promise<CoreAddResult>
 export declare function removeMarketplace(name: string): CoreRemoveResult
 export declare function pinMarketplace(name: string, ref?: string | null): Promise<CorePinResult>
