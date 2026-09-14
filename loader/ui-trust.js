@@ -1,7 +1,8 @@
 // The trust flows of the /ocm TUI dialog (spec 10b): the prompt renders the
 // same component list the CLI prints before a trust decision (spec 07).
 import { componentRoot, denyTrust, executableComponents, grantTrust, readRegistry } from "./core.js"
-import { NOTICE, confirm, message, toast } from "./ui-dialog.js"
+import { NOTICE, message, toast } from "./ui-dialog.js"
+import { confirm } from "./ui-modals.js"
 
 // the same block the CLI prints before a trust prompt (spec 07)
 function trustMessage(name, dir, components) {

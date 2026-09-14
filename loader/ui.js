@@ -1,20 +1,25 @@
-// The /ocm TUI dialog entry (spec 10b): registers the /ocm command and
+// The /ocm TUI dialog entry (specs 10b, 22): registers the /ocm command and
 // renders the menu screens. Every mutation is a core function the CLI also
 // calls; the flows live in the ui-*.js siblings.
 import { readRegistry, searchPlugins } from "./core.js"
-import { alert, componentSummary, prompt, select } from "./ui-dialog.js"
+import { componentSummary, pushView, select } from "./ui-dialog.js"
+import { alert, prompt } from "./ui-modals.js"
 import { blocked, openPlugin } from "./ui-plugins.js"
 import { addMarketplaceFlow, openMarketplaces, runUpdateAll } from "./ui-marketplaces.js"
+
+const EMPTY_STATE =
+  "No marketplaces added yet.\n\nAdd one from your terminal:\n  ocm add <url|path>\n\nOr add one here."
+
+// spec 22 §1: the empty state offers its own way in — the alert chains into
+// the add flow, the only first-install route that stays inside opencode
+export function emptyStateFlow(api, back) {
+  alert(api, "ocm", EMPTY_STATE, () => addMarketplaceFlow(api, back))
+}
 
 export function openMainMenu(api) {
   const marketplaces = Object.entries(readRegistry().marketplaces ?? {})
   if (!marketplaces.length) {
-    alert(
-      api,
-      "ocm",
-      "No marketplaces added yet.\n\nAdd one from your terminal:\n  ocm add <url|path>\n\nOr add one here.",
-      () => addMarketplaceFlow(api, () => openMainMenu(api)),
-    )
+    emptyStateFlow(api, () => openMainMenu(api))
     return
   }
   const plugins = marketplaces.reduce((count, [, entry]) => count + Object.keys(entry.plugins ?? {}).length, 0)
@@ -47,16 +52,24 @@ function pluginOption(registry, marketplace, name, value) {
   }
 }
 
+// spec 22 §3: the list is a stack view — it remembers its selection when back
+// returns to it, and the plugin menu is pushed on top of it
 function openPluginList(api, title, items) {
-  const registry = readRegistry()
-  select(api, {
-    title,
-    options: items.map((item, i) => pluginOption(registry, item.marketplace, item.name, String(i))),
-    onSelect: (option) => {
-      const item = items[Number(option.value)]
-      if (item) openPlugin(api, item.marketplace, item.name)
-    },
-  })
+  const state = { current: null }
+  const render = () => {
+    const registry = readRegistry()
+    select(api, {
+      title,
+      current: state.current,
+      options: items.map((item, i) => pluginOption(registry, item.marketplace, item.name, String(i))),
+      onSelect: (option) => {
+        state.current = option.value
+        const item = items[Number(option.value)]
+        if (item) pushView(api, () => openPlugin(api, item.marketplace, item.name))
+      },
+    })
+  }
+  pushView(api, render)
 }
 
 export function openBrowse(api) {
@@ -97,7 +110,7 @@ export default {
           category: "ocm",
           slashName: "ocm",
           slash: { name: "ocm" },
-          run: () => openMainMenu(api),
+          run: () => pushView(api, () => openMainMenu(api)),
         },
       ],
       bindings: [],

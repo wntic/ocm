@@ -1,8 +1,8 @@
-// The per-plugin flows of the /ocm TUI dialog (spec 10b): the plugin menu,
-// install/uninstall, and the details view.
+// The per-plugin flows of the /ocm TUI dialog (specs 10b, 22): the plugin
+// menu, install/uninstall, and the details view.
 import { readRegistry, setEnabled } from "./core.js"
-import { NOTICE, alert, componentSummary, confirm, message, select, toast } from "./ui-dialog.js"
-import { openBrowse } from "./ui.js"
+import { NOTICE, backView, componentSummary, fit, message, pushView, select, toast } from "./ui-dialog.js"
+import { confirm } from "./ui-modals.js"
 import { updateFlow } from "./ui-marketplaces.js"
 import { trustFlow } from "./ui-trust.js"
 
@@ -13,14 +13,40 @@ export function blocked(record, entry) {
   return entry.trust?.code !== "granted" || entry.trustPending === true
 }
 
+// spec 22 §4: the version sits next to the name, as `ocm info` prints it
+export function pluginDetailLines(marketplace, name, entry) {
+  const record = entry.plugins[name] ?? {}
+  const manifest = record.manifest ?? {}
+  const version = record.version ?? manifest.version
+  const lines = [version ? `${name} ${version} @ ${marketplace}` : `${name} @ ${marketplace}`]
+  if (manifest.description) lines.push(`description: ${manifest.description}`)
+  if (manifest.category) lines.push(`category: ${manifest.category}`)
+  lines.push(`enabled: ${record.enabled ? "yes" : "no"}`)
+  lines.push(`installed: ${record.installedAt ?? "no"}`)
+  lines.push(`marketplace: ${entry.url}${entry.ref ? ` @ ${entry.ref}` : ""}`)
+  lines.push(`trust: ${entry.trust?.code ?? "none"}`)
+  const components = record.components ?? {}
+  const named = [
+    ...(components.command ?? []).map((file) => `command ${name}:${file}`),
+    ...(components.agent ?? []).map((file) => `agent ${name}:${file}`),
+    ...(components.skill ?? []).map((rel) => `skill ${name}:${rel}`),
+    ...(components.plugin ?? []).map((file) => `plugin ocm--${name}--${file}`),
+    ...(components.mcp ?? []).map((server) => `mcp ocm--${name}--${server}`),
+  ]
+  if (named.length) lines.push("components:", ...named.map((line) => `  ${line}`))
+  return lines
+}
+
 export function openPlugin(api, marketplace, name) {
   const entry = readRegistry().marketplaces?.[marketplace]
   const record = entry?.plugins?.[name]
   if (!entry || !record) {
-    openBrowse(api)
+    toast(api, "error", `plugin "${name}" not found in "${marketplace}" (ocm list)`)
+    backView(api)
     return
   }
   const arg = `${name}@${marketplace}`
+  const render = () => openPlugin(api, marketplace, name)
   const options = [
     { title: record.enabled ? "Uninstall" : "Install", value: "toggle", description: componentSummary(record) },
     { title: "Details", value: "details", description: "The ocm info record" },
@@ -36,20 +62,22 @@ export function openPlugin(api, marketplace, name) {
     title: arg,
     options,
     onSelect: (option) => {
-      if (option.value === "toggle") togglePlugin(api, marketplace, name)
-      else if (option.value === "details") showDetails(api, marketplace, name)
-      else if (option.value === "trust") trustFlow(api, marketplace, () => openPlugin(api, marketplace, name))
-      else if (option.value === "update") updateFlow(api, marketplace, () => openPlugin(api, marketplace, name))
-      else openBrowse(api)
+      if (option.value === "toggle") togglePlugin(api, marketplace, name, render)
+      else if (option.value === "details") pushView(api, () => showDetails(api, marketplace, name))
+      else if (option.value === "trust") trustFlow(api, marketplace, render)
+      else if (option.value === "update") updateFlow(api, marketplace, render)
+      else backView(api)
     },
   })
 }
 
-async function togglePlugin(api, marketplace, name) {
+// back: the plugin menu (a cancelled confirm returns there); a completed
+// mutation returns to the list beneath, which refreshes in place
+async function togglePlugin(api, marketplace, name, back) {
   const entry = readRegistry().marketplaces?.[marketplace]
   const record = entry?.plugins?.[name]
   if (!entry || !record) {
-    openBrowse(api)
+    backView(api)
     return
   }
   const arg = `${name}@${marketplace}`
@@ -58,7 +86,7 @@ async function togglePlugin(api, marketplace, name) {
   let text = enabling ? `Install ${arg} (${componentSummary(record)})?` : `Uninstall ${arg}?`
   if (!enabling && executable) text += `\n\nit removes ${executable} executable component(s) opencode runs on start`
   if (!(await confirm(api, arg, text))) {
-    openPlugin(api, marketplace, name)
+    back()
     return
   }
   try {
@@ -70,33 +98,30 @@ async function togglePlugin(api, marketplace, name) {
   } catch (err) {
     toast(api, "error", message(err))
   }
-  openBrowse(api)
+  backView(api)
 }
 
+// spec 22 §2/§3: a select, not an alert — the body scrolls and the action row
+// carries a visible back affordance. fit wraps each line to the select-row
+// width of the chosen bucket, so no option title reaches the widget's
+// ellipsis
 function showDetails(api, marketplace, name) {
   const entry = readRegistry().marketplaces?.[marketplace]
-  const record = entry?.plugins?.[name]
-  if (!entry || !record) {
-    openBrowse(api)
+  if (!entry || !entry.plugins?.[name]) {
+    toast(api, "error", `plugin "${name}" not found in "${marketplace}" (ocm list)`)
+    backView(api)
     return
   }
-  const manifest = record.manifest ?? {}
-  const lines = [`${name} @ ${marketplace}`]
-  if (manifest.description) lines.push(`description: ${manifest.description}`)
-  if (record.version) lines.push(`version: ${record.version}`)
-  if (manifest.category) lines.push(`category: ${manifest.category}`)
-  lines.push(`enabled: ${record.enabled ? "yes" : "no"}`)
-  lines.push(`installed: ${record.installedAt ?? "no"}`)
-  lines.push(`marketplace: ${entry.url}${entry.ref ? ` @ ${entry.ref}` : ""}`)
-  lines.push(`trust: ${entry.trust?.code ?? "none"}`)
-  const components = record.components ?? {}
-  const named = [
-    ...(components.command ?? []).map((file) => `command ${name}:${file}`),
-    ...(components.agent ?? []).map((file) => `agent ${name}:${file}`),
-    ...(components.skill ?? []).map((rel) => `skill ${name}:${rel}`),
-    ...(components.plugin ?? []).map((file) => `plugin ocm--${name}--${file}`),
-    ...(components.mcp ?? []).map((server) => `mcp ocm--${name}--${server}`),
-  ]
-  if (named.length) lines.push("components:", ...named.map((line) => `  ${line}`))
-  alert(api, `${name}@${marketplace}`, lines.join("\n"), () => openPlugin(api, marketplace, name))
+  const lines = fit(pluginDetailLines(marketplace, name, entry)).lines
+  select(api, {
+    title: `${name}@${marketplace}`,
+    skipFilter: true,
+    options: [
+      ...lines.map((line, i) => ({ title: line, value: i })),
+      { title: "← back", value: "back", description: "or press Escape" },
+    ],
+    onSelect: (option) => {
+      if (option.value === "back") backView(api)
+    },
+  })
 }

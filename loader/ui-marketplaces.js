@@ -1,4 +1,4 @@
-// The marketplace flows of the /ocm TUI dialog (spec 10b): list,
+// The marketplace flows of the /ocm TUI dialog (specs 10b, 22): list,
 // per-marketplace menu, add/remove/update/pin, and update-all.
 import {
   addMarketplace,
@@ -12,9 +12,14 @@ import {
   removeMarketplace,
   syncAll,
 } from "./core.js"
-import { NOTICE, alert, componentSummary, confirm, message, prompt, select, toast } from "./ui-dialog.js"
+import { NOTICE, backView, componentSummary, message, pushView, select, toast } from "./ui-dialog.js"
+import { marketplaceDetailLines, marketplaceRows } from "./ui-marketplace-data.js"
+import { alert, confirm, prompt } from "./ui-modals.js"
 import { openMainMenu } from "./ui.js"
 import { trustFlow, trustMessage, untrustFlow } from "./ui-trust.js"
+
+// re-exported: the data shapes stay importable from this module (spec 22 §4)
+export { marketplaceDetailLines, marketplaceRows }
 
 function busy(api, text) {
   api.ui.dialog.replace(() =>
@@ -22,37 +27,42 @@ function busy(api, text) {
   )
 }
 
+// spec 22 §3: the list is a stack view — it remembers its selection when back
+// returns to it, and the marketplace menu is pushed on top of it
 export function openMarketplaces(api) {
-  const options = Object.entries(readRegistry().marketplaces ?? {}).map(([name, entry]) => ({
-    title: name,
-    value: name,
-    description: entry.local ? `${entry.url} (local)` : entry.url,
-  }))
-  options.push(
-    { title: "Add", value: "add", description: "Add a marketplace from a URL or path" },
-    { title: "Back", value: "back", description: "Back to the main menu" },
-  )
-  select(api, {
-    title: "Marketplaces",
-    options,
-    onSelect: (option) => {
-      if (option.value === "add") addMarketplaceFlow(api, () => openMarketplaces(api))
-      else if (option.value === "back") openMainMenu(api)
-      else openMarketplace(api, option.value)
-    },
-  })
+  const state = { current: null }
+  const render = () => {
+    const options = marketplaceRows(readRegistry())
+    options.push(
+      { title: "Add", value: "add", description: "Add a marketplace from a URL or path" },
+      { title: "Back", value: "back", description: "Back to the main menu" },
+    )
+    select(api, {
+      title: "Marketplaces",
+      current: state.current,
+      options,
+      onSelect: (option) => {
+        state.current = option.value
+        if (option.value === "add") addMarketplaceFlow(api, render)
+        else if (option.value === "back") backView(api)
+        else pushView(api, () => openMarketplace(api, option.value))
+      },
+    })
+  }
+  pushView(api, render)
 }
 
 function openMarketplace(api, name) {
   const entry = readRegistry().marketplaces?.[name]
   if (!entry) {
     toast(api, "error", `marketplace "${name}" not found (ocm list)`)
-    openMarketplaces(api)
+    backView(api)
     return
   }
+  const render = () => openMarketplace(api, name)
   const trusted = entry.trust?.code === "granted"
   select(api, {
-    title: name,
+    title: marketplaceDetailLines(name, entry).join("\n"),
     options: [
       { title: "Update", value: "update", description: "Pull latest changes and refresh links" },
       { title: "Remove", value: "remove", description: "Remove this marketplace and its links" },
@@ -65,14 +75,13 @@ function openMarketplace(api, name) {
       { title: "Back", value: "back", description: "Back to the marketplace list" },
     ],
     onSelect: (option) => {
-      if (option.value === "update") updateFlow(api, name, () => openMarketplace(api, name))
-      else if (option.value === "remove") removeFlow(api, name)
+      if (option.value === "update") updateFlow(api, name, render)
+      else if (option.value === "remove") removeFlow(api, name, render)
       else if (option.value === "trust") {
-        const back = () => openMarketplace(api, name)
-        if (trusted) untrustFlow(api, name, back)
-        else trustFlow(api, name, back)
-      } else if (option.value === "pin") pinFlow(api, name)
-      else openMarketplaces(api)
+        if (trusted) untrustFlow(api, name, render)
+        else trustFlow(api, name, render)
+      } else if (option.value === "pin") pinFlow(api, name, render)
+      else backView(api)
     },
   })
 }
@@ -81,7 +90,7 @@ export async function updateFlow(api, name, back) {
   const entry = readRegistry().marketplaces?.[name]
   if (!entry) {
     toast(api, "error", `marketplace "${name}" not found (ocm list)`)
-    back()
+    backView(api)
     return
   }
   busy(api, `Updating ${name}...`)
@@ -103,11 +112,13 @@ export async function updateFlow(api, name, back) {
   back()
 }
 
-async function removeFlow(api, name) {
+// back: the marketplace menu (a cancelled confirm returns there); a completed
+// removal returns to the list beneath — the marketplace is gone
+async function removeFlow(api, name, back) {
   const entry = readRegistry().marketplaces?.[name]
   if (!entry) {
     toast(api, "error", `marketplace "${name}" not found (ocm list)`)
-    openMarketplaces(api)
+    backView(api)
     return
   }
   const lines = [`remove marketplace "${name}"?`]
@@ -116,7 +127,7 @@ async function removeFlow(api, name) {
   }
   if (entry.local === false) lines.push(`the clone at ${entry.dir} is deleted`)
   if (!(await confirm(api, name, lines.join("\n")))) {
-    openMarketplace(api, name)
+    back()
     return
   }
   try {
@@ -127,13 +138,13 @@ async function removeFlow(api, name) {
   } catch (err) {
     toast(api, "error", message(err))
   }
-  openMarketplaces(api)
+  backView(api)
 }
 
-async function pinFlow(api, name) {
+async function pinFlow(api, name, back) {
   const ref = await prompt(api, `Pin ${name}`, "Branch or tag to follow (empty to follow the default branch)")
   if (ref === null) {
-    openMarketplace(api, name)
+    back()
     return
   }
   try {
@@ -142,7 +153,7 @@ async function pinFlow(api, name) {
   } catch (err) {
     toast(api, "error", message(err))
   }
-  openMarketplace(api, name)
+  back()
 }
 
 export async function addMarketplaceFlow(api, back) {
