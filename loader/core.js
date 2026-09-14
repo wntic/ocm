@@ -31,11 +31,11 @@ export { discoveryError, discoverMarketplace, marketplaceManifestFile, nameDisag
 export {
   addMarketplace,
   componentRoot,
-  incumbentMarketplace,
   pinMarketplace,
   registerPlugins,
   removeMarketplace,
 } from "./marketplace.js"
+export { incumbentMarketplace } from "./collisions.js"
 export { denyTrust, grantTrust, resolvePlugin, revokeTrust, setEnabled, skipTrust } from "./mutations.js"
 export { removeMcpKeys } from "./mcp.js"
 export { searchPlugins } from "./search.js"

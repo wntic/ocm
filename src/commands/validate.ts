@@ -22,11 +22,33 @@ export function validate(path?: string): void {
   const findings: Finding[] = []
   const manifest = lintMarketplaceJson(root, findings)
   const skills = new Map<string, string>()
-  for (const plugin of discoverPlugins(root)) {
+  const plugins = discoverPlugins(root)
+  for (const plugin of plugins) {
     lintPlugin(root, plugin, manifest, skills, findings)
   }
+  lintComponentCollisions(root, plugins, findings)
   for (const message of lintCrossTool(root)) findings.push(warning(message))
   if (reportFindings(findings)) process.exitCode = 1
+}
+
+// spec 18: two plugins in one marketplace shipping the same command or
+// agent basename is an authoring error first-come-wins would otherwise
+// resolve silently at the user's expense
+function lintComponentCollisions(root: string, plugins: CoreDiscoveredPlugin[], findings: Finding[]): void {
+  const owners = new Map<string, string>()
+  for (const plugin of plugins) {
+    for (const type of ["command", "agent"] as const) {
+      for (const file of plugin.components[type] ?? []) {
+        const first = owners.get(`${type}/${file}`)
+        if (first === undefined) owners.set(`${type}/${file}`, plugin.name)
+        else {
+          findings.push(
+            error(`${relative(root, plugin.dir)}: ${type} "${file}" is also shipped by plugin "${first}" — rename one`),
+          )
+        }
+      }
+    }
+  }
 }
 
 function lintPlugin(

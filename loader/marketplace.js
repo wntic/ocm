@@ -1,6 +1,7 @@
 import { rmSync } from "node:fs"
 import { join, relative } from "node:path"
 import { setSkillsPath } from "./config.js"
+import { collisionError, incumbentMarketplace } from "./collisions.js"
 import { discoverMarketplace, discoveryError, readManifest } from "./manifest.js"
 import { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
 import { limitRefusal } from "./limits.js"
@@ -17,14 +18,6 @@ export function componentRoot(entry) {
   return entry.subdir ? join(entry.dir, entry.subdir) : entry.dir
 }
 
-// plugin names are globally unique across marketplaces (spec 04, axis 4):
-// the first marketplace to provide a name is the incumbent
-export function incumbentMarketplace(registry, self, pluginName) {
-  for (const [name, entry] of Object.entries(registry.marketplaces)) {
-    if (name !== self && entry.plugins[pluginName]) return name
-  }
-}
-
 export function registerPlugins(registry, name, plugins) {
   // every caller assigns or verifies the entry in the registry right before this
   const entry = registry.marketplaces[name]
@@ -33,6 +26,9 @@ export function registerPlugins(registry, name, plugins) {
   for (const plugin of plugins) {
     const existing = entry.plugins[plugin.name]
     const incumbent = incumbentMarketplace(registry, name, plugin.name)
+    // an explicit install survives update: the user took the name over,
+    // and update reports the collision rather than undoing the choice
+    const chosen = existing?.enabled && existing.installedAt !== null
     // a colliding name registers disabled; a collision that has cleared
     // registers as if fresh — enabled in auto, and in explicit only when
     // the user installed it while it was colliding. A collision record
@@ -40,7 +36,7 @@ export function registerPlugins(registry, name, plugins) {
     let enabled = existing?.collision
       ? entry.mode === "auto" || existing.installedAt !== null
       : existing?.enabled ?? (entry.mode !== "explicit" && plugin.manifest.defaultEnabled !== false)
-    if (incumbent) enabled = false
+    if (incumbent && !chosen) enabled = false
     const record = {
       source: relative(root, plugin.dir),
       components: plugin.components,
@@ -49,22 +45,10 @@ export function registerPlugins(registry, name, plugins) {
       version: plugin.manifest.version ?? null,
       manifest: plugin.manifest,
     }
-    if (incumbent) record.collision = incumbent
+    if (incumbent && !chosen) record.collision = incumbent
     updated[plugin.name] = record
   }
   entry.plugins = updated
-}
-
-// spec 04, axis 4: plugin names are globally unique across marketplaces;
-// adding a marketplace that ships a taken name fails with both sources named
-function collisionError(registry, name, plugins) {
-  for (const plugin of plugins) {
-    const incumbent = incumbentMarketplace(registry, name, plugin.name)
-    if (incumbent) {
-      return `plugin "${plugin.name}" is already provided by marketplace "${incumbent}"; not adding "${name}". Remove one, or ask its author to rename.`
-    }
-  }
-  return null
 }
 
 // a failed add leaves no clone behind (a local directory is the user's);
@@ -158,9 +142,11 @@ export function removeMarketplace(name) {
   removeLinksFor(name, entry.dir)
   const skillsWarning = setSkillsPath(join(LINKS_DIR, name, "skills"), false)
   if (skillsWarning) warnings.push(skillsWarning)
-  // collision records never materialized, so their mcp keys are not ours to drop
+  // collision records never materialized, so their mcp keys are not ours to
+  // drop; a disabled record's keys came down when it was disabled — after a
+  // spec 18 takeover they belong to the name's new owner, not to us
   const owned = Object.entries(entry.plugins).filter(([, plugin]) => !plugin.collision)
-  const mcpWarning = removeMcpKeys(owned.map(([pluginName]) => pluginName))
+  const mcpWarning = removeMcpKeys(owned.filter(([, plugin]) => plugin.enabled !== false).map(([pluginName]) => pluginName))
   if (mcpWarning) warnings.push(mcpWarning)
   // `local === false` rather than `!local`: an entry missing the field must
   // never be treated as ocm-managed and deleted

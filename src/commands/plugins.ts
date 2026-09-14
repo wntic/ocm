@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, readlinkSync, rmSync } from "node:fs"
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { isGitUrl, parseSource, resolvePlugin, setEnabled } from "../../loader/core.js"
 import type { CorePluginComponents } from "../../loader/core.js"
-import { OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
+import { OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
 import { discoverMarketplace } from "../discovery"
 import { clone } from "../git"
@@ -18,13 +18,16 @@ function componentSummary(components: CorePluginComponents): string {
 }
 
 // spec 05 install: the core flips the record, saves and materializes; the
-// CLI renders — disagreement first, then the upgrade, then the links report
+// CLI renders — disagreement first, then the upgrade, then the links report.
+// spec 18: a takeover is stated as such; a no-op is not "installed" again
 export function install(arg: string, force = false): void {
   const result = setEnabled(arg, true, { force })
   if (result.disagreement) reportWarnings([result.disagreement])
   reportUpgrade(result.wasV1)
   reportWarnings(result.report.warnings)
-  console.log(`installed ${result.plugin}@${result.marketplace} (${componentSummary(result.components)})`)
+  if (result.takeover) console.log(`took over "${result.plugin}" from marketplace "${result.takeover}"`)
+  else if (result.already) console.log(`already installed ${result.plugin}@${result.marketplace}`)
+  else console.log(`installed ${result.plugin}@${result.marketplace} (${componentSummary(result.components)})`)
   reportRestart(result.report.created)
 }
 
@@ -83,6 +86,8 @@ export function scan(source: string): void {
     const plugins = [...discovered.plugins.values()]
     if (!plugins.length) {
       console.log(`no plugins found in ${source}`)
+      console.log(`  expected plugins/<name>/{commands,agents,skills}/ at the repository root`)
+      console.log(`  see ocm validate and the README's marketplace format`)
       return
     }
     console.log(`${plugins.length} plugin(s) would be installed from ${parsed.url}:`)
@@ -94,34 +99,58 @@ export function scan(source: string): void {
   }
 }
 
+// spec 18: every destination states its truth — nothing there is "would
+// create", this plugin's symlink is "already linked", anything else is a
+// named collision. Executables say "trust-gated" until the marketplace's
+// code trust is granted: "would create" must not imply "would run"
 function scanPlugin(arg: string): void {
   const { marketplace, plugin, entry } = resolvePlugin(loadRegistry(), arg)
   const record = entry.plugins[plugin]!
+  const gated = entry.trust.code !== "granted"
   console.log(`installing ${plugin}@${marketplace} would materialize:`)
   for (const file of record.components.command ?? []) {
-    reportScanDest(join(OPENCODE_COMMANDS_DIR, `${plugin}:${file}`), entry.dir)
+    scanDest(join(OPENCODE_COMMANDS_DIR, `${plugin}:${file}`), entry.dir)
   }
   for (const file of record.components.agent ?? []) {
-    reportScanDest(join(OPENCODE_AGENTS_DIR, `${plugin}:${file}`), entry.dir)
+    scanDest(join(OPENCODE_AGENTS_DIR, `${plugin}:${file}`), entry.dir)
   }
   for (const rel of record.components.skill ?? []) {
-    console.log(`  skill ${plugin}:${rel}`)
+    const mirror = join(OCM_LINKS_DIR, marketplace, "skills", `${plugin}--${rel.split("/").join("-")}`)
+    console.log(`  skill ${mirror}${existsSync(join(mirror, "SKILL.md")) ? " (already linked)" : " (would create)"}`)
   }
   for (const file of record.components.plugin ?? []) {
-    console.log(`  plugin ${join(OPENCODE_PLUGINS_DIR, `ocm--${plugin}--${file}`)}`)
+    scanDest(join(OPENCODE_PLUGINS_DIR, `ocm--${plugin}--${file}`), entry.dir, gated)
   }
   for (const server of record.components.mcp ?? []) {
-    console.log(`  mcp ocm--${plugin}--${server} (${OPENCODE_GLOBAL_CONFIG})`)
+    const key = `ocm--${plugin}--${server}`
+    const state = mcpKeyPresent(key) ? "already linked" : `would create${gated ? ", trust-gated" : ""}`
+    console.log(`  mcp ${key} in ${OPENCODE_GLOBAL_CONFIG} (${state})`)
   }
 }
 
-// a dest that exists but is not a symlink into this marketplace is a
-// collision install would refuse (or --force displace)
-function reportScanDest(dest: string, marketplaceDir: string): void {
-  let target
+function scanDest(dest: string, marketplaceDir: string, gated = false): void {
+  let stat
   try {
-    target = readlinkSync(dest)
+    stat = lstatSync(dest)
   } catch {}
-  const owned = target !== undefined && (target === marketplaceDir || target.startsWith(`${marketplaceDir}/`))
-  console.log(`  ${dest}${owned ? "" : " (collision: install would refuse without --force)"}`)
+  if (!stat) {
+    console.log(`  ${dest} (would create${gated ? ", trust-gated" : ""})`)
+    return
+  }
+  if (!stat.isSymbolicLink()) {
+    console.log(`  ${dest} (collision: foreign file)`)
+    return
+  }
+  const target = readlinkSync(dest)
+  const owned = target === marketplaceDir || target.startsWith(`${marketplaceDir}/`)
+  console.log(`  ${dest}${owned ? " (already linked)" : ` (collision: symlink → ${target})`}`)
+}
+
+function mcpKeyPresent(key: string): boolean {
+  try {
+    const config = JSON.parse(readFileSync(OPENCODE_GLOBAL_CONFIG, "utf8")) as { mcp?: Record<string, unknown> }
+    return Boolean(config.mcp?.[key])
+  } catch {
+    return false
+  }
 }

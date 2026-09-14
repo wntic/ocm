@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
+import { installRefusal, nameHolder } from "./collisions.js"
 import { nameDisagreement } from "./manifest.js"
 import { componentRoot } from "./marketplace.js"
 import { enabledPlugins, materialize } from "./materialize.js"
@@ -38,8 +39,25 @@ export function resolvePlugin(registry, arg) {
   return { marketplace, plugin, entry }
 }
 
+// spec 18: --force moves a name between marketplaces — the incumbent's
+// record yields (disabled, uninstalled) so the name is free to take
+function resolveTakeover(registry, resolved, options) {
+  const holder = nameHolder(registry, resolved.marketplace, resolved.plugin)
+  if (!holder) return null
+  if (!options.force) {
+    throw new Error(installRefusal(registry, resolved.marketplace, resolved.plugin, holder))
+  }
+  const incumbent = registry.marketplaces[holder].plugins[resolved.plugin]
+  incumbent.enabled = false
+  incumbent.installedAt = null
+  return holder
+}
+
 // spec 05 install/uninstall: flip the record, save, reconcile links. A
 // no-op flip saves nothing, so a repeat run writes nothing (idempotence).
+// spec 18: installing a name another marketplace holds refuses without
+// --force; with it, the incumbent's links come down before the new
+// owner's pass, or the old link reads as a self-conflict.
 export function setEnabled(arg, enabled, options = {}) {
   const { registry, wasV1 } = loadRegistryForWrite()
   const resolved = resolvePlugin(registry, arg)
@@ -49,22 +67,37 @@ export function setEnabled(arg, enabled, options = {}) {
   const current = enabled
     ? record.enabled && record.installedAt
     : !record.enabled && record.installedAt === null
+  const holder = enabled && !current ? resolveTakeover(registry, resolved, options) : null
   let saved = false
   if (!current) {
     record.enabled = enabled
     record.installedAt = enabled ? new Date().toISOString() : null
+    if (enabled) delete record.collision
     saveRegistry(registry)
     saved = true
+  }
+  const warnings = []
+  if (holder) {
+    // the materializer reads the registry from disk, so the incumbent's
+    // yielded state must be saved before its links come down
+    const teardown = materialize(holder, componentRoot(registry.marketplaces[holder]), {
+      enabled: new Set(),
+      plugin: resolved.plugin,
+    })
+    warnings.push(...teardown.warnings)
   }
   const report = materialize(resolved.marketplace, root, {
     enabled: enabledPlugins(entry, root),
     force: options.force === true,
   })
+  report.warnings.push(...warnings)
   return {
     marketplace: resolved.marketplace,
     plugin: resolved.plugin,
     components: record.components,
     disagreement: nameDisagreement(join(root, record.source), resolved.plugin),
+    already: Boolean(current),
+    takeover: holder,
     wasV1: wasV1 && saved,
     report,
   }

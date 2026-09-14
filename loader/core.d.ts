@@ -153,6 +153,8 @@ export interface CoreSetEnabledResult {
   plugin: string
   components: CorePluginComponents
   disagreement: string | null
+  already: boolean
+  takeover: string | null
   wasV1: boolean
   report: CoreMaterializeReport
 }
