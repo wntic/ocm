@@ -5,9 +5,10 @@
   "description": "same fields as a marketplace plugins[] entry, minus source, defaultEnabled and mcpServers",
   "type": "object",
   "additionalProperties": true,
+  "required": ["description"],
   "properties": {
     "name": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "must agree with the directory name" },
-    "description": { "type": "string" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 200 },
     "version": { "type": "string" },
     "author": {
       "type": "object",

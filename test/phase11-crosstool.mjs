@@ -118,6 +118,8 @@ function runLint(home, dir) {
 
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const AGENT = "---\ndescription: code reviewer\n---\n\nReviewer body.\n"
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
 const SKILL = (name, extra = "") =>
   `---\nname: ${name}\ndescription: ${name} guidance\n${extra}---\n\n# ${name}\n\nBody.\n`
 // frontmatter of the real wntic/agentic-development-workflow python-style
@@ -154,6 +156,7 @@ phase("1. discovery ignores commands.claude/ and agents.claude/; commands/ and a
   writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
   const mp = join(home, "mp")
   writeTree(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "commit.md": COMMAND },
     "commands.claude": { "claude-only.md": COMMAND },
     "commands.codex": { "codex-only.md": COMMAND },
@@ -175,6 +178,7 @@ phase("1. discovery ignores commands.claude/ and agents.claude/; commands/ and a
 phase("2. a plugin with only commands.claude/ and skills/ installs its skill and reports zero commands, without error", async (home) => {
   const mp = join(home, "mp")
   writeTree(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
     "commands.claude": { "commit.md": COMMAND },
     skills: { "python-style": { "SKILL.md": SKILL("python-style") } },
   } } })
@@ -206,11 +210,12 @@ phase("3. the shell.env hook exports OCM_PLUGIN_ROOT and CLAUDE_PLUGIN_ROOT at t
   writeTree(cfg(home), { "opencode.json": `${JSON.stringify(userConfig, null, 2)}\n` })
   const repoA = join(home, "repo-a")
   gitRepo(repoA, { plugins: { alpha: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "work.md": COMMAND },
     skills: { "python-style": { "SKILL.md": SKILL("python-style") } },
   } } })
   const repoB = join(home, "repo-b")
-  gitRepo(repoB, { plugins: { beta: { commands: { "lint.md": COMMAND } } } })
+  gitRepo(repoB, { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } } } })
   expect(ocm(home, "add", `file://${repoA}`, "--name", "mp-a").status).toBe(0)
   // one marketplace added: the spec body's flat pair, both at its root
   const rootA = mpRoot(home, "mp-a")
@@ -276,6 +281,7 @@ phase("5. round-trip on a wntic/agentic-development-workflow fixture: adw skills
     ".claude-plugin": { "marketplace.json": catalog }, // the Claude-side manifest; ocm must ignore it
     plugins: {
       adw: {
+        "plugin.json": PLUGIN_JSON,
         skills: {
           "python-style": { "SKILL.md": ADW_PYTHON_STYLE },
           architecture: { "SKILL.md": SKILL("architecture", "when_to_use: Deciding how to layer a service.\n") },
@@ -284,6 +290,8 @@ phase("5. round-trip on a wntic/agentic-development-workflow fixture: adw skills
         agents: { "implementer.md": AGENT },
       },
       "run-report": {
+        // spec 19: the ocm-side manifest; the .claude-plugin copy stays for Claude
+        "plugin.json": PLUGIN_JSON,
         ".claude-plugin": { "plugin.json": `${JSON.stringify({ name: "run-report", description: "Render a run's transcripts into a readable report" }, null, 2)}\n` },
         commands: { "run-report.md": RUN_REPORT_CMD },
         scripts: { "run_report.py": "#!/usr/bin/env python3\nprint('run-report')\n" },

@@ -83,7 +83,7 @@ my-marketplace/
 │   └── marketplace.json      # optional
 └── plugins/
     ├── demo-kit/
-    │   ├── plugin.json           # optional
+    │   ├── plugin.json           # required
     │   ├── commands/
     │   │   └── tdd.md            # → /demo-kit:tdd
     │   ├── commands.claude/      # Claude Code sibling, ignored by ocm
@@ -103,8 +103,10 @@ my-marketplace/
 
 A working example with two plugins ships in [template/](template/). A
 marketplace is any git repo with `plugins/<name>/`. Every directory under
-`plugins/` with at least one component is an installable plugin, manifest or
-not — manifests add metadata, they never hide a plugin.
+`plugins/` with at least one component is a plugin, and every plugin must
+carry a `plugin.json` with a non-empty `description` — a plugin without one
+is refused by `ocm add`, `ocm update` and `ocm validate` (already-installed
+plugins keep working; `ocm doctor` tells you which need a manifest).
 
 `command`/`commands`, `agent`/`agents`, `skill`/`skills` and `plugin`/`plugins`
 are all accepted (singular matches opencode's own globs); a name clash between
@@ -157,10 +159,22 @@ false` keeps a plugin disabled in an `auto` marketplace.
 
 ### `plugin.json`
 
-The same fields as a `plugins[]` entry, minus `source`, `defaultEnabled` and
-`mcpServers` — a plugin directory is self-describing when vendored or read on
-its own. Metadata precedence: marketplace entry > `plugin.json` > filesystem
-inference (name from the directory, components from the scan).
+Required in every plugin directory. `description` is required — a non-empty
+string of at most 200 characters; it is what `ocm search` and the TUI show.
+`name` is optional and, when present, must equal the directory name.
+`$schema` is recommended — pin it to the Agent Plugins schema so other tools
+can read the manifest too. Otherwise the same fields as a `plugins[]` entry,
+minus `source`, `defaultEnabled` and `mcpServers` — a plugin directory is
+self-describing when vendored or read on its own. Metadata precedence:
+marketplace entry > `plugin.json` > filesystem inference (name from the
+directory, components from the scan).
+
+```json
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "description": "One command, agent, skill, plugin and mcp server — the demo kit"
+}
+```
 
 ### JS plugins and MCP servers
 

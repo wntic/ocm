@@ -47,6 +47,8 @@ const cloneDir = (home, name) => join(home, ".cache", "ocm", "marketplaces", nam
 
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const SKILL = "---\nname: python-style\ndescription: Python style guidance\n---\n\n# Python style\n\nUse ruff.\n"
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
 
 // realpath on both sides: macOS temp dirs sit behind /var -> /private/var, so
 // comparing a raw joined path against realpathSync(dest) would always fail.
@@ -64,11 +66,11 @@ function assertResolves(dest, source) {
 test("1. adding a second marketplace shipping an already-provided plugin name fails, names both marketplaces, and leaves no clone behind", async () => {
   await withFakeHome(async (home) => {
     const incumbent = join(home, "wntic-adw")
-    writeTree(incumbent, { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+    writeTree(incumbent, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
     expect(ocm(home, "add", incumbent).status).toBe(0)
 
     const remote = join(home, "remote", "other-mp")
-    gitRepo(remote, { plugins: { adw: { commands: { "deploy.md": COMMAND } } } })
+    gitRepo(remote, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "deploy.md": COMMAND } } } })
     const refused = ocm(home, "add", `file://${remote}`)
     if (refused.status === 0) {
       throw new Error(`expected a non-zero exit from "ocm add ${remote}" — plugin "adw" is already provided by marketplace "wntic-adw"`)
@@ -91,13 +93,13 @@ test("2. an upstream update introducing a colliding plugin name registers it dis
   await withFakeHome(async (home) => {
     const mpA = join(home, "mp-a")
     const mpB = join(home, "mp-b")
-    writeTree(mpA, { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
-    writeTree(mpB, { plugins: { beta: { commands: { "lint.md": COMMAND } } } })
+    writeTree(mpA, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+    writeTree(mpB, { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } } } })
     expect(ocm(home, "add", mpA).status).toBe(0)
     expect(ocm(home, "add", mpB).status).toBe(0)
 
     // upstream change: B starts shipping a plugin name A already provides
-    writeTree(mpB, { plugins: { adw: { commands: { "deploy.md": COMMAND } } } })
+    writeTree(mpB, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "deploy.md": COMMAND } } } })
     ocm(home, "update", "mp-b")
 
     const colliding = readRegistry(home).marketplaces["mp-b"].plugins.adw
@@ -137,12 +139,13 @@ test("3. no ocm operation creates a path under ~/.claude, .claude, ~/.agents or 
     writeTree(mpA, {
       plugins: {
         adw: {
+          "plugin.json": PLUGIN_JSON,
           commands: { "commit.md": COMMAND },
           skills: { "python-style": { "SKILL.md": SKILL } },
         },
       },
     })
-    writeTree(mpB, { plugins: { beta: { commands: { "lint.md": COMMAND } } } })
+    writeTree(mpB, { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } } } })
     expect(ocm(home, "add", mpA).status).toBe(0)
     expect(ocm(home, "add", mpB).status).toBe(0)
     ocm(home, "update")
@@ -175,7 +178,7 @@ test("4. a project .opencode/commands/adw:commit.md wins over the ocm-installed 
   await withFakeHome(async (home) => {
     const mp = join(home, "mp")
     writeTree(mp, {
-      plugins: { adw: { commands: { "commit.md": "---\ndescription: global commit helper\n---\n\nGlobal body.\n" } } },
+      plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": "---\ndescription: global commit helper\n---\n\nGlobal body.\n" } } },
     })
     expect(ocm(home, "add", mp).status).toBe(0)
     assertResolves(join(cfg(home), "commands", "adw:commit.md"), join(mp, "plugins", "adw", "commands", "commit.md"))
@@ -201,7 +204,7 @@ test("5. one unreachable marketplace in a three-marketplace sync leaves the othe
   await withFakeHome(async (home) => {
     const PLUGINS = { "mp-a": "alpha", "mp-b": "beta", "mp-c": "gamma" }
     for (const [mp, plugin] of Object.entries(PLUGINS)) {
-      gitRepo(join(home, "remote", mp), { plugins: { [plugin]: { commands: { "commit.md": COMMAND } } } })
+      gitRepo(join(home, "remote", mp), { plugins: { [plugin]: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
       expect(ocm(home, "add", `file://${join(home, "remote", mp)}`).status).toBe(0)
     }
     const link = (plugin) => join(cfg(home), "commands", `${plugin}:commit.md`)

@@ -86,6 +86,8 @@ function loaderSync(home, env = {}) {
 
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const SKILL = "---\nname: python-style\ndescription: Python style guidance\n---\n\n# Python style\n\nUse ruff.\n"
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
 const JS_PLUGIN = 'export default { id: "phase08-hello", server: async () => ({}) }\n'
 const JS_PLUGIN_CHANGED = `// v2\n${JS_PLUGIN}`
 const MCP = { db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } }
@@ -97,17 +99,17 @@ phase("1. two commits report the revision transition, the per-plugin version cha
   gitRepo(remote, {
     plugins: {
       "quality-review": {
-        "plugin.json": `${JSON.stringify({ version: "1.2.0" }, null, 2)}\n`,
+        "plugin.json": `${JSON.stringify({ version: "1.2.0", description: "demo plugin" }, null, 2)}\n`,
         commands: { "base.md": COMMAND },
         skills: { "code-review": { "SKILL.md": SKILL } },
         agents: { "old-reviewer.md": "---\ndescription: old reviewer\n---\n\nReviews.\n" },
       },
-      plain: { commands: { "work.md": COMMAND }, plugin: { "hello.js": JS_PLUGIN } },
+      plain: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND }, plugin: { "hello.js": JS_PLUGIN } },
     },
   })
   expect(ocm(home, "add", `file://${remote}`, "--name", "mp", "--trust").status).toBe(0)
   const before = shortSha(remote)
-  writeFileSync(join(remote, "plugins", "quality-review", "plugin.json"), `${JSON.stringify({ version: "1.3.0" }, null, 2)}\n`)
+  writeFileSync(join(remote, "plugins", "quality-review", "plugin.json"), `${JSON.stringify({ version: "1.3.0", description: "demo plugin" }, null, 2)}\n`)
   writeFileSync(join(remote, "plugins", "quality-review", "commands", "review.md"), COMMAND)
   writeFileSync(join(remote, "plugins", "quality-review", "skills", "code-review", "SKILL.md"), `${SKILL}<!-- v2 -->\n`)
   rmSync(join(remote, "plugins", "quality-review", "agents", "old-reviewer.md"))
@@ -148,7 +150,7 @@ phase("1. two commits report the revision transition, the per-plugin version cha
 phase("2. one unreachable marketplace of three: the others update, its links survive, lastSync.ok is false, exit is non-zero", async (home) => {
   const PLUGINS = { "mp-a": "alpha", "mp-b": "beta", "mp-c": "gamma" }
   for (const [mp, plugin] of Object.entries(PLUGINS)) {
-    gitRepo(join(home, `remote-${mp}`), { plugins: { [plugin]: { commands: { "one.md": COMMAND, "two.md": COMMAND } } } })
+    gitRepo(join(home, `remote-${mp}`), { plugins: { [plugin]: { "plugin.json": PLUGIN_JSON, commands: { "one.md": COMMAND, "two.md": COMMAND } } } })
     expect(ocm(home, "add", `file://${join(home, `remote-${mp}`)}`, "--name", mp).status).toBe(0)
   }
   rmSync(join(home, "remote-mp-b"), { recursive: true, force: true })
@@ -176,7 +178,7 @@ phase("2. one unreachable marketplace of three: the others update, its links sur
 
 phase("3. --ref add follows the pinned ref; pin and pin --clear move it; a nonexistent ref fails without saving; a deleted upstream ref leaves the revision unchanged", async (home) => {
   const remote = join(home, "remote")
-  gitRepo(remote, { plugins: { tool: { commands: { "work.md": COMMAND } } } })
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
   git(remote, ["checkout", "-b", "feature"])
   writeFileSync(join(remote, "plugins", "tool", "commands", "feature.md"), COMMAND)
   commitAll(remote, "feature work")
@@ -253,8 +255,8 @@ test("4. renames migrate state and rename links; removal drops record, links and
   // one stays disabled through its rename instead of reinstalling
   await renameCase({
     tree: { plugins: {
-      old: { commands: { "review.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } },
-      ancient: { commands: { "legacy.md": COMMAND } },
+      old: { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } },
+      ancient: { "plugin.json": PLUGIN_JSON, commands: { "legacy.md": COMMAND } },
     } },
     setup: (home) => {
       if (ocm(home, "uninstall", "ancient").status !== 0) throw new Error("ocm uninstall ancient exited non-zero")
@@ -291,8 +293,8 @@ test("4. renames migrate state and rename links; removal drops record, links and
   // server key survives (invariant: config safety)
   await renameCase({
     tree: { plugins: {
-      dead: { commands: { "gone.md": COMMAND }, "mcp.json": mcpJson(MCP) },
-      stay: { commands: { "keep.md": COMMAND } },
+      dead: { "plugin.json": PLUGIN_JSON, commands: { "gone.md": COMMAND }, "mcp.json": mcpJson(MCP) },
+      stay: { "plugin.json": PLUGIN_JSON, commands: { "keep.md": COMMAND } },
     } },
     flags: ["--trust"],
     pre: (home) => writeTree(cfg(home), {
@@ -316,8 +318,8 @@ test("4. renames migrate state and rename links; removal drops record, links and
   // a plugin absent from discovery is pruned even though it was disabled
   await renameCase({
     tree: { plugins: {
-      gone: { commands: { "x.md": COMMAND } },
-      stay: { commands: { "y.md": COMMAND } },
+      gone: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } },
+      stay: { "plugin.json": PLUGIN_JSON, commands: { "y.md": COMMAND } },
     } },
     setup: (home) => {
       if (ocm(home, "uninstall", "gone").status !== 0) throw new Error("ocm uninstall gone exited non-zero")
@@ -335,7 +337,7 @@ test("4. renames migrate state and rename links; removal drops record, links and
   })
   // a chain a→b→c converges: the record lands on c with its state intact
   await renameCase({
-    tree: { plugins: { a: { commands: { "x.md": COMMAND } } } },
+    tree: { plugins: { a: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } } } },
     setup: (home) => {
       if (ocm(home, "uninstall", "a").status !== 0) throw new Error("ocm uninstall a exited non-zero")
     },
@@ -354,8 +356,8 @@ test("4. renames migrate state and rename links; removal drops record, links and
   // a cycle is reported as a warning and ignored: nothing moves
   await renameCase({
     tree: { plugins: {
-      x: { commands: { "x.md": COMMAND } },
-      y: { commands: { "y.md": COMMAND } },
+      x: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } },
+      y: { "plugin.json": PLUGIN_JSON, commands: { "y.md": COMMAND } },
     } },
     mutate: (mp) => writeFileSync(join(mp, "marketplace.json"), renames({ x: "y", y: "x" })),
     verify: (home, mp, output) => {
@@ -369,14 +371,14 @@ test("4. renames migrate state and rename links; removal drops record, links and
   })
   // plugin.json renames are honoured, but the marketplace manifest wins
   await renameCase({
-    tree: { plugins: { old: { commands: { "x.md": COMMAND } } } },
+    tree: { plugins: { old: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } } } },
     setup: (home) => {
       if (ocm(home, "uninstall", "old").status !== 0) throw new Error("ocm uninstall old exited non-zero")
     },
     mutate: (mp) => {
       renameSync(join(mp, "plugins", "old"), join(mp, "plugins", "new"))
       writeFileSync(join(mp, "marketplace.json"), renames({ old: "new" }))
-      writeFileSync(join(mp, "plugins", "new", "plugin.json"), renames({ old: "other" }))
+      writeFileSync(join(mp, "plugins", "new", "plugin.json"), `${JSON.stringify({ description: "demo plugin", renames: { old: "other" } }, null, 2)}\n`)
     },
     verify: (home, _mp, output) => {
       const plugins = readRegistry(home).marketplaces.mp.plugins
@@ -389,7 +391,7 @@ test("4. renames migrate state and rename links; removal drops record, links and
 
 phase("5. per-marketplace throttle: marketplace A syncing does not suppress B", async (home) => {
   for (const [mp, plugin] of [["mp-a", "alpha"], ["mp-b", "beta"]]) {
-    gitRepo(join(home, `remote-${mp}`), { plugins: { [plugin]: { commands: { "one.md": COMMAND } } } })
+    gitRepo(join(home, `remote-${mp}`), { plugins: { [plugin]: { "plugin.json": PLUGIN_JSON, commands: { "one.md": COMMAND } } } })
     expect(ocm(home, "add", `file://${join(home, `remote-${mp}`)}`, "--name", mp).status).toBe(0)
   }
   const first = loaderSync(home)
@@ -410,7 +412,7 @@ phase("5. per-marketplace throttle: marketplace A syncing does not suppress B", 
 }, 180_000)
 
 phase("6. syncAll writes nothing when nothing changed", async (home) => {
-  gitRepo(join(home, "remote"), { plugins: { tool: { commands: { "work.md": COMMAND }, "mcp.json": mcpJson(MCP) } } })
+  gitRepo(join(home, "remote"), { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND }, "mcp.json": mcpJson(MCP) } } })
   expect(ocm(home, "add", `file://${join(home, "remote")}`, "--name", "mp", "--trust").status).toBe(0)
   const first = loaderSync(home)
   if (first.status !== 0) throw new Error(`loader sync exited ${first.status}: ${first.stderr}`)
@@ -428,7 +430,7 @@ phase("6. syncAll writes nothing when nothing changed", async (home) => {
 })
 
 phase("7. a cleared cache directory is re-cloned; a missing local directory is reported and never re-created", async (home) => {
-  gitRepo(join(home, "remote"), { plugins: { tool: { commands: { "work.md": COMMAND } } } })
+  gitRepo(join(home, "remote"), { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
   expect(ocm(home, "add", `file://${join(home, "remote")}`, "--name", "mp").status).toBe(0)
   writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
   rmSync(join(home, ".cache", "ocm"), { recursive: true, force: true })
@@ -440,7 +442,7 @@ phase("7. a cleared cache directory is re-cloned; a missing local directory is r
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
 
   // a local marketplace whose directory is gone is reported and skipped
-  writeTree(join(home, "mp-local"), { plugins: { loc: { commands: { "x.md": COMMAND } } } })
+  writeTree(join(home, "mp-local"), { plugins: { loc: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } } } })
   expect(ocm(home, "add", join(home, "mp-local")).status).toBe(0)
   rmSync(join(home, "mp-local"), { recursive: true, force: true })
   const updated = ocm(home, "update")
@@ -451,7 +453,7 @@ phase("7. a cleared cache directory is re-cloned; a missing local directory is r
 
 phase("an update that changes an executable component blocks it pending ocm trust while the rest of the update applies", async (home) => {
   const remote = join(home, "remote")
-  gitRepo(remote, { plugins: { "team-tools": { commands: { "work.md": COMMAND }, plugin: { "notify.js": JS_PLUGIN } } } })
+  gitRepo(remote, { plugins: { "team-tools": { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND }, plugin: { "notify.js": JS_PLUGIN } } } })
   expect(ocm(home, "add", `file://${remote}`, "--name", "mp", "--trust").status).toBe(0)
   const notifyLink = join(cfg(home), "plugins", "ocm--team-tools--notify.js")
   assertResolves(notifyLink, join(cloneDir(home), "plugins", "team-tools", "plugin", "notify.js"))
@@ -469,7 +471,7 @@ phase("an update that changes an executable component blocks it pending ocm trus
 })
 
 phase("a dirty working tree is discarded with a warning naming the clone; an up-to-date update still repairs a hand-deleted link", async (home) => {
-  gitRepo(join(home, "remote"), { plugins: { tool: { commands: { "work.md": COMMAND } } } })
+  gitRepo(join(home, "remote"), { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
   expect(ocm(home, "add", `file://${join(home, "remote")}`, "--name", "mp").status).toBe(0)
   // the user edited the cache and deleted a link; the remote did not move
   writeFileSync(join(cloneDir(home), "plugins", "tool", "commands", "work.md"), "# dirty edit\n")
@@ -485,8 +487,8 @@ phase("a dirty working tree is discarded with a warning naming the clone; an up-
 })
 
 phase("a rename whose target collides with another marketplace's plugin name is refused; the old record stays", async (home) => {
-  writeTree(join(home, "mp-a"), { plugins: { new: { commands: { "a.md": COMMAND } } } })
-  writeTree(join(home, "mp-b"), { plugins: { old: { commands: { "b.md": COMMAND } } } })
+  writeTree(join(home, "mp-a"), { plugins: { new: { "plugin.json": PLUGIN_JSON, commands: { "a.md": COMMAND } } } })
+  writeTree(join(home, "mp-b"), { plugins: { old: { "plugin.json": PLUGIN_JSON, commands: { "b.md": COMMAND } } } })
   expect(ocm(home, "add", join(home, "mp-a")).status).toBe(0)
   expect(ocm(home, "add", join(home, "mp-b")).status).toBe(0)
   if (ocm(home, "uninstall", "old").status !== 0) throw new Error("ocm uninstall old exited non-zero")
@@ -504,7 +506,7 @@ phase("a rename whose target collides with another marketplace's plugin name is 
 })
 
 phase("syncIntervalMs 0 syncs on every start; OCM_SYNC_DISABLE=1 turns startup sync off entirely", async (home) => {
-  gitRepo(join(home, "remote"), { plugins: { tool: { commands: { "work.md": COMMAND } } } })
+  gitRepo(join(home, "remote"), { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
   expect(ocm(home, "add", `file://${join(home, "remote")}`, "--name", "mp").status).toBe(0)
   editRegistry(home, (registry) => {
     registry.marketplaces.mp.syncIntervalMs = 0

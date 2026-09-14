@@ -38,6 +38,8 @@ const cfg = (home) => join(home, ".config", "opencode")
 const registryFile = (home) => join(cfg(home), "ocm", "registry.json")
 const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8"))
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`
+// spec 19: description is the one required plugin.json field
+const PLUGIN_JSON = json({ description: "demo plugin" })
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const SKILL = (name) => `---\nname: ${name}\ndescription: ${name} guidance\n---\n\n# ${name}\n\nBody.\n`
 
@@ -124,6 +126,7 @@ phase("2. top-level category/tags still work; with both present, extensions wins
     "plugin.json": json({
       $schema: AP_PLUGIN_SCHEMA,
       name: "adw",
+      description: "demo plugin",
       category: "legacy",
       tags: ["legacy-tag"],
       extensions: { "dev.wntic.ocm": { category: "workflow", tags: ["python"] } },
@@ -145,6 +148,7 @@ phase("3. an AP streamable-http server translates to opencode's remote shape (st
   writeTree(cfg(home), { "opencode.json": json({ model: "claude-sonnet-4-6" }) })
   const mp = join(home, "mp")
   writeTree(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "commit.md": COMMAND },
     "mcp.json": json({
       $schema: AP_MCP_SCHEMA,
@@ -174,7 +178,7 @@ test("4. the trust fingerprint covers translated servers, not wrapper keys: a ch
   await withFakeHome(async (home) => {
     const mp = join(home, "mp")
     writeTree(cfg(home), { "opencode.json": json({ model: "claude-sonnet-4-6" }) })
-    writeTree(mp, { plugins: { adw: { commands: { "commit.md": COMMAND }, "mcp.json": apMcp("npx") } } })
+    writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, "mcp.json": apMcp("npx") } } })
     expect(ocm(home, "add", mp, "--trust").status).toBe(0)
     expect(mcpKey(home)).toEqual(translated) // $schema/mcpServers are not servers: db is approved and materialized
     writeFileSync(join(mp, "plugins", "adw", "mcp.json"), apMcp("bunx"))
@@ -186,7 +190,7 @@ test("4. the trust fingerprint covers translated servers, not wrapper keys: a ch
   await withFakeHome(async (home) => {
     const mp = join(home, "mp")
     writeTree(cfg(home), { "opencode.json": json({ model: "claude-sonnet-4-6" }) })
-    writeTree(mp, { plugins: { adw: { commands: { "commit.md": COMMAND }, "mcp.json": apMcp("npx") } } })
+    writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, "mcp.json": apMcp("npx") } } })
     expect(ocm(home, "add", mp, "--trust").status).toBe(0)
     expect(mcpKey(home)).toEqual(translated)
     // the same servers with every key order changed, wrapper and entry alike
@@ -205,7 +209,7 @@ phase("5. every §7 validate finding, one fixture each, asserting the exact line
   // the one error: $schema with an unrecognised value (1.1.0 is a Working Draft)
   const badSchema = join(home, "schema-unrecognised")
   writeTree(badSchema, { plugins: { adw: {
-    "plugin.json": json({ $schema: "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json", name: "adw" }),
+    "plugin.json": json({ $schema: "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json", name: "adw", description: "demo plugin" }),
     commands: { "commit.md": COMMAND },
   } } })
   const bad = ocm(home, "validate", badSchema)
@@ -219,21 +223,21 @@ phase("5. every §7 validate finding, one fixture each, asserting the exact line
       commands: { "commit.md": COMMAND },
     } } }, ["plugin.json", "$schema", "Codex"]],
     ["top-level-category-tags", { plugins: { adw: {
-      "plugin.json": json({ $schema: AP_PLUGIN_SCHEMA, name: "adw", category: "review", tags: ["quality"] }),
+      "plugin.json": json({ $schema: AP_PLUGIN_SCHEMA, name: "adw", description: "demo plugin", category: "review", tags: ["quality"] }),
       commands: { "commit.md": COMMAND },
     } } }, ["plugin.json", "category", "extensions", "dev.wntic.ocm"]],
     ["extensions-not-object", { plugins: { adw: {
-      "plugin.json": json({ $schema: AP_PLUGIN_SCHEMA, name: "adw", extensions: "nope" }),
+      "plugin.json": json({ $schema: AP_PLUGIN_SCHEMA, name: "adw", description: "demo plugin", extensions: "nope" }),
       commands: { "commit.md": COMMAND },
     } } }, ["plugin.json", "extensions"]],
     ["skill-nested", { plugins: { adw: {
-      "plugin.json": json({ $schema: AP_PLUGIN_SCHEMA, name: "adw" }),
+      "plugin.json": json({ $schema: AP_PLUGIN_SCHEMA, name: "adw", description: "demo plugin" }),
       skills: { group: { nested: { "SKILL.md": SKILL("nested-skill") } } },
     } } }, ["group/nested"]],
     ["codex-plugin-catalog", {
       ".codex-plugin": { "marketplace.json": json({ name: "demo", plugins: [] }) },
       plugins: { adw: {
-        "plugin.json": json({ $schema: AP_PLUGIN_SCHEMA, name: "adw" }),
+        "plugin.json": json({ $schema: AP_PLUGIN_SCHEMA, name: "adw", description: "demo plugin" }),
         commands: { "commit.md": COMMAND },
       } },
     }, [".codex-plugin", "marketplace.json"]],
@@ -263,7 +267,7 @@ phase("6. an ocm-invalid but AP-valid name (acme.tools) is reported with the nam
 phase("7. a skill nested two levels under skills/ installs in opencode and warns that other clients will not see it", async (home) => {
   const mp = join(home, "mp")
   writeTree(mp, { plugins: { adw: {
-    "plugin.json": json({ $schema: AP_PLUGIN_SCHEMA, name: "adw" }),
+    "plugin.json": json({ $schema: AP_PLUGIN_SCHEMA, name: "adw", description: "demo plugin" }),
     skills: { group: { nested: { "SKILL.md": SKILL("nested-skill") } } },
   } } })
   expect(ocm(home, "add", mp).status).toBe(0)

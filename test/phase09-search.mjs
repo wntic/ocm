@@ -71,6 +71,9 @@ const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const AGENT = "---\ndescription: code reviewer\n---\n\nReviewer body.\n"
 const SKILL = "---\nname: code-review\ndescription: code review checklist\n---\n\n# Code review\n\nUse the checklist.\n"
 const JS_PLUGIN = 'export default { id: "phase09-notify", server: async () => ({}) }\n'
+// spec 19: every installable plugin carries a plugin.json with a description;
+// "demo plugin" matches no query these tests search for
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
 
 phase("1. ranking: name exact beats prefix beats substring beats tag beats description beats component name", async (home) => {
   addNamed(home, "mp", {
@@ -79,12 +82,12 @@ phase("1. ranking: name exact beats prefix beats substring beats tag beats descr
       { name: "polish", source: "./plugins/polish", description: "polish and review your diffs" },
     ]),
     plugins: {
-      review: { commands: { "work.md": COMMAND } }, // name exact
-      reviewer: { commands: { "work.md": COMMAND } }, // name prefix
-      "code-review": { commands: { "work.md": COMMAND } }, // name substring
-      "quality-gate": { commands: { "work.md": COMMAND } }, // tag exact
-      polish: { commands: { "work.md": COMMAND } }, // description substring
-      adw: { commands: { "pr-review.md": COMMAND } }, // component name substring
+      review: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, // name exact
+      reviewer: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, // name prefix
+      "code-review": { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, // name substring
+      "quality-gate": { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, // tag exact
+      polish: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, // description substring
+      adw: { "plugin.json": PLUGIN_JSON, commands: { "pr-review.md": COMMAND } }, // component name substring
     },
   })
   const result = ocm(home, "search", "review")
@@ -100,7 +103,7 @@ phase("1. ranking: name exact beats prefix beats substring beats tag beats descr
 })
 
 phase("2. a component-name match surfaces a plugin whose own name does not match, and the output says which component matched", async (home) => {
-  addNamed(home, "mp", { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+  addNamed(home, "mp", { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
   const result = ocm(home, "search", "commit")
   if (result.status !== 0) throw new Error(`ocm search commit exited ${result.status}: ${result.stderr}`)
   const output = result.stdout
@@ -113,12 +116,12 @@ phase("2. a component-name match surfaces a plugin whose own name does not match
 phase("3. disabled and blocked markers; --enabled-only drops the disabled plugin", async (home) => {
   addNamed(home, "mp-a", {
     "marketplace.json": manifest([{ name: "tool-old", source: "./plugins/tool-old", defaultEnabled: false }]),
-    plugins: { "tool-old": { commands: { "work.md": COMMAND } } },
+    plugins: { "tool-old": { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } },
   })
   // no --trust and no TTY: the executable component is discovered, recorded
   // and blocked, never linked
   addNamed(home, "mp-b", {
-    plugins: { "tool-new": { commands: { "work.md": COMMAND }, plugin: { "notify.js": JS_PLUGIN } } },
+    plugins: { "tool-new": { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND }, plugin: { "notify.js": JS_PLUGIN } } },
   })
   const result = ocm(home, "search", "tool")
   if (result.status !== 0) throw new Error(`ocm search tool exited ${result.status}: ${result.stderr}`)
@@ -141,7 +144,7 @@ phase("3. disabled and blocked markers; --enabled-only drops the disabled plugin
 }, 420_000) // opencode spawns with plugin files present: canary + error scan
 
 phase("4. an empty result exits 1 with no matches for the query, and hints at ocm update only when a marketplace is stale or failed", async (home) => {
-  addNamed(home, "mp", { plugins: { solo: { commands: { "work.md": COMMAND } } } })
+  addNamed(home, "mp", { plugins: { solo: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
   editRegistry(home, (registry) => {
     registry.marketplaces.mp.lastSync = { at: new Date().toISOString(), ok: true, error: null }
   })

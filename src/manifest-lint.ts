@@ -192,11 +192,25 @@ export function lintPluginJson(
   findings: Finding[],
 ): Record<string, unknown> | undefined {
   const file = join(pluginDir, "plugin.json")
-  if (!existsSync(file)) return undefined
+  if (!existsSync(file)) {
+    // spec 19: the copy-pasteable stub rides the first missing manifest only
+    const stub = findings.some((finding) => finding.message.includes("minimal content"))
+      ? ""
+      : `\n    minimal content: { "$schema": "${AP_PLUGIN_SCHEMA}", "description": "one line about the plugin" }`
+    findings.push(error(`${relative(root, pluginDir)}: plugin.json is required${stub}`))
+    return undefined
+  }
   const rel = relative(root, file)
   const parsed = parseJson(file, rel, findings)
   if (!parsed) return undefined
   lintFields(rel, parsed, findings)
+  // spec 19: description is the one required field — the minimum that keeps
+  // search and the TUI non-blind
+  if (typeof parsed.description !== "string" || !parsed.description) {
+    findings.push(error(`${rel}: "description" is required and must be a non-empty string`))
+  } else if (parsed.description.length > 200) {
+    findings.push(error(`${rel}: "description" is longer than 200 characters (${parsed.description.length})`))
+  }
   // spec 14 §7: only an unrecognised $schema is an error — a non-conformant
   // plugin still works perfectly well in opencode
   if (parsed.$schema === undefined) {

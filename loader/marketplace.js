@@ -4,7 +4,7 @@ import { setSkillsPath } from "./config.js"
 import { collisionError, incumbentMarketplace } from "./collisions.js"
 import { discoverMarketplace, discoveryError, readManifest } from "./manifest.js"
 import { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
-import { limitRefusal } from "./limits.js"
+import { limitRefusal, manifestRefusal } from "./limits.js"
 import { removeMcpKeys } from "./mcp.js"
 import { LINKS_DIR } from "./paths.js"
 import { loadRegistryForWrite, saveRegistry } from "./registry.js"
@@ -87,7 +87,7 @@ export async function addMarketplace(source, options = {}) {
       discovered.warnings, parsed, dir,
     )
   }
-  const refusal = discoveryError(plugins) ?? limitRefusal(plugins)
+  const refusal = discoveryError(plugins) ?? limitRefusal(plugins) ?? manifestRefusal(name, plugins)
   if (refusal) addRefusal(refusal, discovered.warnings, parsed, dir)
   const collision = collisionError(registry, name, plugins)
   if (collision) addRefusal(collision, discovered.warnings, parsed, dir)

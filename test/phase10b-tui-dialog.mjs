@@ -205,6 +205,8 @@ const SKILL = "---\nname: python-style\ndescription: Python style guidance\n---\
 const JS_PLUGIN = 'export default { id: "phase10b-notify", server: async () => ({}) }\n'
 const MCP = { db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } }
 const mcpJson = (servers) => `${JSON.stringify(servers, null, 2)}\n`
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
 
 phase("1. the installed ui.js default-exports { id, tui } with an async tui and no server export", async (home, ocm) => {
   expectOk(await ocm.installLoader())
@@ -220,7 +222,7 @@ phase("1. the installed ui.js default-exports { id, tui } with an async tui and 
 phase("2. the installed ui.js imports ./core.js successfully from its installed location", async (home, ocm) => {
   expectOk(await ocm.installLoader())
   const mp = join(home, "mp")
-  writeTree(mp, { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
   expect(cli(home, "add", mp).status).toBe(0)
   // a child on the fake $HOME imports the installed ui.js and opens /ocm;
   // the main menu only renders if ui.js's ./core.js import resolved there
@@ -272,8 +274,8 @@ phase("4. a recorded fake api drives main menu → browse → per-plugin menu �
 
   const mp = join(home, "mp")
   writeTree(mp, { plugins: {
-    adw: { commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } },
-    beta: { commands: { "lint.md": COMMAND } },
+    adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } },
+    beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } },
   } })
   // invariant: ownership — a hand-written command survives every ocm operation
   mkdirSync(join(cfg(home), "commands"), { recursive: true })
@@ -327,6 +329,7 @@ phase("4. a recorded fake api drives main menu → browse → per-plugin menu �
 phase("5. failure paths: unreachable marketplace on update, plugin-name collision on add, blocked components on install", async (home) => {
   const remote = join(home, "remote")
   gitRepo(remote, { plugins: { tool: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "work.md": COMMAND },
     plugin: { "notify.js": JS_PLUGIN },
     "mcp.json": mcpJson(MCP),
@@ -337,10 +340,10 @@ phase("5. failure paths: unreachable marketplace on update, plugin-name collisio
   const notifyLink = join(cfg(home), "plugins", "ocm--tool--notify.js")
 
   const mpA = join(home, "mp-a")
-  writeTree(mpA, { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+  writeTree(mpA, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
   expect(cli(home, "add", mpA).status).toBe(0)
   const mpB = join(home, "mp-b")
-  writeTree(mpB, { plugins: { adw: { commands: { "deploy.md": COMMAND } } } })
+  writeTree(mpB, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "deploy.md": COMMAND } } } })
 
   // unreachable marketplace on update: the remote is gone, the clone remains
   rmSync(remote, { recursive: true, force: true })
@@ -402,6 +405,7 @@ phase("5. failure paths: unreachable marketplace on update, plugin-name collisio
 phase("6. every mutation path ends by emitting the restart notice; an unchanged update does not", async (home) => {
   const remote = join(home, "remote")
   gitRepo(remote, { plugins: { tool: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "work.md": COMMAND },
     plugin: { "notify.js": JS_PLUGIN },
   } } })
@@ -414,12 +418,12 @@ phase("6. every mutation path ends by emitting the restart notice; an unchanged 
   expect(cli(home, "add", `file://${remote}`, "--name", "gitmp").status).toBe(0)
 
   const mp = join(home, "mp")
-  writeTree(mp, { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
   expect(cli(home, "add", mp).status).toBe(0)
   expect(cli(home, "uninstall", "adw").status).toBe(0)
 
   const mpx = join(home, "mpx")
-  writeTree(mpx, { plugins: { fresh: { commands: { "hop.md": COMMAND }, plugin: { "notify.js": JS_PLUGIN } } } })
+  writeTree(mpx, { plugins: { fresh: { "plugin.json": PLUGIN_JSON, commands: { "hop.md": COMMAND }, plugin: { "notify.js": JS_PLUGIN } } } })
 
   const install = uiDrive(home, [{ select: "Browse" }, { select: "adw@mp" }, { select: "Install" }, { confirm: true }])
   expect(hasNotice(install)).toBe(true)

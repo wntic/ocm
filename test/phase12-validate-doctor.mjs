@@ -62,6 +62,12 @@ const JS_PLUGIN = 'export default { id: "adw-notify", server: async () => ({}) }
 const USER_PLUGIN = 'export default { id: "mine", server: async () => ({}) }\n'
 const MCP = { db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } }
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`
+// spec 19: every valid plugin carries a plugin.json with a description; the
+// ERROR_CASES below stay manifest-less on purpose — phase 19 owns that error
+const PLUGIN_JSON = json({ description: "demo plugin" })
+// the clean fixture must produce zero findings, so its manifest also pins the
+// $schema the warning asks for
+const CLEAN_PLUGIN_JSON = json({ description: "demo plugin", $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json" })
 const manifest = (plugins) => json({ name: "mp", plugins })
 const LONG = "a".repeat(65)
 
@@ -91,16 +97,16 @@ const ERROR_CASES = [
 
 // one fixture per warning class: { label, tree, warnings, absent? }
 const WARNING_CASES = [
-  { label: "non-portable-frontmatter", tree: { plugins: { adw: { skills: { style: { "SKILL.md": SKILL("style", "allowed-tools: Bash\n") } } } } }, warnings: [["SKILL.md", 'non-portable frontmatter "allowed-tools"']] },
-  { label: "plugin-root-ref", tree: { plugins: { adw: { commands: {
+  { label: "non-portable-frontmatter", tree: { plugins: { adw: { "plugin.json": PLUGIN_JSON, skills: { style: { "SKILL.md": SKILL("style", "allowed-tools: Bash\n") } } } } }, warnings: [["SKILL.md", 'non-portable frontmatter "allowed-tools"']] },
+  { label: "plugin-root-ref", tree: { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: {
     "bad.md": '---\ndescription: bad reference\n---\n\npython3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_report.py"\n',
     "good.md": '---\ndescription: good reference\n---\n\npython3 "${CLAUDE_PLUGIN_ROOT}/plugins/adw/scripts/run_report.py"\n',
   } } } }, warnings: [["bad.md", "CLAUDE_PLUGIN_ROOT"]], absent: [["good.md"]] },
-  { label: "version-disagrees", tree: { "marketplace.json": manifest([{ name: "baz", source: "./plugins/baz", version: "1.0.0" }]), plugins: { baz: { "plugin.json": json({ version: "1.1.0" }), commands: { "work.md": COMMAND } } } }, warnings: [["version disagrees", "1.0.0", "1.1.0"]] },
-  { label: "command-no-frontmatter", tree: { plugins: { adw: { commands: { "plain.md": "# Just markdown\n" } } } }, warnings: [["plain.md"]] },
-  { label: "typo-dirs", tree: { plugins: { typodirs: { skills: { one: { "SKILL.md": SKILL("one") } }, skill: { two: { "SKILL.md": SKILL("two") } } } } }, warnings: [["typodirs", "skill"]] },
-  { label: "typo-files", tree: { plugins: { typos: { commands: { "work.md": COMMAND }, "plugin.ts": "// typo\n", "SKILLS.md": "# typo\n", "Skill.md": "# typo\n" } } }, warnings: [["plugin.ts"], ["SKILLS.md"], ["Skill.md"]] },
-  { label: "shell-substitution", tree: { plugins: { adw: { commands: { "shell.md": "---\ndescription: shell out\n---\n\nRun `!git status --porcelain` first.\n" } } } }, warnings: [["shell.md"]] },
+  { label: "version-disagrees", tree: { "marketplace.json": manifest([{ name: "baz", source: "./plugins/baz", version: "1.0.0" }]), plugins: { baz: { "plugin.json": json({ version: "1.1.0", description: "demo plugin" }), commands: { "work.md": COMMAND } } } }, warnings: [["version disagrees", "1.0.0", "1.1.0"]] },
+  { label: "command-no-frontmatter", tree: { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "plain.md": "# Just markdown\n" } } } }, warnings: [["plain.md"]] },
+  { label: "typo-dirs", tree: { plugins: { typodirs: { "plugin.json": PLUGIN_JSON, skills: { one: { "SKILL.md": SKILL("one") } }, skill: { two: { "SKILL.md": SKILL("two") } } } } }, warnings: [["typodirs", "skill"]] },
+  { label: "typo-files", tree: { plugins: { typos: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND }, "plugin.ts": "// typo\n", "SKILLS.md": "# typo\n", "Skill.md": "# typo\n" } } }, warnings: [["plugin.ts"], ["SKILLS.md"], ["Skill.md"]] },
+  { label: "shell-substitution", tree: { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "shell.md": "---\ndescription: shell out\n---\n\nRun `!git status --porcelain` first.\n" } } } }, warnings: [["shell.md"]] },
 ]
 
 phase("1. one fixture per error class and per warning class, asserting the exact finding line and the exit code; a clean marketplace exits 0 with only the header", async (home) => {
@@ -138,17 +144,17 @@ phase("1. one fixture per error class and per warning class, asserting the exact
     }
   }
   // a marketplace name colliding with one already added on this machine
-  writeTree(join(home, "taken"), { plugins: { a: { commands: { "x.md": COMMAND } } } })
+  writeTree(join(home, "taken"), { plugins: { a: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } } } })
   expect(ocm(home, "add", join(home, "taken")).status).toBe(0)
   const collide = join(home, "name-collide")
-  writeTree(collide, { "marketplace.json": json({ name: "taken", plugins: [{ name: "tool", source: "./plugins/tool" }] }), plugins: { tool: { commands: { "work.md": COMMAND } } } })
+  writeTree(collide, { "marketplace.json": json({ name: "taken", plugins: [{ name: "tool", source: "./plugins/tool" }] }), plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
   const colliding = ocm(home, "validate", collide)
   const collideOutput = `${colliding.stdout}\n${colliding.stderr}`
   if (colliding.status !== 0) throw new Error(`validate name-collide exited ${colliding.status}, expected 0:\n${collideOutput}`)
   finding(collideOutput, "warning", "taken")
   // clean: exit 0, the header and nothing else
   const clean = join(home, "clean")
-  writeTree(clean, { plugins: { tool: { commands: { "work.md": COMMAND }, skills: { one: { "SKILL.md": SKILL("one") } } } } })
+  writeTree(clean, { plugins: { tool: { "plugin.json": CLEAN_PLUGIN_JSON, commands: { "work.md": COMMAND }, skills: { one: { "SKILL.md": SKILL("one") } } } } })
   const ok = ocm(home, "validate", clean)
   if (ok.status !== 0) throw new Error(`validate clean exited ${ok.status}, expected 0:\n${ok.stdout}\n${ok.stderr}`)
   const header = `${ok.stdout}\n${ok.stderr}`.trim()
@@ -182,6 +188,7 @@ phase("3. doctor detects a stale core by version comment, a stray ocm file in pl
   writeFileSync(coreFile, fresh.replace(/^\/\/ ocm-version:.*$/m, "// ocm-version: 0.0.0 stale")) // a stale core silently no-ops
   const mp = join(home, "mp")
   writeTree(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "commit.md": COMMAND },
     skills: { style: { "SKILL.md": SKILL("style") } },
     plugin: { "notify.js": JS_PLUGIN },
@@ -246,7 +253,7 @@ phase("3. doctor detects a stale core by version comment, a stray ocm file in pl
 phase("4. doctor reports a marketplace whose last sync failed, with the error", async (home) => {
   expect(ocm(home, "init").status).toBe(0)
   const remote = join(home, "remote")
-  gitRepo(remote, { plugins: { tool: { commands: { "work.md": COMMAND } } } })
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
   expect(ocm(home, "add", `file://${remote}`, "--name", "mp").status).toBe(0)
   rmSync(remote, { recursive: true, force: true })
   expect(ocm(home, "update", "mp").status).not.toBe(0)
@@ -298,7 +305,7 @@ phase("6. a full add → install → update → remove cycle creates nothing und
   const userConfig = { model: "claude-sonnet-4-6", permission: { edit: "allow" }, skills: { paths: ["/users/me/my-skills"] } }
   writeTree(cfg(home), { "opencode.json": `${JSON.stringify(userConfig, null, 2)}\n`, commands: { "mine.md": "# my own command\n" } })
   const remote = join(home, "remote")
-  gitRepo(remote, { plugins: { adw: { commands: { "commit.md": COMMAND }, skills: { style: { "SKILL.md": SKILL("style") } } } } })
+  gitRepo(remote, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { style: { "SKILL.md": SKILL("style") } } } } })
   expect(ocm(home, "add", `file://${remote}`, "--name", "mp", "--explicit").status).toBe(0)
   expect(ocm(home, "install", "adw").status).toBe(0)
   assertResolves(join(cfg(home), "commands", "adw:commit.md"), join(home, ".cache", "ocm", "marketplaces", "mp", "plugins", "adw", "commands", "commit.md"))

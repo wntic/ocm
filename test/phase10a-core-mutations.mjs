@@ -110,12 +110,14 @@ const SKILL = "---\nname: python-style\ndescription: Python style guidance\n---\
 const JS_PLUGIN = 'export default { id: "phase10a-notify", server: async () => ({}) }\n'
 const MCP = { db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } }
 const mcpJson = (servers) => `${JSON.stringify(servers, null, 2)}\n`
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
 
 phase("1. install/uninstall through the core flip enabled/installedAt and materialize/remove exactly that plugin's links", async (home) => {
   const mp = join(home, "mp")
   writeTree(mp, { plugins: {
-    adw: { commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } },
-    beta: { commands: { "lint.md": COMMAND } },
+    adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } },
+    beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } },
   } })
   expect(ocm(home, "add", mp).status).toBe(0)
   const betaLink = commandLink(home, "beta", "lint.md")
@@ -146,7 +148,7 @@ phase("1. install/uninstall through the core flip enabled/installedAt and materi
 
 phase("2. marketplace add through the core registers and materializes, and refuses a plugin-name collision without writing anything", async (home) => {
   const mpA = join(home, "mp-a")
-  writeTree(mpA, { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+  writeTree(mpA, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
   coreOk(home, [{ fn: "addMarketplace", args: [mpA] }])
   const entry = readRegistry(home).marketplaces["mp-a"]
   if (!entry) throw new Error(`expected a "mp-a" record in ${registryFile(home)}`)
@@ -155,7 +157,7 @@ phase("2. marketplace add through the core registers and materializes, and refus
 
   const bytes = readFileSync(registryFile(home), "utf8")
   const mpB = join(home, "mp-b")
-  writeTree(mpB, { plugins: { adw: { commands: { "deploy.md": COMMAND } } } })
+  writeTree(mpB, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "deploy.md": COMMAND } } } })
   coreFails(home, [{ fn: "addMarketplace", args: [mpB] }], "mp-a", '"adw"')
   expect(readRegistry(home).marketplaces["mp-b"]).toBeUndefined()
   expect(readFileSync(registryFile(home), "utf8")).toBe(bytes) // the refusal wrote nothing
@@ -180,7 +182,7 @@ phase("3. remove through the core leaves zero ocm-- traces, no links, no skills.
     commands: { "mine.md": "# my own command\n" },
   })
   const mp = join(home, "mp")
-  writeTree(mp, { plugins: { adw: { commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
   expect(ocm(home, "add", mp).status).toBe(0)
   const skillsEntry = join(home, ".cache", "ocm", "links", "mp", "skills")
   expect(JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8")).skills.paths).toContain(skillsEntry)
@@ -201,6 +203,7 @@ phase("3. remove through the core leaves zero ocm-- traces, no links, no skills.
 phase("4. trust grant/deny/revoke and pin through the core update the registry and re-materialize accordingly", async (home) => {
   const remote = join(home, "remote")
   gitRepo(remote, { plugins: { tool: {
+    "plugin.json": PLUGIN_JSON,
     commands: { "work.md": COMMAND },
     plugin: { "notify.js": JS_PLUGIN },
     "mcp.json": mcpJson(MCP),
@@ -264,12 +267,12 @@ phase("5. search through the core returns the spec 09 ranking", async (home) => 
       { name: "polish", source: "./plugins/polish", description: "polish and review your diffs" },
     ] }, null, 2)}\n`,
     plugins: {
-      review: { commands: { "work.md": COMMAND } }, // name exact
-      reviewer: { commands: { "work.md": COMMAND } }, // name prefix
-      "code-review": { commands: { "work.md": COMMAND } }, // name substring
-      "quality-gate": { commands: { "work.md": COMMAND } }, // tag exact
-      polish: { commands: { "work.md": COMMAND } }, // description substring
-      adw: { commands: { "pr-review.md": COMMAND } }, // component name substring
+      review: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, // name exact
+      reviewer: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, // name prefix
+      "code-review": { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, // name substring
+      "quality-gate": { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, // tag exact
+      polish: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } }, // description substring
+      adw: { "plugin.json": PLUGIN_JSON, commands: { "pr-review.md": COMMAND } }, // component name substring
     },
   })
   expect(ocm(home, "add", mp).status).toBe(0)
@@ -282,7 +285,7 @@ phase("5. search through the core returns the spec 09 ranking", async (home) => 
 
 phase("6. the registry save is atomic and idempotent: an unchanged save is byte-identical and user-added keys survive", async (home) => {
   const mp = join(home, "mp")
-  writeTree(mp, { plugins: { adw: { commands: { "commit.md": COMMAND } } } })
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
   expect(ocm(home, "add", mp).status).toBe(0)
 
   const bytes = readFileSync(registryFile(home), "utf8")
