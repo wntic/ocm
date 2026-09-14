@@ -1,45 +1,12 @@
-import { spawn } from "node:child_process"
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { DEFAULT_SYNC_INTERVAL_MS, REGISTRY_FILE, STAMP_FILE } from "./paths.js"
+import { git, isGitRepo } from "./git.js"
+import { removeMcpKeys } from "./mcp.js"
 import { enabledPlugins, materialize } from "./materialize.js"
+import { reconcilePluginRecords } from "./reconcile.js"
+import { DEFAULT_SYNC_INTERVAL_MS, REGISTRY_FILE, STAMP_FILE } from "./paths.js"
 import { isRecord, markTrustPending, readRegistry } from "./registry.js"
 import { executableComponents, trustFingerprint } from "./trust.js"
-
-export function isGitRepo(dir) {
-  return existsSync(join(dir, ".git"))
-}
-
-// spec 17: git never prompts — a private repo over https in a tty would hang
-// at git's username prompt forever; a user's own GIT_SSH_COMMAND wins
-function gitEnv() {
-  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0" }
-  if (!env.GIT_SSH_COMMAND) env.GIT_SSH_COMMAND = "ssh -o BatchMode=yes"
-  return env
-}
-
-export function git(args, cwd) {
-  return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: gitEnv() })
-    let stdout = ""
-    let stderr = ""
-    let settled = false
-    const finish = (result) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolve(result)
-    }
-    const timer = setTimeout(() => {
-      child.kill()
-      finish({ ok: false, stdout: "", stderr: "git timed out" })
-    }, 120_000)
-    child.stdout.on("data", (chunk) => (stdout += chunk))
-    child.stderr.on("data", (chunk) => (stderr += chunk))
-    child.on("error", (err) => finish({ ok: false, stdout: "", stderr: String(err) }))
-    child.on("close", (code) => finish({ ok: code === 0, stdout: stdout.trim(), stderr: stderr.trim() }))
-  })
-}
 
 // spec 08: fetch the pinned ref when there is one, else the remote's HEAD —
 // a --branch clone is single-branch, so a bare fetch would follow the
@@ -89,6 +56,27 @@ function recordSync(name, value, revision) {
   } catch {}
 }
 
+// spec 20: the sync path refreshes per-plugin component records after every
+// pull, exactly as the CLI update does. It runs after materialize — the
+// materializer's inputs are computed from the pre-pull records — and writes
+// only when reconciliation changed something, so an unchanged pull leaves
+// the registry byte-identical. The raw file is mutated in place, never
+// migrated, so unknown fields survive.
+function refreshRecords(name, root) {
+  try {
+    const before = readFileSync(REGISTRY_FILE, "utf8")
+    const raw = JSON.parse(before)
+    if (!isRecord(raw) || raw.version !== 2 || !isRecord(raw.marketplaces?.[name])) return
+    const { pruned } = reconcilePluginRecords(raw, name, root)
+    if (pruned.length) removeMcpKeys(pruned)
+    const after = `${JSON.stringify(raw, null, 2)}\n`
+    if (after === before) return
+    const tmp = `${REGISTRY_FILE}.tmp`
+    writeFileSync(tmp, after)
+    renameSync(tmp, REGISTRY_FILE)
+  } catch {}
+}
+
 // spec 08: syncIntervalMs beats OCM_SYNC_INTERVAL_MS beats the 1h default;
 // 0 means due on every start
 function intervalFor(entry) {
@@ -122,6 +110,7 @@ export async function syncAll(options = {}) {
     result.ran = true
     let changed = false
     let revision
+    let pulled = false
     // `local === false` rather than `!entry.local`: an entry missing the
     // field must never be treated as an ocm-managed clone
     if (entry.local === false && isGitRepo(entry.dir)) {
@@ -134,6 +123,7 @@ export async function syncAll(options = {}) {
       }
       changed = pull.changed
       revision = pull.after
+      pulled = true
       if (changed) result.updated.push(name)
       else result.unchanged.push(name)
     } else {
@@ -146,6 +136,7 @@ export async function syncAll(options = {}) {
     const links = materialize(name, root, { enabled: enabledPlugins(entry, root) })
     if (links.warnings.length) result.warnings = [...(result.warnings ?? []), ...links.warnings.map((w) => `${name}: ${w}`)]
     if (changed || links.created > 0) result.changed = true
+    if (pulled) refreshRecords(name, root)
     markDriftedTrust(name, entry, root)
     recordSync(name, { at: new Date().toISOString(), ok: true, error: null }, revision)
   }

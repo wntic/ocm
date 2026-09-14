@@ -2,9 +2,8 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OPENCODE_GLOBAL_DIR, OPENCODE_PLUGINS_DIR } from "./paths"
+import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OPENCODE_PLUGINS_DIR, OPENCODE_TUI_CONFIG as TUI_CONFIG_FILE } from "./paths"
 
-const TUI_CONFIG_FILE = join(OPENCODE_GLOBAL_DIR, "tui.json")
 const TUI_PLUGIN_ENTRY = "./ocm/ui.js"
 const LEGACY_TUI_PLUGIN_ENTRY = "./plugins/ocm-ui.js"
 const LEGACY_PLUGIN_FILES = ["ocm-core.js", "ocm-ui.js", "ocm-core.d.ts"]

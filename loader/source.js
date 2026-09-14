@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs"
 import { join, resolve } from "node:path"
+import { git } from "./git.js"
 import { readManifest } from "./manifest.js"
 import { HOME, MARKETPLACES_DIR } from "./paths.js"
-import { git } from "./sync.js"
 
 const GITHUB_TREE_RE = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)(\/.*)?$/
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/

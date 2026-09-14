@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { addMarketplace, denyTrust, grantTrust, isGitUrl, normaliseMarketplaceName, parseSource, pinMarketplace, readRegistry, removeMarketplace, skipTrust } from "../../loader/core.js"
 import type { CoreAddResult } from "../../loader/core.js"
 import { installLoader } from "../loader"
+import { OCM_LINKS_DIR, OPENCODE_GLOBAL_CONFIG } from "../paths"
 import { reportRestart, reportUpgrade, reportWarnings } from "../report"
 import { printTrustListing, promptTrust } from "./trust-prompt"
 
@@ -63,19 +66,43 @@ export async function add(source: string, options: AddOptions = {}): Promise<voi
       skipTrust(result.name)
     }
   }
-  reportWarnings(warnings)
+  // spec 20 F28: a config that does not parse was never written — say so and
+  // show the exact edit instead of counting the skill as installed
+  const skillsNotWritten = result.report.counts.skill > 0 && configIsCorrupt()
+  reportWarnings([...new Set(warnings)])
+  if (skillsNotWritten) {
+    console.error("skills.paths NOT written — opencode.json is not valid JSON")
+    console.error(`  add "${join(OCM_LINKS_DIR, result.name, "skills")}" to skills.paths by hand`)
+  }
   reportRestart(created)
   reportUpgrade(result.wasV1)
-  reportAdded(result)
+  reportAdded(result, skillsNotWritten)
 }
 
-function reportAdded(result: CoreAddResult): void {
+// undefined and valid are both fine: only a present-but-unparseable config
+// silently swallows the skills.paths write
+function configIsCorrupt(): boolean {
+  let raw: string
+  try {
+    raw = readFileSync(OPENCODE_GLOBAL_CONFIG, "utf8")
+  } catch {
+    return false
+  }
+  try {
+    JSON.parse(raw)
+    return false
+  } catch {
+    return true
+  }
+}
+
+function reportAdded(result: CoreAddResult, skillsNotWritten: boolean): void {
   console.log(`added marketplace "${result.name}"`)
   for (const plugin of result.plugins) {
     const parts: string[] = []
     if (plugin.components.agent) parts.push(`${plugin.components.agent.length} agents`)
     if (plugin.components.command) parts.push(`${plugin.components.command.length} commands`)
-    if (plugin.components.skill) parts.push(`${plugin.components.skill.length} skills`)
+    if (plugin.components.skill && !skillsNotWritten) parts.push(`${plugin.components.skill.length} skills`)
     if (plugin.components.plugin) parts.push(`${plugin.components.plugin.length} plugins`)
     if (plugin.components.mcp) parts.push(`${plugin.components.mcp.length} mcp servers`)
     const available = result.mode === "explicit" ? " — available, not installed" : ""

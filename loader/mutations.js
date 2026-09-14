@@ -4,6 +4,7 @@ import { installRefusal, nameHolder } from "./collisions.js"
 import { nameDisagreement } from "./manifest.js"
 import { componentRoot } from "./marketplace.js"
 import { enabledPlugins, materialize } from "./materialize.js"
+import { reconcilePluginRecords } from "./reconcile.js"
 import { loadRegistryForWrite, saveRegistry } from "./registry.js"
 import { denyEntry, executableComponents, grantEntry, skipEntry } from "./trust.js"
 
@@ -110,6 +111,9 @@ export function grantTrust(name) {
   const root = componentRoot(entry)
   const components = executableComponents(root, entry)
   if (!components.length) return { granted: false, report: null, wasV1: false }
+  // spec 20: a grant materializes links, so the records behind those links
+  // are refreshed first — otherwise doctor reads the new links as unowned
+  reconcilePluginRecords(registry, name, root)
   grantEntry(entry, components)
   saveRegistry(registry)
   const report = materialize(name, root, { enabled: enabledPlugins(entry, root) })
