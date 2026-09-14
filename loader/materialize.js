@@ -141,7 +141,9 @@ export function materialize(name, dir, options = {}) {
       counts.skill += 1
       const mirrorName = `${plugin.name}--${rel.split("/").join("-")}`
       desiredMirrors.add(mirrorName)
-      removed += mirror(sourceDir, join(skillsDir, mirrorName), { "SKILL.md": () => transformed }, ctx, plugin.name, rel)
+      const mirrored = mirror(sourceDir, join(skillsDir, mirrorName), { "SKILL.md": () => transformed }, ctx, plugin.name, rel)
+      created += mirrored.created
+      removed += mirrored.removed
     }
     for (const file of plugin.components.plugin ?? []) {
       const source = resolveSource(plugin.dir, ["plugin", "plugins"], file, ctx, plugin.name)

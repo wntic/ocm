@@ -6,7 +6,7 @@ import { discoverMarketplace, readRenames } from "../discovery"
 import { applyRenames, resolveChains } from "../renames"
 import { clone, git } from "../git"
 import { loadRegistryForWrite, saveRegistry } from "../registry"
-import { installLoader } from "../loader"
+import { installLoader, reportTuiPlugin } from "../loader"
 import { reportUpgrade } from "../report"
 import type { MarketplaceEntry, Registry } from "../types"
 import { decideUpdateTrust } from "./trust"
@@ -47,14 +47,20 @@ export async function update(target?: string, options: UpdateOptions = {}): Prom
   }
   const reports: MarketplaceReport[] = []
   // before any prompt: the loader files do not depend on the trust decision,
-  // so an interrupt at a re-prompt cannot skip them (spec 16)
-  installLoader()
+  // so an interrupt at a re-prompt cannot skip them (spec 16). A no-op
+  // reports nothing for the loader (spec 23 §2); the TUI line is a notice
+  // and waits for the headers (spec 23 §6)
+  const tuiInstalled = installLoader(false)
   for (const name of names) {
+    // spec 23 §6: the header opens the marketplace's section before any of
+    // its output — the trust block included
+    if (!options.json && !options.quiet) console.log(`updating ${name}...`)
     const report = await updateOne(registry, name, options.trust, plugin)
     reports.push(report)
-    if (!options.json) renderMarketplace(report, options.quiet === true)
+    if (!options.json) renderMarketplace(report, options.quiet === true, !options.quiet)
   }
   if (options.json) console.log(JSON.stringify({ marketplaces: reports }, null, 2))
+  if (tuiInstalled) reportTuiPlugin()
   reportUpgrade(wasV1)
   const failed = reports.filter((report) => !report.ok).map((report) => report.name)
   if (failed.length) {
@@ -66,7 +72,8 @@ export async function update(target?: string, options: UpdateOptions = {}): Prom
 // one code path, so a missing cache is repaired the same way everywhere
 export function recloneMarketplace(entry: MarketplaceEntry): string {
   if (!entry.url) throw new Error(`clone directory missing (${entry.dir}) and no url recorded; remove and re-add the marketplace`)
-  console.error(`clone directory missing, re-cloning ${entry.url}...`)
+  // spec 23 §7: an event of the report, not a warning
+  console.log(`clone directory missing, re-clone from ${entry.url}...`)
   mkdirSync(dirname(entry.dir), { recursive: true })
   clone(entry.url, entry.dir, entry.ref)
   return git(["rev-parse", "HEAD"], entry.dir).stdout
@@ -157,5 +164,7 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport, 
   report.removed = applied.removed
   report.pruned = pruned
   report.refused = applied.refused
-  report.plugins = pluginReports(plugins, entry.plugins, versions, known, fileChanges, name)
+  report.plugins = pluginReports(plugins, entry.plugins, versions, known, fileChanges, name, entry.mode)
+  // spec 23 §8: a plugin-scoped update narrows its report to that plugin
+  if (plugin) report.plugins = report.plugins.filter((entry) => entry.name === plugin)
 }

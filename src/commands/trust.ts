@@ -11,7 +11,7 @@ import {
 import type { CoreExecutableComponent, CoreMaterializeReport } from "../../loader/core.js"
 import { componentRoot, materializeLinks } from "../install"
 import { loadRegistryForWrite, saveRegistry } from "../registry"
-import { reportRestart, reportUpgrade, reportWarnings } from "../report"
+import { reportMutationWarnings, reportRestart, reportUpgrade, reportWarnings } from "../report"
 import type { MarketplaceEntry } from "../types"
 import { promptTrust } from "./trust-prompt"
 
@@ -112,10 +112,11 @@ export async function decideUpdateTrust(
 }
 
 // the shared tail of a recorded decision: the materialize report and a
-// possible v1 upgrade note
-function reportDecision(result: { report: CoreMaterializeReport | null; wasV1: boolean }): void {
+// possible v1 upgrade note. spec 23 §7: blocked components collapse to one
+// line — this is a re-print of a known-untrusted state, not first sight
+function reportDecision(name: string, result: { report: CoreMaterializeReport | null; wasV1: boolean }): void {
   if (result.report) {
-    reportWarnings(result.report.warnings)
+    reportMutationWarnings(result.report.warnings, name)
     reportRestart(result.report.created)
   }
   reportUpgrade(result.wasV1)
@@ -143,23 +144,23 @@ export async function trust(name: string, yes = false): Promise<void> {
     })
   if (decision === "granted") {
     const result = grantTrust(name)
-    reportDecision(result)
+    reportDecision(name, result)
     console.log(`marketplace "${name}" trusted to run code`)
     return
   }
   if (decision === "denied") {
-    reportDecision(denyTrust(name))
+    reportDecision(name, denyTrust(name))
     return
   }
   if (!process.stdin.isTTY) throw new Error("stdin is not interactive — re-run with --yes to grant")
   // skipped: the registry is still saved (a v1 migration) and materialized
   saveRegistry(registry)
-  reportDecision({ report: materializeLinks(name, entry), wasV1 })
+  reportDecision(name, { report: materializeLinks(name, entry), wasV1 })
 }
 
 export async function untrust(name: string): Promise<void> {
   const result = denyTrust(name)
-  reportWarnings(result.report.warnings)
+  reportMutationWarnings(result.report.warnings, name)
   reportRestart(result.report.removed)
   console.log(`marketplace "${name}" no longer trusted; executable components removed`)
   reportUpgrade(result.wasV1)

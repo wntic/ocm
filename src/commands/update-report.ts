@@ -1,5 +1,6 @@
 import { relative } from "node:path"
 import { git } from "../git"
+import { reportMutationWarnings } from "../report"
 import type { DiscoveredPlugin, MarketplaceEntry, MarketplacePlugin } from "../types"
 
 export interface FileChange {
@@ -70,6 +71,7 @@ export function pluginReports(
   known: Set<string>,
   files: Map<string, FileChange[]>,
   marketplace: string,
+  mode: MarketplaceEntry["mode"],
 ): PluginReport[] {
   const reports: PluginReport[] = []
   for (const plugin of plugins) {
@@ -79,23 +81,30 @@ export function pluginReports(
     const fresh = !known.has(plugin.name)
     const pluginFiles = files.get(plugin.name) ?? []
     if (!fresh && from === record.version && !pluginFiles.length) continue
+    // spec 23 §4: in an explicit marketplace a new upstream plugin is
+    // registered disabled and nothing is created — it is available, not
+    // installed, and there is no file list to print
+    const available = fresh && mode === "explicit"
     // spec 18: a collision encountered during update is reported, not acted on
     const note = record.collision
       ? `name owned by marketplace "${record.collision}" — kept disabled; ocm install ${plugin.name}@${marketplace} --force to take over`
-      : fresh
-        ? "installed (auto)"
-        : null
-    reports.push({ name: plugin.name, fresh, from, to: record.version, files: pluginFiles, note })
+      : available
+        ? `available — ocm install ${plugin.name} to activate`
+        : fresh
+          ? "installed (auto)"
+          : null
+    reports.push({ name: plugin.name, fresh, from, to: record.version, files: available ? [] : pluginFiles, note })
   }
   return reports
 }
 
-export function renderMarketplace(report: MarketplaceReport, quiet: boolean): void {
+export function renderMarketplace(report: MarketplaceReport, quiet: boolean, headerPrinted = false): void {
   if (quiet && report.ok && !report.changed) return
-  console.log(`updating ${report.name}...`)
-  for (const warning of report.warnings) console.error(`  warning: ${warning}`)
+  if (!headerPrinted) console.log(`updating ${report.name}...`)
+  reportMutationWarnings(report.warnings, report.name)
   if (report.note) {
-    console.error(`marketplace "${report.name}" ${report.note}`)
+    // spec 23 §7: an event of the report, not a warning
+    console.log(`marketplace "${report.name}" ${report.note}`)
     return
   }
   if (!report.ok) {
@@ -104,9 +113,9 @@ export function renderMarketplace(report: MarketplaceReport, quiet: boolean): vo
   }
   if (report.before && report.after) {
     console.log(report.before === report.after ? "  already up to date" : `  ${report.before.slice(0, 7)} → ${report.after.slice(0, 7)}`)
-  } else if (report.materialized) {
+  } else if (report.materialized && (report.materialized.created > 0 || report.materialized.removed > 0 || report.materialized.skipped > 0)) {
     // no revision pair (local marketplace, re-clone): the materializer's own
-    // counts are the report (spec 08)
+    // counts are the report (spec 08); an all-zero line says nothing (spec 23 §7)
     const m = report.materialized
     console.log(`  ${m.created} created, ${m.removed} removed, ${m.skipped} skipped`)
   }
@@ -121,5 +130,7 @@ export function renderMarketplace(report: MarketplaceReport, quiet: boolean): vo
     console.log(`  ${plugin.name}${detail ? `   ${detail}` : ""}`)
     for (const file of plugin.files) console.log(`    ${file.mark} ${file.path}`)
   }
-  if (report.materialized && report.materialized.created > 0) console.log("  restart opencode to activate")
+  // spec 23 §5: anything created or removed needs a restart — a removal
+  // leaves the stale command live until then
+  if (report.materialized && (report.materialized.created > 0 || report.materialized.removed > 0)) console.log("  restart opencode to activate")
 }

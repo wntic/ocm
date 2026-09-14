@@ -175,7 +175,9 @@ export function gcTargets(dir, desired, ctx, extra, scope) {
   return removed
 }
 
-// mirror: a real directory whose entries are link() or render()
+// mirror: a real directory whose entries are link() or render(). The
+// created count rides along (spec 23 §5): a skill's first materialization
+// counts toward the report, so the restart notice follows actual changes
 export function mirror(sourceDir, destDir, plan, ctx, plugin, component) {
   mkdirSync(destDir, { recursive: true })
   let entries
@@ -185,12 +187,15 @@ export function mirror(sourceDir, destDir, plan, ctx, plugin, component) {
     entries = []
   }
   const desired = new Set()
+  let created = 0
   for (const entry of entries) {
     if (containsSkillMd(join(sourceDir, entry))) continue
     desired.add(entry)
     const transform = plan[entry]
-    if (transform) render(join(sourceDir, entry), join(destDir, entry), transform, ctx, plugin)
-    else link(join(sourceDir, entry), join(destDir, entry), ctx, plugin, component)
+    const status = transform
+      ? render(join(sourceDir, entry), join(destDir, entry), transform, ctx, plugin)
+      : link(join(sourceDir, entry), join(destDir, entry), ctx, plugin, component)
+    if (status === "created") created += 1
   }
-  return gcTargets(destDir, desired, ctx, isRenderedFile)
+  return { created, removed: gcTargets(destDir, desired, ctx, isRenderedFile) }
 }

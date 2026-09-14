@@ -1,6 +1,6 @@
 import { accessSync, constants } from "node:fs"
 import { basename } from "node:path"
-import { installLoader, migrateLegacyLayout, uninstallLoader } from "./loader"
+import { installLoader, migrateLegacyLayout, packageVersion, reportTuiPlugin, uninstallLoader } from "./loader"
 import { migrateInstallation } from "./migrate"
 import { OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG } from "./paths"
 import { add, pin, remove } from "./commands/marketplace"
@@ -16,9 +16,9 @@ import { doctor } from "./commands/doctor"
 const HELP = `ocm - file-based plugin marketplace for opencode
 
 usage:
-  ocm init                          install auto-sync loader
   ocm add <url|path> [--ref <ref>] [--explicit] [--name <name>] [--trust|--no-trust]
                                      add a marketplace (github url or local dir)
+  ocm init                          install auto-sync loader
   ocm remove <name>                 remove a marketplace and its links
   ocm update [name|plugin@mp] [--quiet] [--json] [--trust|--no-trust]
                                      pull latest changes (all, one marketplace or one plugin's marketplace)
@@ -41,6 +41,7 @@ usage:
   ocm validate [path]               lint a marketplace repo (default: current directory)
   ocm doctor [--fix]                diagnose this installation; --fix applies safe fixes
   ocm loader uninstall              remove auto-sync loader
+  ocm --version                     print the version
 
 examples:
   ocm add https://github.com/user/opencode-marketplace
@@ -111,9 +112,13 @@ export async function main(argv: string[]): Promise<void> {
     case "-h":
       console.log(HELP)
       break
+    case "--version":
+    case "-v":
+      console.log(packageVersion())
+      break
     case "init":
       preflightWritable([OPENCODE_TUI_CONFIG])
-      installLoader()
+      if (installLoader()) reportTuiPlugin()
       break
     case "add":
       requireArg(positional[0], "missing marketplace url or path")

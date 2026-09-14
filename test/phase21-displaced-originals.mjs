@@ -167,7 +167,7 @@ phase("5. a teardown with no displaced files prints nothing extra: remove and un
   expect(ocm(home, ["add", mp]).status).toBe(0)
   const un = ocm(home, ["uninstall", "alpha-kit"])
   expect(un.status).toBe(0)
-  expect(un.stdout).toBe("restart opencode to activate\nuninstalled alpha-kit@alpha\n")
+  expect(un.stdout).toBe("uninstalled alpha-kit@alpha\nrestart opencode to activate\n")
   expect(un.stderr).toBe("")
 })
 
