@@ -4,9 +4,9 @@
 // removed as stray, even when the records lag (F8).
 import { readdirSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { setSkillsPath } from "../../loader/core.js"
+import { displacedRecords, setSkillsPath } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
-import { OCM_LINKS_DIR, OCM_LOADER_NAME, OPENCODE_PLUGINS_DIR } from "../paths"
+import { OCM_DISPLACED_DIR, OCM_LINKS_DIR, OCM_LOADER_NAME, OPENCODE_PLUGINS_DIR } from "../paths"
 import { error, fixed, warning, type Finding } from "../findings"
 import { removePath } from "./doctor-links"
 
@@ -89,5 +89,29 @@ export function checkOrphanMirrors(registry: CoreRegistry, findings: Finding[], 
     if (failure) findings.push(error(failure))
     else findings.push(fixed(`${skillsDir}: removed from skills.paths`))
     rmSync(join(OCM_LINKS_DIR, name), { recursive: true, force: true })
+  }
+}
+
+// spec 21: a live displacement is normal state, not drift — one
+// informational line. A <ts> directory no record points at is a pre-21
+// removal's leftover: named, never deleted (the files are the user's)
+export function checkDisplaced(registry: CoreRegistry, findings: Finding[]): void {
+  const records = displacedRecords()
+  const live = records.filter((record) => registry.marketplaces[record.marketplace])
+  if (live.length) {
+    console.log(`  displaced  ${live.length} original${live.length === 1 ? "" : "s"} in ${OCM_DISPLACED_DIR}`)
+  }
+  let entries: string[]
+  try {
+    entries = readdirSync(OCM_DISPLACED_DIR)
+  } catch {
+    return
+  }
+  const known = new Set(records.map((record) => record.dir))
+  for (const entry of entries) {
+    const path = join(OCM_DISPLACED_DIR, entry)
+    if (!known.has(path)) {
+      findings.push(warning(`${path}: displaced copy with no record (removed by an older ocm?) — restore or remove it by hand`))
+    }
   }
 }

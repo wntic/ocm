@@ -65,7 +65,8 @@ async function togglePlugin(api, marketplace, name) {
     const result = setEnabled(arg, enabling)
     if (result.disagreement) toast(api, "warning", result.disagreement)
     if (result.report.warnings.length) toast(api, "warning", result.report.warnings.join("\n"))
-    toast(api, "success", `${enabling ? "installed" : "uninstalled"} ${arg} — ${NOTICE}`)
+    const restore = result.restore.length ? `${result.restore.join("\n")}\n` : ""
+    toast(api, "success", `${restore}${enabling ? "installed" : "uninstalled"} ${arg} — ${NOTICE}`)
   } catch (err) {
     toast(api, "error", message(err))
   }

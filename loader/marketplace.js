@@ -2,6 +2,7 @@ import { rmSync } from "node:fs"
 import { join, relative } from "node:path"
 import { setSkillsPath } from "./config.js"
 import { collisionError, incumbentMarketplace } from "./collisions.js"
+import { restoreDisplaced } from "./displaced.js"
 import { git } from "./git.js"
 import { discoverMarketplace, discoveryError, readManifest } from "./manifest.js"
 import { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
@@ -140,6 +141,9 @@ export function removeMarketplace(name) {
   }
   const warnings = []
   removeLinksFor(name, entry.dir)
+  // spec 21: the restore pass runs after the links come down, so a displaced
+  // original returns to its path only when nothing now holds it
+  const restore = restoreDisplaced({ marketplace: name })
   const skillsWarning = setSkillsPath(join(LINKS_DIR, name, "skills"), false)
   if (skillsWarning) warnings.push(skillsWarning)
   // collision records never materialized, so their mcp keys are not ours to
@@ -158,6 +162,7 @@ export function removeMarketplace(name) {
   return {
     name,
     owned: owned.map(([pluginName, plugin]) => ({ name: pluginName, components: plugin.components })),
+    restore,
     warnings,
     wasV1,
   }

@@ -12,7 +12,7 @@ import { error, fixed, reportFindings, warning, type Finding } from "../findings
 import { ocmPluginErrors } from "../probe"
 import { checkConfig } from "./doctor-config"
 import { checkBrokenLinks, checkForbiddenPaths, checkMaterialized } from "./doctor-links"
-import { checkOrphanMirrors, checkStrays } from "./doctor-orphans"
+import { checkDisplaced, checkOrphanMirrors, checkStrays } from "./doctor-orphans"
 import { recloneMarketplace } from "./update"
 
 function errText(err: unknown): string {
@@ -42,6 +42,7 @@ export function doctor(fix: boolean): void {
   checkBrokenLinks(registry, findings, fix)
   checkConfig(findings, registry, fix, registryUsable)
   checkOrphanMirrors(registry, findings, fix && registryUsable)
+  checkDisplaced(registry, findings)
   checkMaterialized(registry, findings, fix)
   checkForbiddenPaths(registry, findings)
   for (const line of ocmPluginErrors()) findings.push(error(`${line} (ocm update)`))

@@ -19,6 +19,7 @@ export {
   STAMP_FILE,
 } from "./paths.js"
 export { dirClashes, discoverPlugins } from "./discovery.js"
+export { displacedRecords, restoreDisplaced } from "./displaced.js"
 export { git, isGitRepo } from "./git.js"
 export { pluginLimitViolation } from "./limits.js"
 export { lintCrossTool } from "./lint.js"

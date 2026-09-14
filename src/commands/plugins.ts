@@ -37,6 +37,7 @@ export function uninstall(arg: string): void {
   reportWarnings(result.report.warnings)
   reportRestart(result.report.removed)
   console.log(`uninstalled ${result.plugin}@${result.marketplace}`)
+  for (const line of result.restore) console.log(line)
 }
 
 export function setMode(name: string, mode: string): void {

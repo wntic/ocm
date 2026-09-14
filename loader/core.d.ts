@@ -160,9 +160,17 @@ export interface CoreAddResult {
   wasV1: boolean
 }
 
+export interface CoreDisplacementRecord {
+  marketplace: string
+  plugin: string
+  dest: string
+  dir: string
+}
+
 export interface CoreRemoveResult {
   name: string
   owned: { name: string; components: CorePluginComponents }[]
+  restore: string[]
   warnings: string[]
   wasV1: boolean
 }
@@ -175,6 +183,7 @@ export interface CoreSetEnabledResult {
   already: boolean
   takeover: string | null
   wasV1: boolean
+  restore: string[]
   report: CoreMaterializeReport
 }
 
@@ -228,6 +237,8 @@ export declare const DEFAULT_SYNC_INTERVAL_MS: number
 
 export declare function discoverPlugins(marketplaceDir: string): CoreDiscoveredPlugin[]
 export declare function dirClashes(pluginDir: string): string[]
+export declare function displacedRecords(): CoreDisplacementRecord[]
+export declare function restoreDisplaced(scope: { marketplace?: string; plugin?: string }): string[]
 export declare function pluginLimitViolation(plugin: CoreManifestPlugin): string | null
 export declare function lintCrossTool(marketplaceDir: string): string[]
 export declare function isGitRepo(dir: string): boolean
