@@ -35,10 +35,10 @@ about opencode that turned out to be wrong (see
 | [20 — Doctor & config-write safety](./20-doctor-config-safety.md) | shipped | 07, 08, 12 |
 | [21 — Displaced originals](./21-displaced-originals.md) | shipped | 03, 05, 10a |
 | [22 — TUI fixes](./22-tui-fixes.md) | shipped | 10b, 08 |
-| [23 — Truthful CLI reports](./23-truthful-reports.md) | planned · v0.5.0 | 05, 08, 10a |
-| [24 — Validate hardening](./24-validate-hardening.md) | planned · v0.5.0 | 06, 12, 15, 19 |
-| [25 — List, info & search display](./25-display.md) | planned · v0.5.0 | 07, 08, 09 |
-| [26 — Update engine hygiene](./26-update-hygiene.md) | planned · v0.5.0 | 08 |
+| [23 — Truthful CLI reports](./23-truthful-reports.md) | shipped | 05, 08, 10a |
+| [24 — Validate hardening](./24-validate-hardening.md) | shipped | 06, 12, 15, 19 |
+| [25 — List, info & search display](./25-display.md) | shipped | 07, 08, 09 |
+| [26 — Update engine hygiene](./26-update-hygiene.md) | shipped | 08 |
 
 Specs 16–26 are the triage of two e2e rounds
 ([round 1](../e2e-findings.md),
@@ -130,6 +130,7 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.2.0 | specs 14–15 (implemented on `main`, unpushed) | published 2026-09-13 |
 | v0.3.0 | specs 16–19 | published 2026-09-14 |
 | v0.4.0 | specs 20–22 | published 2026-09-15 |
+| v0.5.0 | specs 23–26 | code complete; npm publish pending |
 | v0.4.0 | specs 20–22 | planned |
 | v0.5.0 | specs 23–26 | planned |
 
