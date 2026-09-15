@@ -130,7 +130,7 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.2.0 | specs 14–15 (implemented on `main`, unpushed) | published 2026-09-13 |
 | v0.3.0 | specs 16–19 | published 2026-09-14 |
 | v0.4.0 | specs 20–22 | published 2026-09-15 |
-| v0.5.0 | specs 23–26 | code complete; npm publish pending |
+| v0.5.0 | specs 23–26 | published 2026-09-15 |
 | v0.4.0 | specs 20–22 | planned |
 | v0.5.0 | specs 23–26 | planned |
 
