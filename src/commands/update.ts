@@ -90,7 +90,14 @@ async function pullMarketplace(entry: MarketplaceEntry, report: MarketplaceRepor
     if (!pull.ok) throw new Error(pull.output)
     report.before = pull.before
     report.after = pull.after
-    if (pull.dirty) report.warnings.push(`${entry.dir} has local changes; discarded (the cache is not an editing surface)`)
+    // spec 26: warn only when something was dirty, naming the counts — the
+    // remedy (reset + clean) makes "discarded" true
+    const discarded = []
+    if (pull.localChanges > 0) discarded.push(`${pull.localChanges} local change${pull.localChanges === 1 ? "" : "s"}`)
+    if (pull.untracked > 0) discarded.push(`${pull.untracked} untracked file${pull.untracked === 1 ? "" : "s"}`)
+    if (discarded.length > 0) {
+      report.warnings.push(`${entry.dir} has local changes; discarded ${discarded.join(" and ")} (the cache is not an editing surface)`)
+    }
   } else {
     report.after = recloneMarketplace(entry)
   }

@@ -18,6 +18,8 @@ export interface CorePullResult {
   before: string
   after: string
   dirty: boolean
+  localChanges: number
+  untracked: number
   output: string
 }
 
