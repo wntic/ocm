@@ -42,7 +42,9 @@ export function registerPlugins(registry, name, plugins) {
       source: relative(root, plugin.dir),
       components: plugin.components,
       enabled,
-      installedAt: existing?.installedAt ?? (incumbent || entry.mode === "explicit" || !enabled ? null : entry.addedAt),
+      // the materialization time, not the marketplace's addedAt: a plugin
+      // that arrived via update's auto-install is not backdated (spec 25)
+      installedAt: existing?.installedAt ?? (incumbent || entry.mode === "explicit" || !enabled ? null : new Date().toISOString()),
       version: plugin.manifest.version ?? null,
       manifest: plugin.manifest,
     }

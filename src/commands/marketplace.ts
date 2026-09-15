@@ -3,6 +3,7 @@ import { join } from "node:path"
 import { addMarketplace, denyTrust, grantTrust, isGitUrl, normaliseMarketplaceName, parseSource, pinMarketplace, readRegistry, removeMarketplace, skipTrust } from "../../loader/core.js"
 import type { CoreAddResult } from "../../loader/core.js"
 import { installLoader, reportTuiPlugin } from "../loader"
+import { git } from "../git"
 import { OCM_LINKS_DIR, OPENCODE_GLOBAL_CONFIG } from "../paths"
 import { reportRestart, reportUpgrade, reportWarnings } from "../report"
 import { printTrustListing, promptTrust } from "./trust-prompt"
@@ -140,10 +141,44 @@ export function remove(name: string): void {
 
 // spec 08: pinning is branch- and tag-following, never commit-freezing; the
 // core validates the ref by fetching it before saving it
+// spec 25 §5: with no ref, the remote's heads and tags are listed and one is
+// prompted for; non-interactive it errors listing them, saving nothing
 export async function pin(name: string, ref?: string, clear = false): Promise<void> {
+  if (!ref && !clear) ref = await choosePinRef(name)
   const result = await pinMarketplace(name, clear ? null : ref)
   reportUpgrade(result.wasV1)
   console.log(clear
     ? `marketplace "${name}" unpinned (following the default branch)`
     : `marketplace "${name}" pinned to ${ref}`)
+}
+
+function remoteRefs(url: string): string[] {
+  const run = git(["ls-remote", "--heads", "--tags", url])
+  if (!run.ok) throw new Error(`cannot list refs for ${url} — ${run.stderr || run.stdout}`)
+  const refs = run.stdout.split("\n").filter(Boolean)
+    .map((line) => line.split("\t")[1]!)
+    .filter((ref) => !ref.endsWith("^{}"))
+    .map((ref) => ref.replace(/^refs\/(heads|tags)\//, ""))
+  return [...new Set(refs)]
+}
+
+async function choosePinRef(name: string): Promise<string> {
+  const entry = readRegistry().marketplaces[name]
+  if (!entry) throw new Error(`marketplace "${name}" not found (ocm list)`)
+  if (entry.local) throw new Error(`marketplace "${name}" is local; nothing to pin`)
+  const refs = remoteRefs(entry.url)
+  if (!process.stdin.isTTY) {
+    throw new Error(`missing ref for "${name}" — available refs: ${refs.join(", ")}\n  ocm pin ${name} <ref>`)
+  }
+  console.log(`refs available for "${name}":`)
+  for (const ref of refs) console.log(`  ${ref}`)
+  const { createInterface } = await import("node:readline/promises")
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    const answer = (await rl.question("pin to which ref? ")).trim()
+    if (!refs.includes(answer)) throw new Error(`"${answer}" is not an available ref: ${refs.join(", ")}`)
+    return answer
+  } finally {
+    rl.close()
+  }
 }

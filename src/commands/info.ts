@@ -1,7 +1,9 @@
+import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { loadRegistry } from "../registry"
 import type { MarketplaceEntry, MarketplacePlugin, PluginManifest, Registry } from "../types"
+import { age, driftedComponents, pendingExecutables } from "./display"
 
 export interface InfoOptions {
   json?: boolean
@@ -100,13 +102,29 @@ function field(label: string, value: string | undefined, note?: string): void {
   console.log(`  ${label.padEnd(13)}${value}${note ? `  (${note})` : ""}`)
 }
 
-function age(iso: string): string {
-  const ms = Date.now() - Date.parse(iso)
-  if (Number.isNaN(ms) || ms < 60_000) return "just now"
-  const minutes = Math.floor(ms / 60_000)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`
+// spec 25 §3: the trust line states the decision the current code would get,
+// not the one recorded — granted, changed since the grant, or denied
+function trustState(marketplace: string, entry: MarketplaceEntry): string {
+  if (entry.trust.code === "denied") return "denied"
+  if (entry.trust.code === "granted" && (driftedComponents(entry)?.length ?? 0) > 0) {
+    return `code changed since trust — run ocm trust ${marketplace}`
+  }
+  return entry.trust.code
+}
+
+// spec 25 §3: info renders disk, not registry fiction — the arrow form only
+// for targets that exist, "(not linked)" for absent ones. An mcp component
+// is linked iff its key sits in opencode.json
+function linked(component: ResultingComponent): boolean {
+  if (component.type === "mcp") {
+    try {
+      const config = JSON.parse(readFileSync(OPENCODE_GLOBAL_CONFIG, "utf8")) as { mcp?: Record<string, unknown> }
+      return Boolean(config.mcp?.[component.name])
+    } catch {
+      return false
+    }
+  }
+  return existsSync(component.target)
 }
 
 export function info(arg: string, options: InfoOptions = {}): void {
@@ -148,12 +166,15 @@ export function info(arg: string, options: InfoOptions = {}): void {
     const synced = entry.lastSync ? `  (synced ${age(entry.lastSync.at)})` : ""
     field("revision", `${entry.revision.slice(0, 7)}${synced}`)
   }
-  field("trust", entry.trust.code)
+  field("trust", trustState(marketplace, entry))
+  for (const component of pendingExecutables(entry)) {
+    console.log(`  ${component.rel} — awaiting trust (ocm trust ${marketplace})`)
+  }
   const components = resultingComponents(marketplace, plugin, record)
   if (components.length) {
     console.log("  components")
     for (const component of components) {
-      console.log(`    ${component.type.padEnd(8)}${component.name}  → ${component.target}`)
+      console.log(`    ${component.type.padEnd(8)}${component.name}  ${linked(component) ? `→ ${component.target}` : "(not linked)"}`)
     }
   }
 }

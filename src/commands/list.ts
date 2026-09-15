@@ -1,8 +1,26 @@
 import { loadRegistry } from "../registry"
+import type { MarketplaceEntry } from "../types"
+import { age, pendingExecutables } from "./display"
+import type { CoreExecutableComponent } from "../../loader/core.js"
 
 export interface ListOptions {
   all?: boolean
   json?: boolean
+}
+
+// the marketplace row's parenthesised markers, in print order: mode, pin,
+// awaiting-trust, failed sync (specs 25 §2/§5/§6)
+function rowMarkers(entry: MarketplaceEntry, all: boolean, pending: CoreExecutableComponent[]): string {
+  const markers: string[] = []
+  if (all) markers.push(entry.mode)
+  if (entry.ref) markers.push(`pinned @ ${entry.ref}`)
+  if (entry.trustPending) {
+    markers.push(pending.length
+      ? `${pending.length} component${pending.length === 1 ? "" : "s"} awaiting trust`
+      : "components awaiting trust")
+  }
+  if (entry.lastSync && !entry.lastSync.ok) markers.push(`! sync failed ${age(entry.lastSync.at)}`)
+  return markers.length ? ` (${markers.join(", ")})` : ""
 }
 
 export function list(options: ListOptions = {}): void {
@@ -17,14 +35,23 @@ export function list(options: ListOptions = {}): void {
     return
   }
   for (const [name, entry] of entries) {
-    console.log(`${name}${options.all ? ` (${entry.mode})` : ""}`)
+    const pending = pendingExecutables(entry)
+    console.log(`${name}${rowMarkers(entry, options.all === true, pending)}`)
     console.log(`  source: ${entry.url}`)
     // display shortens; the registry keeps the full sha (spec 08)
     const short = entry.revision ? entry.revision.slice(0, 7) : null
     if (short) console.log(`  revision: ${short}`)
+    // a local directory never syncs, so it has no age to state (spec 25 §6)
+    if (options.all && !entry.local) {
+      const sync = entry.lastSync
+      console.log(`  ${!sync ? "never synced" : sync.ok ? `synced ${age(sync.at)}` : `sync failed ${age(sync.at)}`}`)
+    }
     if (options.all && entry.lastSync && !entry.lastSync.ok) {
       // spec 23 §1: a problem line — stderr, and never styled red
       console.error(`  last sync failed: ${entry.lastSync.error}`)
+    }
+    for (const component of pending) {
+      console.log(`  ${component.rel} — awaiting trust (ocm trust ${name})`)
     }
     for (const [pluginName, plugin] of Object.entries(entry.plugins)) {
       if (!options.all && !plugin.enabled) continue
@@ -32,8 +59,10 @@ export function list(options: ListOptions = {}): void {
       if (plugin.components.agent) parts.push(`agents: ${plugin.components.agent.join(", ")}`)
       if (plugin.components.command) parts.push(`commands: ${plugin.components.command.join(", ")}`)
       if (plugin.components.skill) parts.push(`skills: ${plugin.components.skill.join(", ")}`)
-      if (plugin.components.plugin) parts.push(`plugins: ${plugin.components.plugin.join(", ")}`)
-      if (plugin.components.mcp) parts.push(`mcp: ${plugin.components.mcp.join(", ")}`)
+      // a denied marketplace's executables list as blocked with the remedy (spec 25 §1)
+      const blocked = entry.trust.code === "denied" ? ` (blocked — ocm trust ${name})` : ""
+      if (plugin.components.plugin) parts.push(`plugins: ${plugin.components.plugin.join(", ")}${blocked}`)
+      if (plugin.components.mcp) parts.push(`mcp: ${plugin.components.mcp.join(", ")}${blocked}`)
       // the marketplace revision is the implicit version of a versionless
       // plugin (spec 08)
       const version = plugin.version ?? (short ? `@${short}` : null)

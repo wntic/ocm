@@ -160,6 +160,11 @@ function checkMarketplaces(registry: CoreRegistry, findings: Finding[], fix: boo
     if (!entry.local && !isGitRepo(entry.dir)) {
       findings.push(error(`marketplace "${name}": not a git repository (ocm update)`))
     }
+    // spec 25 §2: a trust-pending marketplace is exit-code-relevant — its
+    // executable components stay disabled until the user decides
+    if (entry.trustPending) {
+      findings.push(error(`marketplace "${name}": executable components pulled but not trusted — run ocm trust ${name}`))
+    }
     const lastSync = entry.lastSync
     if (lastSync?.ok === false) {
       const age = Date.now() - Date.parse(lastSync.at)
