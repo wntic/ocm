@@ -29,9 +29,7 @@ function metadataFrom(raw) {
   if (typeof raw.homepage === "string") manifest.homepage = raw.homepage
   if (typeof raw.license === "string") manifest.license = raw.license
   if (Array.isArray(raw.tags) && raw.tags.every((tag) => typeof tag === "string")) manifest.tags = raw.tags
-  if (Array.isArray(raw.keywords) && raw.keywords.every((keyword) => typeof keyword === "string")) {
-    manifest.keywords = raw.keywords
-  }
+  if (Array.isArray(raw.keywords) && raw.keywords.every((keyword) => typeof keyword === "string")) manifest.keywords = raw.keywords
   // spec 14: category/tags under extensions["dev.wntic.ocm"] win over the
   // top-level form, which stays readable for marketplaces that predate it
   const ext = isRecord(raw.extensions) ? raw.extensions["dev.wntic.ocm"] : undefined
@@ -48,10 +46,7 @@ function metadataFrom(raw) {
 export function nameDisagreement(pluginDir, pluginName) {
   const raw = readJsonRecord(join(pluginDir, "plugin.json"))
   if (typeof raw?.name !== "string" || raw.name === pluginName) return null
-  return (
-    `plugin "${pluginName}": plugin.json name "${raw.name}" disagrees with the directory name "${pluginName}"; ` +
-    "the directory name wins — rename the directory or fix plugin.json"
-  )
+  return `plugin "${pluginName}": plugin.json name "${raw.name}" disagrees with the directory name "${pluginName}"; the directory name wins — rename the directory or fix plugin.json`
 }
 
 // spec 15: .opencode-plugin/marketplace.json wins; the root path stays legal
@@ -68,12 +63,10 @@ function readEntries(marketplaceDir, warnings) {
   let raw
   try {
     raw = JSON.parse(readFileSync(file, "utf8"))
-  } catch {
-    raw = undefined
-  }
+  } catch {}
   if (!isRecord(raw)) {
     // a broken manifest is reported, never routed around (spec 15 §4)
-    warnings.push(`${file}: not a valid JSON object — the manifest is ignored`)
+    warnings.push(`${file}: not a valid JSON object — the manifest is ignored; the entries below were not applied`)
     return entries
   }
   if (!Array.isArray(raw.plugins)) return entries
@@ -81,6 +74,33 @@ function readEntries(marketplaceDir, warnings) {
     if (isRecord(entry) && typeof entry.name === "string") entries.set(entry.name, entry)
   }
   return entries
+}
+
+// spec 15 §3: an entry's mcpServers resolves plugin-relative first, the
+// marketplace root is deprecated; spec 24 §2: a path the containment rule
+// rejects is named as such, never as a JSON error
+function resolveMcpServers(plugin, entry, marketplaceDir, manifest, components, warnings) {
+  const rel = relativePath(entry.mcpServers)
+  if (rel === null) {
+    warnings.push(`plugin "${plugin.name}": mcpServers "${entry.mcpServers}" must resolve inside the plugin directory`)
+    return
+  }
+  const pluginFile = join(plugin.dir, rel)
+  const marketplaceFile = join(marketplaceDir, rel)
+  const inPlugin = existsSync(pluginFile)
+  const inMarketplace = existsSync(marketplaceFile)
+  const servers = inPlugin ? readJsonRecord(pluginFile) : inMarketplace ? readJsonRecord(marketplaceFile) : undefined
+  if (!servers) {
+    warnings.push(`plugin "${plugin.name}": mcpServers path "${entry.mcpServers}" is not a JSON object in ${marketplaceDir}`)
+    return
+  }
+  manifest.mcpServers = entry.mcpServers
+  components.mcp = Object.keys(servers).sort()
+  if (inPlugin && inMarketplace && pluginFile !== marketplaceFile) {
+    warnings.push(`plugin "${plugin.name}": mcpServers "${entry.mcpServers}" resolves to both ${pluginFile} and ${marketplaceFile}; the plugin-relative file wins`)
+  } else if (!inPlugin && inMarketplace) {
+    warnings.push(`plugin "${plugin.name}": mcpServers "${entry.mcpServers}" resolves only against the marketplace root — deprecated; expected ${pluginFile}, found ${marketplaceFile}`)
+  }
 }
 
 export function discoverMarketplace(marketplaceDir) {
@@ -91,50 +111,27 @@ export function discoverMarketplace(marketplaceDir) {
     const entry = entries.get(plugin.name)
     const disagreement = nameDisagreement(plugin.dir, plugin.name)
     if (disagreement) warnings.push(disagreement)
-    const fromPlugin = metadataFrom(readJsonRecord(join(plugin.dir, "plugin.json")))
+    // spec 24 §2: a plugin.json that exists but does not parse is reported, never routed around — post-19 it is required
+    const pluginJson = join(plugin.dir, "plugin.json")
+    let pluginRaw
+    if (existsSync(pluginJson)) {
+      try {
+        pluginRaw = JSON.parse(readFileSync(pluginJson, "utf8"))
+      } catch {
+        warnings.push(`${pluginJson}: not valid JSON — fix it or remove it; ocm requires this file to be readable`)
+      }
+    }
+    const fromPlugin = metadataFrom(isRecord(pluginRaw) ? pluginRaw : undefined)
     const fromEntry = metadataFrom(entry)
     const manifest = { ...fromPlugin, ...fromEntry }
     // the disagreement is cached so info can annotate it from the registry
     // alone, with the marketplace directory deleted (spec 09)
-    const conflicts = Object.keys(fromEntry).filter(
-      (key) => key in fromPlugin && JSON.stringify(fromPlugin[key]) !== JSON.stringify(fromEntry[key]),
-    )
+    const conflicts = Object.keys(fromEntry).filter((key) => key in fromPlugin && JSON.stringify(fromPlugin[key]) !== JSON.stringify(fromEntry[key]))
     if (conflicts.length) manifest.conflicts = conflicts.sort()
     const components = { ...plugin.components }
     if (typeof entry?.defaultEnabled === "boolean") manifest.defaultEnabled = entry.defaultEnabled
-    if (typeof entry?.mcpServers === "string") {
-      // spec 15 §3: plugin-relative first, the marketplace root is deprecated
-      const rel = relativePath(entry.mcpServers)
-      const pluginFile = rel === null ? null : join(plugin.dir, rel)
-      const marketplaceFile = rel === null ? null : join(marketplaceDir, rel)
-      const inPlugin = pluginFile !== null && existsSync(pluginFile)
-      const inMarketplace = marketplaceFile !== null && existsSync(marketplaceFile)
-      const servers = inPlugin ? readJsonRecord(pluginFile) : inMarketplace ? readJsonRecord(marketplaceFile) : undefined
-      if (servers) {
-        manifest.mcpServers = entry.mcpServers
-        components.mcp = Object.keys(servers).sort()
-        if (inPlugin && inMarketplace && pluginFile !== marketplaceFile) {
-          warnings.push(
-            `plugin "${plugin.name}": mcpServers "${entry.mcpServers}" resolves to both ${pluginFile} and ${marketplaceFile}` +
-              "; the plugin-relative file wins",
-          )
-        } else if (!inPlugin && inMarketplace) {
-          warnings.push(
-            `plugin "${plugin.name}": mcpServers "${entry.mcpServers}" resolves only against the marketplace root — deprecated;` +
-              ` expected ${pluginFile}, found ${marketplaceFile}`,
-          )
-        }
-      } else {
-        warnings.push(`plugin "${plugin.name}": mcpServers path "${entry.mcpServers}" is not a JSON object in ${marketplaceDir}`)
-      }
-    }
-    plugins.set(plugin.name, {
-      name: plugin.name,
-      dir: plugin.dir,
-      source: plugin.dir,
-      components,
-      manifest,
-    })
+    if (typeof entry?.mcpServers === "string") resolveMcpServers(plugin, entry, marketplaceDir, manifest, components, warnings)
+    plugins.set(plugin.name, { name: plugin.name, dir: plugin.dir, source: plugin.dir, components, manifest })
   }
   // a bad source is a warning, never a failure: the plugin directory is
   // still discovered by the scan (spec 06)
@@ -153,10 +150,7 @@ export function discoveryError(plugins) {
   for (const plugin of plugins) {
     const clashes = dirClashes(plugin.dir)
     if (clashes.length) {
-      return (
-        `plugin "${plugin.name}" has a component name clash: ${clashes.join("; ")}\n` +
-        "  remove one directory of each clashing pair; ocm refuses to guess"
-      )
+      return `plugin "${plugin.name}" has a component name clash: ${clashes.join("; ")}\n  remove one directory of each clashing pair; ocm refuses to guess`
     }
     const tui = tuiModule(plugin)
     if (tui) {

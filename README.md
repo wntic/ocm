@@ -61,11 +61,18 @@ Commands and agents are namespaced by plugin:
 `plugins/adw/commands/commit.md` becomes `/adw:commit` in the opencode TUI,
 `plugins/adw/agents/reviewer.md` becomes `adw:reviewer`.
 
+Plugin directory names become those namespaces, so they must be kebab-case
+(`^[a-z0-9]+(-[a-z0-9]+)*$`) and at most 64 characters. One marketplace
+shipping the same command or agent name from two plugins is a validate
+error — first-come-wins would silently shadow one at the user's expense.
+
 Skills are named by their **frontmatter `name`**, not their folder. ocm
 therefore renders each installed skill into its own mirror directory with the
-name rewritten to `<plugin>:<skill>` — `adw:python-style`. opencode never
-lists skills in the `/` autocomplete by design — skills are invoked by the
-model through the `skill` tool, or browsed via the `/skills` picker.
+name rewritten to `<plugin>:<skill>` — `adw:python-style`. Two skills whose
+namespaced names collide (both produce `adw:style`) are a validate error.
+opencode never lists skills in the `/` autocomplete by design — skills are
+invoked by the model through the `skill` tool, or browsed via the `/skills`
+picker.
 
 ### Breaking change: skill names
 
@@ -103,14 +110,16 @@ my-marketplace/
 
 A working example with two plugins ships in [template/](template/). A
 marketplace is any git repo with `plugins/<name>/`. Every directory under
-`plugins/` with at least one component is a plugin, and every plugin must
-carry a `plugin.json` with a non-empty `description` — a plugin without one
+`plugins/` with at least one component is a plugin — plugin.json is required
+in every one of them, with a non-empty `description`; a plugin without it
 is refused by `ocm add`, `ocm update` and `ocm validate` (already-installed
 plugins keep working; `ocm doctor` tells you which need a manifest).
 
 `command`/`commands`, `agent`/`agents`, `skill`/`skills` and `plugin`/`plugins`
 are all accepted (singular matches opencode's own globs); a name clash between
-the singular and plural form of the same type is an error.
+the singular and plural form of the same type is an error. `ocm validate`
+also warns on likely typos — `skill/` beside `skills/`, a `plugin.ts` at the
+plugin root, `SKILLS.md`.
 
 ### Cross-tool authoring
 
@@ -119,10 +128,40 @@ Claude Code form of the same command; ocm ignores it, Claude Code reads it
 through its own manifest. `skills/` is shared unchanged between the tools —
 keep skill frontmatter to the portable subset (`name`, `description`,
 `license`, `compatibility`, `metadata`); `ocm validate` warns on anything
-else. Command bodies that reference supporting scripts use
+else. A SKILL.md whose frontmatter has no `name` or no `description` is an
+error — the description is what the model reads to decide whether to load
+the skill, and it must be 1-1024 characters. Command bodies that reference
+supporting scripts use
 `"${OCM_PLUGIN_ROOT}/plugins/<name>/scripts/…"` — the loader exports
 `OCM_PLUGIN_ROOT` (and `CLAUDE_PLUGIN_ROOT` as an alias) pointing at the
 marketplace root.
+
+### Command and agent frontmatter
+
+Every file in `commands/` or `agents/` is a YAML frontmatter block plus a
+body — the body is the template opencode runs, and an empty body is a
+validate error: opencode requires the template. description is required
+(opencode rejects a command without it); the other recognized fields are
+`agent`, `mode`, `tools`, `model`, `extension`, `allowed-tools` and
+`$schema`. A file with no frontmatter at all is a warning. A frontmatter
+value containing an unquoted `": "` is an error — strict YAML rejects it
+even where opencode's lenient parser would rescue it; quote the value. A
+body using `!` shell substitution draws a warning, because `ocm info`
+surfaces the plugin as shell-executing.
+
+A complete command file:
+
+```markdown
+---
+description: commit helper
+model: sonnet
+allowed-tools:
+  - Read
+  - Bash
+---
+
+Run the tests, then commit with a conventional-commit message.
+```
 
 ### `marketplace.json`
 
@@ -151,21 +190,27 @@ should use the new location.
 ```
 
 Only a plugin entry's `name` and `source` are required. `source` is a
-`./`-relative path inside the marketplace — it says where the plugin is.
-`mcpServers` is `./`-relative inside the plugin directory — it says what is
-in the plugin. `../` and absolute paths are rejected; the marketplace repo is
-the distribution unit. `defaultEnabled:
+./-relative path inside the marketplace — it says where the plugin is; a
+source that does not resolve, or escapes the marketplace with `../`, is a
+validate error, and so is a plugin listed twice in `plugins[]` (the first
+entry silently wins otherwise). `mcpServers` is ./-relative, resolving
+inside the plugin directory — it says what is in the plugin. `../` and
+absolute paths are rejected; the marketplace repo is the distribution
+unit. `defaultEnabled:
 false` keeps a plugin disabled in an `auto` marketplace.
 
 ### `plugin.json`
 
-Required in every plugin directory. `description` is required — a non-empty
-string of at most 200 characters; it is what `ocm search` and the TUI show.
+Required in every plugin directory; one that exists but does not parse is a
+validate error — fix it or remove it; ocm requires this file to be readable.
+`description` is required — a non-empty string of at most 200 characters; it
+is what `ocm search` and the TUI show.
 `name` is optional and, when present, must equal the directory name.
 `$schema` is recommended — pin it to the Agent Plugins schema so other tools
 can read the manifest too. Otherwise the same fields as a `plugins[]` entry,
 minus `source`, `defaultEnabled` and `mcpServers` — a plugin directory is
-self-describing when vendored or read on its own. Metadata precedence:
+self-describing when vendored or read on its own. When the version disagrees
+between the two manifests, validate warns. Metadata precedence:
 marketplace entry > `plugin.json` > filesystem inference (name from the
 directory, components from the scan).
 
@@ -176,6 +221,26 @@ directory, components from the scan).
 }
 ```
 
+### Category and tags
+
+`category` (a string) and `tags` (an array of strings) ride under
+`extensions["dev.wntic.ocm"]` in plugin.json:
+
+```json
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "description": "One command, agent, skill, plugin and mcp server — the demo kit",
+  "extensions": {
+    "dev.wntic.ocm": { "category": "testing", "tags": ["tdd", "review"] }
+  }
+}
+```
+
+They surface in `ocm search` matching, `ocm info` and the TUI grouping. The
+values are free-form strings — there is no closed set, and validate does not
+check them in the `extensions` form. A top-level `category` or `tags` is
+legacy: validate warns and the `extensions` form wins.
+
 ### JS plugins and MCP servers
 
 `plugin/*.{js,ts}` are opencode server plugins. They execute, so they
@@ -183,7 +248,8 @@ materialize only after trust is granted for their marketplace — until then
 they are reported as `blocked (untrusted)`. Each must default-export
 `{ id, server }` (see `template/plugins/demo-kit/plugin/notify.js`).
 
-`mcp.json` uses exactly opencode's `mcp` entry shape:
+`mcp.json` uses exactly opencode's `mcp` entry shape; an entry missing "type"
+is a validate error:
 
 ```json
 {
@@ -196,6 +262,10 @@ Both are namespaced under ocm's ownership prefix: JS plugins link as
 `ocm--<plugin>--<server>` keys in the global `opencode.json`. MCP components
 are trust-gated too — a local server is a command line ocm caused to run.
 The user's own `mcp` keys are preserved.
+
+Every rule `ocm validate` enforces is stated in this section: validate
+enforces the documented contract, nothing else. A disagreement between the
+README and a validate finding is a bug in one of the two.
 
 ## Per-plugin install
 

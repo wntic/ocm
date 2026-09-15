@@ -26,12 +26,15 @@ function jsonPosition(err: unknown): string {
   return typeof line === "number" && typeof column === "number" ? `${line}:${column}` : "0"
 }
 
-function parseJson(file: string, rel: string, findings: Finding[]): Record<string, unknown> | undefined {
+// `required` marks a manifest ocm cannot route around (spec 19): a plugin.json
+// that does not parse gets the fix-or-remove next action, not just the position
+function parseJson(file: string, rel: string, findings: Finding[], required = false): Record<string, unknown> | undefined {
   let parsed: unknown
   try {
     parsed = JSON.parse(readFileSync(file, "utf8"))
   } catch (err) {
-    findings.push(error(`${rel}: invalid JSON at position ${jsonPosition(err)}`))
+    const fix = required ? " — fix it or remove it; ocm requires this file to be readable" : ""
+    findings.push(error(`${rel}: invalid JSON at position ${jsonPosition(err)}${fix}`))
     return undefined
   }
   if (!isRecord(parsed)) {
@@ -201,7 +204,7 @@ export function lintPluginJson(
     return undefined
   }
   const rel = relative(root, file)
-  const parsed = parseJson(file, rel, findings)
+  const parsed = parseJson(file, rel, findings, true)
   if (!parsed) return undefined
   lintFields(rel, parsed, findings)
   // spec 19: description is the one required field — the minimum that keeps

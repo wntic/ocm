@@ -2,8 +2,8 @@
 // checks live here; component-file checks (markdown, skills, plugin js) are in
 // validate-files.ts.
 import { existsSync, readdirSync } from "node:fs"
-import { join, relative } from "node:path"
-import { dirClashes, discoverPlugins, lintCrossTool } from "../../loader/core.js"
+import { dirname, join, relative } from "node:path"
+import { dirClashes, discoverPlugins, lintCrossTool, marketplaceManifestFile } from "../../loader/core.js"
 import type { CoreDiscoveredPlugin } from "../../loader/core.js"
 import { error, reportFindings, warning, type Finding } from "../findings"
 import { NAME_RE, lintMarketplaceJson, lintMcpJson, lintPluginJson, lintSkillDepth, type MarketplaceManifest } from "../manifest-lint"
@@ -15,9 +15,27 @@ const TYPO_FILES = new Set(["plugin.ts", "SKILLS.md", "Skill.md"])
 // both ends, 1–64 chars
 const AP_NAME_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/
 
+// spec 24 §1: a marketplace root has a plugins/ directory or a manifest at
+// either location (spec 15) — an empty plugins/ still counts (spec 19)
+function marketplaceRoot(start: string): string | null {
+  for (let dir = start; ; dir = dirname(dir)) {
+    if (existsSync(join(dir, "plugins")) || existsSync(marketplaceManifestFile(dir))) return dir
+    const parent = dirname(dir)
+    if (parent === dir) return null
+  }
+}
+
 export function validate(path?: string): void {
-  const root = path ?? process.cwd()
-  if (!existsSync(root)) throw new Error(`marketplace directory "${root}" does not exist`)
+  const start = path ?? process.cwd()
+  if (!existsSync(start)) throw new Error(`marketplace directory "${start}" does not exist`)
+  const root = marketplaceRoot(start)
+  if (!root) {
+    throw new Error(
+      "error: not an ocm marketplace directory (no plugins/ and no manifest found)\n" +
+        "  run ocm validate at the marketplace repository root",
+    )
+  }
+  if (root !== start) console.log(`validating ${root}`)
   console.log(`validate ${root}`)
   const findings: Finding[] = []
   const manifest = lintMarketplaceJson(root, findings)
