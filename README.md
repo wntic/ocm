@@ -382,6 +382,12 @@ On every opencode start the loader:
 3. records `lastSync` per marketplace — a failed pull is recorded and never
    touches that marketplace's links.
 
+The startup sync is fire-and-forget: it serves long-lived sessions, where the
+fetch finishes in the background long before it matters. A short-lived
+invocation — `opencode run`, `opencode debug config` — may exit before the
+sync completes, leaving `lastSync` untouched. `ocm update` is the
+deterministic path when a sync must have happened.
+
 A sync makes the *next* opencode start current. Remove the loader any time
 with `ocm loader uninstall`.
 

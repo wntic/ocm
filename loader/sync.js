@@ -15,19 +15,30 @@ import { executableComponents, trustFingerprint } from "./trust.js"
 // naming the url (spec 17).
 export async function pullRepo(dir, ref, url) {
   const before = (await git(["rev-parse", "HEAD"], dir)).stdout
-  const dirty = (await git(["status", "--porcelain"], dir)).stdout !== ""
+  // spec 26: `??` lines are untracked, the rest local changes — the counts
+  // let the warning name what was discarded
+  const status = (await git(["status", "--porcelain"], dir)).stdout.split("\n")
+  const untracked = status.filter((line) => line.startsWith("??")).length
+  const localChanges = status.filter((line) => line !== "" && !line.startsWith("??")).length
+  const dirty = localChanges > 0 || untracked > 0
   const fetch = await git(["fetch", "--depth", "1", "origin", ref || "HEAD"], dir)
   if (!fetch.ok) {
     return {
-      ok: false, changed: false, before, after: before, dirty,
+      ok: false, changed: false, before, after: before, dirty, localChanges, untracked,
       output: `cannot access ${url}${ref ? ` (ref "${ref}")` : ""} — the repository is private, unreachable, or the URL is wrong`,
     }
   }
   let reset = await git(["reset", "--hard", "FETCH_HEAD"], dir)
   if (!reset.ok) reset = await git(["reset", "--hard", "@{u}"], dir)
-  if (!reset.ok) return { ok: false, changed: false, before, after: before, dirty, output: reset.stderr || reset.stdout }
+  if (!reset.ok) return { ok: false, changed: false, before, after: before, dirty, localChanges, untracked, output: reset.stderr || reset.stdout }
+  // spec 26: reset --hard leaves untracked files behind — clean -fd makes
+  // "discarded" true and the next run silent
+  if (dirty) {
+    const clean = await git(["clean", "-fd"], dir)
+    if (!clean.ok) return { ok: false, changed: false, before, after: before, dirty, localChanges, untracked, output: clean.stderr || clean.stdout }
+  }
   const after = (await git(["rev-parse", "HEAD"], dir)).stdout
-  return { ok: true, changed: before !== after, before, after, dirty, output: after }
+  return { ok: true, changed: before !== after, before, after, dirty, localChanges, untracked, output: after }
 }
 
 // the loader never prompts: an unanswered or drifted grant is recorded as
