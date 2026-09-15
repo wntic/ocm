@@ -30,6 +30,13 @@ function rankOf(query, plugin, record, marketplace) {
   for (const rel of record.components.skill ?? []) {
     if (rel.toLowerCase().includes(query)) matched.push(`skills/${rel}`)
   }
+  // plugin JS file names and MCP server names are findable too (spec 25)
+  for (const file of record.components.plugin ?? []) {
+    if (file.toLowerCase().includes(query)) matched.push(`plugin ${file}`)
+  }
+  for (const server of record.components.mcp ?? []) {
+    if (server.toLowerCase().includes(query)) matched.push(`mcp ${server}`)
+  }
   if (matched.length) return { rank: 5, matched }
   if (marketplace.toLowerCase().includes(query)) return { rank: 6, matched: [] }
   return null
