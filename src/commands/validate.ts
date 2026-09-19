@@ -2,8 +2,8 @@
 // checks live here; component-file checks (markdown, skills, plugin js) are in
 // validate-files.ts.
 import { existsSync, readdirSync } from "node:fs"
-import { dirname, join, relative } from "node:path"
-import { dirClashes, discoverPlugins, lintCrossTool, marketplaceManifestFile } from "../../loader/core.js"
+import { basename, dirname, join, relative } from "node:path"
+import { dirClashes, discoverPlugins, foldedComponentGroups, foldedDirPairs, lintCrossTool, marketplaceManifestFile } from "../../loader/core.js"
 import type { CoreDiscoveredPlugin } from "../../loader/core.js"
 import { error, reportFindings, warning, type Finding } from "../findings"
 import { NAME_RE, lintMarketplaceJson, lintMcpJson, lintPluginJson, lintSkillDepth, type MarketplaceManifest } from "../manifest-lint"
@@ -45,6 +45,7 @@ export function validate(path?: string): void {
     lintPlugin(root, plugin, manifest, skills, findings)
   }
   lintComponentCollisions(root, plugins, findings)
+  lintCaseFolds(root, plugins, findings)
   for (const message of lintCrossTool(root)) findings.push(warning(message))
   if (reportFindings(findings)) process.exitCode = 1
 }
@@ -65,6 +66,31 @@ function lintComponentCollisions(root: string, plugins: CoreDiscoveredPlugin[], 
           )
         }
       }
+    }
+  }
+}
+
+// brief 28 §4: two names that differ only in case install to one link name —
+// a name-level rule, so it fires on every filesystem
+function lintCaseFolds(root: string, plugins: CoreDiscoveredPlugin[], findings: Finding[]): void {
+  for (const pair of foldedDirPairs(plugins.map((plugin) => basename(plugin.dir)))) {
+    findings.push(
+      error(`plugins/${pair[0]} and plugins/${pair[1]} differ only in case — both install as plugin "${pair[0]!.toLowerCase()}"; rename one`),
+    )
+  }
+  for (const plugin of plugins) {
+    for (const group of foldedComponentGroups(plugin.components)) {
+      const first = group.names[0]!.toLowerCase()
+      const dest = group.type === "skill"
+        ? `${plugin.name}--${first.split("/").join("-")}`
+        : group.type === "plugin"
+          ? `ocm--${plugin.name}--${first}`
+          : `${plugin.name}:${first}`
+      findings.push(
+        error(
+          `${relative(root, plugin.dir)}: plugin "${plugin.name}" ships ${group.names.join(" and ")} that differ only in case — both install as ${dest}; rename one`,
+        ),
+      )
     }
   }
 }

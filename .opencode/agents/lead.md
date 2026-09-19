@@ -77,6 +77,14 @@ failed at its job.
   mechanism working: decide it yourself if the brief already settles it,
   and otherwise stop and put it to the human with the options the subagent
   gave you.
+- **Never use a general-purpose agent to write a file a specialist is denied.**
+  The allowlists are the design, not an obstacle: an implementer that cannot
+  edit `scripts/` cannot weaken the gate it is judged by. When a brief needs a
+  file outside every specialist's scope — the gate, a skill, an agent
+  definition — dispatch `refactor`, which owns exactly those paths and cannot
+  touch shipped code. If no agent may write it, stop and tell the human; that
+  is a finding about the brief's scope, not a problem to route around.
+
 - **Delegate everything.** You cannot edit files. Wanting to fix one line
   yourself is the signal to dispatch a subtask with that instruction.
 - **Pass findings verbatim.** Quote a failure when you relay it. Summarising

@@ -99,7 +99,7 @@ export async function updateFlow(api, name, back) {
     const { changed, links } = await withRegistryLock(`ocm update ${name} (tui)`, async () => {
       let changed = false
       if (entry.local === false) {
-        const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null, entry.url)
+        const pull = await pullRepo(entry, name)
         if (!pull.ok) throw new Error(pull.output)
         changed = pull.changed
       }

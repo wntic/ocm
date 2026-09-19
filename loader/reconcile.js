@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs"
-import { join } from "node:path"
+import { basename, join } from "node:path"
+import { discoverPlugins } from "./discovery.js"
 import { discoverMarketplace } from "./manifest.js"
-import { pluginLimitViolation } from "./limits.js"
+import { foldedDirPairs, pluginLimitViolation } from "./limits.js"
 import { registerPlugins } from "./marketplace.js"
 
 // spec 20: one reconciliation of the per-plugin records after a pull or a
@@ -32,6 +33,19 @@ export function reconcilePluginRecords(registry, name, root, options = {}) {
     const violation = pluginLimitViolation(candidate)
     if (violation) warnings.push(`${violation}; rename it in the marketplace and update again`)
     return !violation
+  })
+  // brief 28 §3: a folded pair lowercases to one plugin name; the pair is
+  // skipped with the warning and the rest of the update proceeds. The raw
+  // discovery list is re-read because the passed-in one is the manifest
+  // map, which has already collapsed the pair.
+  const folded = new Map(
+    foldedDirPairs(discoverPlugins(root).map((plugin) => basename(plugin.dir))).map((pair) => [pair[0].toLowerCase(), pair]),
+  )
+  registrable = registrable.filter((candidate) => {
+    const pair = folded.get(candidate.name)
+    if (!pair) return true
+    warnings.push(`plugins/${pair[0]} and plugins/${pair[1]} differ only in case — plugin "${candidate.name}" skipped; ask the author to rename one and update again`)
+    return false
   })
   // spec 19: a manifest-less plugin is refused — new upstream ones are not
   // installed, and an installed one is grandfathered only until it changes

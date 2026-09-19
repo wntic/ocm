@@ -14,6 +14,9 @@ permission:
     "bin/**": allow
     "schema/**": allow
     "template/**": allow
+    # a brief that changes behaviour changes the docs that describe it
+    "README.md": allow
+    "docs/**": allow
   bash:
     "*": deny
     "bun*": allow
@@ -64,6 +67,12 @@ Load the skills that apply:
   instruction that cannot be satisfied — **stop and return it as a finding**,
   stating the options and which you would pick. Your parent relays it to the
   lead, which is the only agent a human can see.
+
+- **You cannot edit `test/`, `scripts/` or `.opencode/`.** The first is the
+  check you are judged by; the second is the gate that runs it; the third is
+  your own instructions. If a brief needs one of them changed, **say so in
+  your report** — that is a job for the refactor agent, dispatched by the
+  lead. Never route around the boundary by asking for another agent to do it.
 
 - **You cannot edit `test/`.** If a test looks wrong, stop and report it —
   do not work around it, and do not ask for permission to change it. A test

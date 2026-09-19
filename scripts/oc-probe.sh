@@ -148,4 +148,29 @@ if [ "$IMPORT_FAIL" -eq 1 ]; then
   exit 1
 fi
 
+# --- 3. XDG_CONFIG_HOME replaces $HOME/.config ------------------------------
+# opencode resolves its global config root from the variable (brief 28 §1).
+# A marker command under the XDG root must be resolved and one under the
+# fake $HOME/.config must not — the variable replaces the default root, it
+# does not add to it. If upstream changes that rule, this breaks the gate
+# rather than the user.
+XDG_ROOT="$WORK/xdg"
+XDG_HOME="$WORK/xdg-home"
+mkdir -p "$XDG_ROOT/opencode/commands" "$XDG_HOME/.config/opencode/commands"
+printf -- '---\ndescription: xdg root marker\n---\n\nmarker\n' \
+  > "$XDG_ROOT/opencode/commands/xdg-root.md"
+printf -- '---\ndescription: home root marker\n---\n\nmarker\n' \
+  > "$XDG_HOME/.config/opencode/commands/home-root.md"
+( cd "$ROOT" && HOME="$XDG_HOME" XDG_CONFIG_HOME="$XDG_ROOT" opencode debug config ) \
+  >"$WORK/xdg-config.json" 2>/dev/null
+if ! grep -q 'xdg-root' "$WORK/xdg-config.json" || grep -q 'home-root' "$WORK/xdg-config.json"; then
+  echo "XDG ROOT FAILURE: expected opencode under XDG_CONFIG_HOME to resolve the"
+  echo "  command from $XDG_ROOT/opencode and not the one from \$HOME/.config/opencode;"
+  echo "  resolved instead:"
+  grep -oE '"(xdg|home)-root[^"]*"' "$WORK/xdg-config.json" | sed 's/^/    /' \
+    || echo "    (neither marker command was resolved)"
+  exit 1
+fi
+echo "xdg root:  XDG_CONFIG_HOME replaces \$HOME/.config (verified against this build)"
+
 echo "plugin load errors: none (canary verified detection works)"

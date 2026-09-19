@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { writeJsonAtomic } from "./atomic.js"
-import { LEGACY_REGISTRY_FILE, MARKETPLACES_DIR, REGISTRY_FILE } from "./paths.js"
+import { CACHE_DIR, LEGACY_REGISTRY_FILE, MARKETPLACES_DIR, OPENCODE_DIR, REGISTRY_FILE } from "./paths.js"
 
 export function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -173,12 +173,33 @@ function serializeRegistry(registry) {
   return `${JSON.stringify(canonicalObject({ ...registry, version: 2, marketplaces }, ["version", "ocmVersion", "marketplaces"]), null, 2)}\n`
 }
 
+// brief 28 §2.1: every registry write breadcrumbs the config root it wrote
+// under. The cache stays anchored to $HOME while the config root follows
+// XDG_CONFIG_HOME, so this file is what makes a stranded install detectable
+// in both directions. Best-effort: a breadcrumb that cannot be written must
+// not fail the mutation it accompanies.
+const ROOTS_FILE = join(CACHE_DIR, "roots.json")
+
+function recordConfigRoot() {
+  const root = resolve(OPENCODE_DIR)
+  let roots = []
+  try {
+    const raw = JSON.parse(readFileSync(ROOTS_FILE, "utf8"))
+    if (isRecord(raw) && Array.isArray(raw.roots)) roots = raw.roots.filter((r) => typeof r === "string")
+  } catch {}
+  if (roots.includes(root)) return
+  try {
+    writeJsonAtomic(ROOTS_FILE, `${JSON.stringify({ roots: [...roots, root] }, null, 2)}\n`)
+  } catch {}
+}
+
 export function saveRegistry(registry) {
   try {
     writeJsonAtomic(REGISTRY_FILE, serializeRegistry(registry))
   } catch (err) {
     throw new Error(`cannot write ${REGISTRY_FILE}: ${err instanceof Error ? err.message : String(err)}`)
   }
+  recordConfigRoot()
 }
 
 // spec 11: the variables the loader's shell.env hook exports. Every added

@@ -3,7 +3,7 @@
 // removal proves ownership first; an unowned path is reported, never touched.
 import { existsSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
-import { componentRoot, discoverPlugins, enabledPlugins } from "../../loader/core.js"
+import { componentRoot, discoverPlugins, enabledPlugins, foldedComponentGroups } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { materializeLinks } from "../install"
 import { HOME, OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "../paths"
@@ -122,6 +122,29 @@ export function checkMaterialized(registry: CoreRegistry, findings: Finding[], f
     }
     materializeLinks(name, entry)
     findings.push(fixed(`marketplace "${name}": re-materialized ${missing} component(s) (restart opencode to activate)`))
+  }
+}
+
+// brief 28 §4: a registry written by an older ocm may record a folded pair —
+// the link serves one of the two names, so the pair is reported and the
+// link left alone (removing it would uninstall a working command)
+export function checkFoldedRecords(registry: CoreRegistry, findings: Finding[]): void {
+  for (const [name, entry] of Object.entries(registry.marketplaces)) {
+    for (const [plugin, record] of Object.entries(entry.plugins)) {
+      for (const group of foldedComponentGroups(record.components)) {
+        const first = group.names[0]!.toLowerCase()
+        const dest = group.type === "skill"
+          ? `${plugin}--${first.split("/").join("-")}`
+          : group.type === "plugin"
+            ? `ocm--${plugin}--${first}`
+            : `${plugin}:${first}`
+        findings.push(
+          error(
+            `marketplace "${name}": plugin "${plugin}" ships ${group.names.join(" and ")} that differ only in case — both install as ${dest}; rename one in the marketplace`,
+          ),
+        )
+      }
+    }
   }
 }
 

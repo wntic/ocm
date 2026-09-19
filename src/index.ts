@@ -13,6 +13,7 @@ import { search } from "./commands/search"
 import { info } from "./commands/info"
 import { validate } from "./commands/validate"
 import { doctor } from "./commands/doctor"
+import { reportStrandedNotice } from "./stranded"
 
 const HELP = `ocm - file-based plugin marketplace for opencode
 
@@ -144,12 +145,14 @@ export async function main(argv: string[]): Promise<void> {
       console.log(packageVersion())
       break
     case "init":
+      reportStrandedNotice()
       preflightWritable([OPENCODE_TUI_CONFIG])
       await mutating("ocm init", () => {
         if (installLoader()) reportTuiPlugin()
       })
       break
     case "add":
+      reportStrandedNotice()
       requireArg(positional[0], "missing marketplace url or path")
       preflightWritable([OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG])
       await mutating("ocm add", () =>
@@ -161,6 +164,7 @@ export async function main(argv: string[]): Promise<void> {
       await mutating("ocm remove", () => remove(positional[0]!))
       break
     case "update":
+      reportStrandedNotice()
       preflightWritable([OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG])
       await mutating("ocm update", () =>
         update(positional[0], { quiet: flags.has("quiet"), json: flags.has("json"), trust: trustFlag(flags) }))
@@ -182,6 +186,7 @@ export async function main(argv: string[]): Promise<void> {
       break
     case "install":
     case "enable":
+      reportStrandedNotice()
       requireArg(positional[0], "missing plugin name")
       preflightWritable([OPENCODE_GLOBAL_CONFIG])
       await mutating(`ocm ${command}`, () => install(positional[0]!, flags.has("force")))
@@ -198,6 +203,7 @@ export async function main(argv: string[]): Promise<void> {
       await mutating("ocm mode", () => setMode(positional[0]!, positional[1]!))
       break
     case "trust":
+      reportStrandedNotice()
       requireArg(positional[0], "missing marketplace name")
       preflightWritable([OPENCODE_GLOBAL_CONFIG])
       await mutating("ocm trust", () => trust(positional[0]!, flags.has("yes")))

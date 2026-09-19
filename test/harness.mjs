@@ -30,7 +30,11 @@ export async function withFakeHome(fn) {
   // ESM marker for the installed .js files, same trick as scripts/oc-probe.sh
   writeFileSync(join(home, "package.json"), '{ "type": "module" }\n')
   const previous = process.env.HOME
+  const previousXdg = process.env.XDG_CONFIG_HOME
   process.env.HOME = home
+  // the paths modules read XDG_CONFIG_HOME at load; an ambient value on the
+  // dev machine would flip every child's expected config root
+  delete process.env.XDG_CONFIG_HOME
   try {
     const ocm = {
       installLoader: () => runChild(home, LOADER_MODULE, "installLoader"),
@@ -38,6 +42,7 @@ export async function withFakeHome(fn) {
     return await fn(home, ocm)
   } finally {
     process.env.HOME = previous
+    if (previousXdg !== undefined) process.env.XDG_CONFIG_HOME = previousXdg
     rmSync(home, { recursive: true, force: true })
   }
 }

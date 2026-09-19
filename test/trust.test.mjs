@@ -489,4 +489,52 @@ phase("9. ownership and config safety across the trust flow: no writes outside o
   userIntact()
   // invariant: no plugin-load errors attributable to ocm-installed files
 }, 420_000)
+
+// brief 28 §4: two JS plugin files folding to one link name. The refusal
+// must precede the trust record — the fingerprint never covers a module
+// that cannot be linked.
+
+// git hash-object -w --stdin: create a blob without touching the working
+// tree, so the index can hold a path the checkout cannot represent
+function gitBlob(dir, contents) {
+  const result = spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd: dir, encoding: "utf8", input: contents })
+  if (result.status !== 0) throw new Error(`git hash-object failed in ${dir}: ${result.stderr}`)
+  return result.stdout.trim()
+}
+
+phase("10. two JS plugin files folding to one link are refused before any trust record is written", async (home) => {
+  // invariants: config safety and ownership — the user's keys and file
+  // predate the refused add and survive it
+  writeTree(cfg(home), {
+    "opencode.json": json({ model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { p: { "plugin.json": PLUGIN_JSON, plugin: { "Run.js": JS_PLUGIN } } } })
+  // the index gains the folded sibling beside the on-disk Run.js: the tree
+  // ships both paths even where a checkout cannot hold both (F66)
+  git(remote, ["update-index", "--add", "--cacheinfo", `100644,${gitBlob(remote, JS_PLUGIN)},plugins/p/plugin/run.js`])
+  git(remote, ["-c", "user.email=ocm@test", "-c", "user.name=ocm", "commit", "-m", "folded sibling"])
+  const tree = spawnSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: remote, encoding: "utf8" })
+  if (tree.status !== 0) throw new Error(`git ls-tree failed in ${remote}: ${tree.stderr}`)
+  const listed = tree.stdout.trim().split("\n")
+  for (const path of ["plugins/p/plugin/Run.js", "plugins/p/plugin/run.js"]) {
+    if (!listed.includes(path)) throw new Error(`fixture error: ${remote} HEAD does not ship ${path}: ${JSON.stringify(listed)}`)
+  }
+  const result = ocm(home, ["add", `file://${remote}`, "--name", "mp", "--trust"])
+  if (result.status !== 1) throw new Error(`expected exit 1 from the folded plugin-file add, got ${result.status}:\n${result.output}`)
+  for (const needle of ["differ only in case", "plugins/p/plugin/Run.js and plugins/p/plugin/run.js", "ocm--p--run.js"]) {
+    expect(result.output).toContain(needle)
+  }
+  // refused before any write: no registry (so no trust record and no
+  // fingerprint covering a module that cannot be linked), no mcp keys, no
+  // plugin links, no clone left behind
+  assertAbsent(registryFile(home))
+  expect(Object.keys(mcpKeys(home)).filter((key) => key.startsWith("ocm--"))).toEqual([])
+  expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] })
+  assertAbsent(pluginLink(home, "p", "Run.js"))
+  assertAbsent(pluginLink(home, "p", "run.js"))
+  assertAbsent(cloneDir(home))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+}, 240_000)
 }

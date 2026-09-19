@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process"
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
 import { assertAbsent, assertFileExists, withFakeHome, withFakeOpencode } from "./harness.mjs"
@@ -303,6 +303,20 @@ function loaderSync(home) {
   return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" }
 }
 
+const LOADER_PATHS_MODULE = fileURLToPath(new URL("../loader/paths.js", import.meta.url))
+const SRC_PATHS_MODULE = fileURLToPath(new URL("../src/paths.ts", import.meta.url))
+
+// both paths modules compute their constants at import time, so the variable
+// must sit in the child env before the import — same child-spawn reason as
+// loaderSync above. src/paths.ts is TypeScript: the child runs under bun.
+function pathConstants(home, env) {
+  const runner = join(home, "paths-runner.mjs")
+  writeFileSync(runner, "const l = await import(process.argv[2]); const s = await import(process.argv[3]); console.log(JSON.stringify({ OPENCODE_DIR: l.OPENCODE_DIR, CACHE_DIR: l.CACHE_DIR, OPENCODE_GLOBAL_DIR: s.OPENCODE_GLOBAL_DIR, OCM_CACHE_DIR: s.OCM_CACHE_DIR }))\n")
+  const r = spawnSync(process.execPath, [runner, LOADER_PATHS_MODULE, SRC_PATHS_MODULE], { env: { ...process.env, HOME: home, ...env }, encoding: "utf8", timeout: 120_000 })
+  if (r.status !== 0) throw new Error(`the paths runner exited ${r.status}: ${r.stderr}`)
+  return JSON.parse(r.stdout)
+}
+
 // realpath on both sides: macOS temp dirs sit behind /var -> /private/var
 function assertResolves(dest, source) {
   if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
@@ -525,4 +539,216 @@ phase("10. doctor reports a plugin-load error the probe attributes to ocm, with 
     if (!diagnosed.output.includes(needle)) throw new Error(`the plugin-error finding lacks "${needle}":\n${diagnosed.output}`)
   }
 }, 300_000)
+
+// brief 28 §1, test 1: the config root follows XDG_CONFIG_HOME
+phase("11. a set XDG_CONFIG_HOME relocates the install: init and add write only under $XDG/opencode, never $HOME/.config, and both paths modules join the variable — a relative value stays relative", async (home) => {
+  const xdg = join(home, "xdg")
+  const env = { XDG_CONFIG_HOME: xdg }
+  const root = join(xdg, "opencode")
+  const init = ocm(home, ["init"], 120_000, { env })
+  if (init.status !== 0) throw new Error(`ocm init exited ${init.status} with XDG_CONFIG_HOME=${xdg}:\n${init.output}`)
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  const add = ocm(home, ["add", mp], 120_000, { env })
+  if (add.status !== 0) throw new Error(`ocm add exited ${add.status} with XDG_CONFIG_HOME=${xdg}:\n${add.output}`)
+  assertFileExists(join(root, "ocm", "registry.json"))
+  assertFileExists(join(root, "plugins", "ocm-loader.js"))
+  assertResolves(join(root, "commands", "adw:commit.md"), join(mp, "plugins", "adw", "commands", "commit.md"))
+  assertAbsent(join(home, ".config")) // the default root is not created at all
+  // the constants, not just the files: both modules resolve the root from the
+  // variable, and the cache stays anchored to $HOME
+  const set = pathConstants(home, env)
+  expect(set.OPENCODE_DIR).toBe(root)
+  expect(set.OPENCODE_GLOBAL_DIR).toBe(root)
+  expect(set.CACHE_DIR).toBe(join(home, ".cache", "ocm"))
+  expect(set.OCM_CACHE_DIR).toBe(join(home, ".cache", "ocm"))
+  // join, not resolve: a relative value produces a relative constant, the
+  // same rule opencode follows — never run ocm itself with one
+  const relative = pathConstants(home, { XDG_CONFIG_HOME: "rel-dir" })
+  expect(relative.OPENCODE_DIR).toBe(join("rel-dir", "opencode"))
+  expect(relative.OPENCODE_GLOBAL_DIR).toBe(join("rel-dir", "opencode"))
+  // invariants: nothing under ~/.claude or ~/.agents anywhere in the home
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 420_000)
+
+// brief 28 §1, test 2: empty string falls back — the || semantics a
+// `!== undefined` check would get wrong
+phase("12. an empty-string XDG_CONFIG_HOME falls back to $HOME/.config/opencode in both paths modules and on disk", async (home) => {
+  const env = { XDG_CONFIG_HOME: "" }
+  const constants = pathConstants(home, env)
+  expect(constants.OPENCODE_DIR).toBe(join(home, ".config", "opencode"))
+  expect(constants.OPENCODE_GLOBAL_DIR).toBe(join(home, ".config", "opencode"))
+  const init = ocm(home, ["init"], 120_000, { env })
+  if (init.status !== 0) throw new Error(`ocm init exited ${init.status} with an empty XDG_CONFIG_HOME:\n${init.output}`)
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  const add = ocm(home, ["add", mp], 120_000, { env })
+  if (add.status !== 0) throw new Error(`ocm add exited ${add.status} with an empty XDG_CONFIG_HOME:\n${add.output}`)
+  assertFileExists(join(home, ".config", "opencode", "ocm", "registry.json"))
+  assertAbsent(join(home, "xdg"))
+}, 420_000)
+
+// brief 28 §2: an install stranded in the other config root is reported,
+// never migrated — doctor names both roots, mutations warn once and proceed
+
+const ROOTS_FILE = (home) => join(home, ".cache", "ocm", "roots.json")
+
+// one local marketplace fixture; the marketplace name is the basename
+function localMp(home, name = "mp") {
+  const dir = join(home, name)
+  writeTree(dir, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  return dir
+}
+
+// the stranded finding's content lines, asserted without the severity prefix
+// so the same assertions hold in the early-exit and the findings renderings.
+// The remedy adapts per direction, like the parenthetical: with the variable
+// set, unsetting it reaches the stranded install; with it unset, setting it
+// to the stranded config home does — the recorded root is the opencode dir,
+// so the config home is its parent
+function expectStranded(output, strandedRoot, activeRoot, xdgSet) {
+  const remedy = xdgSet
+    ? "unset XDG_CONFIG_HOME to use the existing install, or re-add those marketplaces here"
+    : `set XDG_CONFIG_HOME to ${dirname(strandedRoot)} to use the existing install, or re-add those marketplaces here`
+  for (const needle of [
+    "an ocm install is stranded in another config root",
+    `installed at: ${strandedRoot} (1 marketplace)`,
+    `this shell:   ${activeRoot} (XDG_CONFIG_HOME is ${xdgSet ? "set" : "not set"})`,
+    "opencode reads the second; nothing in the first is visible to it",
+    remedy,
+  ]) {
+    if (!output.includes(needle)) throw new Error(`the stranded finding lacks "${needle}":\n${output}`)
+  }
+  if (output.includes("ocm is not installed here")) {
+    throw new Error(`the not-installed line must not appear while an install is stranded:\n${output}`)
+  }
+}
+
+// the breadcrumb names every root a registry write went to; the cache does
+// not move, which is what makes the stranded check symmetric
+function expectBreadcrumb(home, root) {
+  const file = ROOTS_FILE(home)
+  const recorded = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null
+  if (!recorded?.roots?.includes(root)) {
+    throw new Error(`expected the breadcrumb at ${file} to record ${root} after a registry write, got ${JSON.stringify(recorded)}`)
+  }
+}
+
+phase("13. an install in the default root is reported as stranded when XDG_CONFIG_HOME moves the active root: both roots and the count named, the breadcrumb recorded, nothing moved", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  expect(ocm(home, ["add", localMp(home)]).status).toBe(0)
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const xdg = join(home, "xdg")
+  const diagnosed = ocm(home, ["doctor"], 300_000, { env: { XDG_CONFIG_HOME: xdg } })
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a stranded install:\n${diagnosed.output}`)
+  expectStranded(diagnosed.output, cfg(home), join(xdg, "opencode"), true)
+  expectBreadcrumb(home, cfg(home))
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes) // nothing is migrated
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 420_000)
+
+phase("13b. an install made before the breadcrumb existed is still reported: no roots.json, XDG_CONFIG_HOME set (review finding)", async (home) => {
+  // the upgrade path: everything installed by v0.5.0 left no breadcrumb, so a
+  // user who already had XDG_CONFIG_HOME set would otherwise see their whole
+  // install vanish with no explanation — the default root is checked directly
+  expect(ocm(home, ["init"]).status).toBe(0)
+  expect(ocm(home, ["add", localMp(home)]).status).toBe(0)
+  rmSync(ROOTS_FILE(home), { force: true })
+  const xdg = join(home, "xdg")
+  const diagnosed = ocm(home, ["doctor"], 300_000, { env: { XDG_CONFIG_HOME: xdg } })
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a pre-breadcrumb install stranded:\n${diagnosed.output}`)
+  expectStranded(diagnosed.output, cfg(home), join(xdg, "opencode"), true)
+}, 300_000)
+
+phase("14. the reverse direction via the breadcrumb: an install made with XDG_CONFIG_HOME set is reported as stranded once the variable is gone", async (home) => {
+  const xdg = join(home, "xdg")
+  const env = { XDG_CONFIG_HOME: xdg }
+  expect(ocm(home, ["init"], 120_000, { env }).status).toBe(0)
+  expect(ocm(home, ["add", localMp(home)], 120_000, { env }).status).toBe(0)
+  const diagnosed = ocm(home, ["doctor"], 300_000) // no variable: the default root is active and empty
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a stranded install:\n${diagnosed.output}`)
+  expectStranded(diagnosed.output, join(xdg, "opencode"), cfg(home), false)
+}, 420_000)
+
+phase("15. a relative XDG_CONFIG_HOME draws the doctor warning naming the cwd dependence and the absolute-path remedy", async (home) => {
+  const diagnosed = ocm(home, ["doctor"], 300_000, { env: { XDG_CONFIG_HOME: "rel-dir" } })
+  for (const needle of ["XDG_CONFIG_HOME is relative", "different directory", "set it to an absolute path"]) {
+    if (!diagnosed.output.includes(needle)) throw new Error(`the relative-XDG warning lacks "${needle}":\n${diagnosed.output}`)
+  }
+  assertAbsent(join(home, ".config")) // doctor without --fix writes nothing
+  assertAbsent(join(process.cwd(), "rel-dir")) // the relative root is joined, never created
+}, 300_000)
+
+phase("16. no other root with a marketplace keeps the old sentence: after ocm remove leaves an empty registry, doctor says 'not installed'", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  expect(ocm(home, ["add", localMp(home)]).status).toBe(0)
+  expect(ocm(home, ["remove", "mp"]).status).toBe(0)
+  expect(Object.keys(readRegistry(home).marketplaces)).toEqual([]) // the registry file survives the remove, empty
+  expectBreadcrumb(home, cfg(home)) // the root is known — it just holds nothing
+  const diagnosed = ocm(home, ["doctor"], 300_000, { env: { XDG_CONFIG_HOME: join(home, "xdg") } })
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1:\n${diagnosed.output}`)
+  expect(diagnosed.stderr).toBe("error: ocm is not installed here — run ocm init\n")
+  expect(diagnosed.stdout).toBe("")
+  if (diagnosed.output.includes("stranded")) throw new Error(`an other root with zero marketplaces must not be reported as stranded:\n${diagnosed.output}`)
+}, 600_000)
+
+phase("17. both roots hold a registry: doctor reports the non-active root as stranded in both directions and writes nothing", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  expect(ocm(home, ["add", localMp(home, "mp-one")]).status).toBe(0)
+  const xdg = join(home, "xdg")
+  const env = { XDG_CONFIG_HOME: xdg }
+  expect(ocm(home, ["init"], 120_000, { env }).status).toBe(0)
+  expect(ocm(home, ["add", localMp(home, "mp-two")], 120_000, { env }).status).toBe(0)
+  const registries = [registryFile(home), join(xdg, "opencode", "ocm", "registry.json")]
+  const before = registries.map((p) => readFileSync(p, "utf8"))
+  const withVariable = ocm(home, ["doctor"], 300_000, { env })
+  if (withVariable.status !== 1) throw new Error(`ocm doctor exited ${withVariable.status}, expected 1 with the default root stranded:\n${withVariable.output}`)
+  expectStranded(withVariable.output, cfg(home), join(xdg, "opencode"), true)
+  const withoutVariable = ocm(home, ["doctor"], 300_000)
+  if (withoutVariable.status !== 1) throw new Error(`ocm doctor exited ${withoutVariable.status}, expected 1 with the xdg root stranded:\n${withoutVariable.output}`)
+  expectStranded(withoutVariable.output, join(xdg, "opencode"), cfg(home), false)
+  expect(registries.map((p) => readFileSync(p, "utf8"))).toEqual(before) // no automatic reconciliation
+}, 900_000)
+
+// brief 28 §4 edge: a marketplace installed by an older ocm whose registry
+// records a folded component pair — doctor reports the pair as an error
+// with the rename action and leaves the working link alone (removing it
+// would uninstall a working command)
+phase("18. an installed marketplace whose registry records a folded command pair is a doctor error with the rename action; the link is left alone", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { "case-kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } } })
+  expect(ocm(home, ["add", mp]).status).toBe(0)
+  const link = join(cfg(home), "commands", "case-kit:run.md")
+  assertResolves(link, join(mp, "plugins", "case-kit", "commands", "run.md"))
+  // the v0.5.0 shape: the registry recorded both spellings while the
+  // filesystem served one
+  const registry = readRegistry(home)
+  registry.marketplaces.mp.plugins["case-kit"].components.command = ["Run.md", "run.md"]
+  writeFileSync(registryFile(home), `${JSON.stringify(registry, null, 2)}\n`)
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a folded pair recorded:\n${diagnosed.output}`)
+  const line = diagnosed.output.split("\n").find((l) => /^\s*error\b/.test(l) && l.includes("differ only in case") && l.includes("Run.md") && l.includes("run.md"))
+  if (!line) throw new Error(`expected an error finding naming the folded pair Run.md/run.md:\n${diagnosed.output}`)
+  if (!line.includes("rename")) throw new Error(`the folded-pair finding must carry the rename action:\n${line}`)
+  // the links are left alone: the report never uninstalls a working command
+  assertResolves(link, join(mp, "plugins", "case-kit", "commands", "run.md"))
+}, 420_000)
 }
