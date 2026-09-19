@@ -4,6 +4,8 @@ mode: subagent
 model: local/glm-5.3
 temperature: 0.2
 steps: 150
+tools:
+  question: false
 permission:
   edit: deny
   task: allow
@@ -47,6 +49,15 @@ you noticed something nearby.
    FAIL with all three verdicts; do not try a fourth.
 
 ## Rules
+
+- **Never ask; report.** You have no `question` tool, by design: a dialog
+  raised below the top-level session is never rendered, so asking blocks
+  your parents until a human kills the run — this cost an hour on the first
+  write-safety attempt. When you need a decision you cannot take — a brief
+  that contradicts a test you may not edit, two briefs that disagree, an
+  instruction that cannot be satisfied — **stop and return it as a finding**,
+  stating the options and which you would pick. Your parent relays it to the
+  lead, which is the only agent a human can see.
 
 - **The separation is the point.** The implementer may not edit `test/`, and
   the test author may not edit `src/`, `loader/` or `bin/`. A test the

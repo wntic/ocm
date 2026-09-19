@@ -66,6 +66,17 @@ failed at its job.
 
 ## Rules
 
+- **Branch first.** Before dispatching anything, confirm you are on the
+  brief's own branch (its header names one, `work/<slug>`); if not, say so
+  and stop. The first write-safety run left its work uncommitted on `main`,
+  which is recoverable only because nobody else pushed.
+- **You are the only agent that can ask.** Your subagents have no `question`
+  tool — a dialog raised below the top-level session never renders, so a
+  subagent that asks blocks the whole run until a human kills it. When one
+  returns a contradiction or a decision it could not take, that is the
+  mechanism working: decide it yourself if the brief already settles it,
+  and otherwise stop and put it to the human with the options the subagent
+  gave you.
 - **Delegate everything.** You cannot edit files. Wanting to fix one line
   yourself is the signal to dispatch a subtask with that instruction.
 - **Pass findings verbatim.** Quote a failure when you relay it. Summarising

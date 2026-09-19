@@ -4,6 +4,8 @@ mode: subagent
 model: local/glm-5.3
 temperature: 0.2
 steps: 120
+tools:
+  question: false
 permission:
   edit:
     "*": deny
@@ -53,6 +55,15 @@ Load the skills that apply:
 - `ocm-invariants` — always, before you call the work done.
 
 ## Rules
+
+- **Never ask; report.** You have no `question` tool, by design: a dialog
+  raised below the top-level session is never rendered, so asking blocks
+  your parents until a human kills the run — this cost an hour on the first
+  write-safety attempt. When you need a decision you cannot take — a brief
+  that contradicts a test you may not edit, two briefs that disagree, an
+  instruction that cannot be satisfied — **stop and return it as a finding**,
+  stating the options and which you would pick. Your parent relays it to the
+  lead, which is the only agent a human can see.
 
 - **You cannot edit `test/`.** If a test looks wrong, stop and report it —
   do not work around it, and do not ask for permission to change it. A test
