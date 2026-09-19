@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
+import { writeJsonAtomic } from "./atomic.js"
 import { installRefusal, nameHolder } from "./collisions.js"
 import { restoreDisplaced } from "./displaced.js"
 import { nameDisagreement } from "./manifest.js"
 import { componentRoot } from "./marketplace.js"
 import { enabledPlugins, materialize } from "./materialize.js"
+import { DISPLACED_RECORD_FILE } from "./paths.js"
 import { reconcilePluginRecords } from "./reconcile.js"
 import { loadRegistryForWrite, saveRegistry } from "./registry.js"
 import { denyEntry, executableComponents, grantEntry, skipEntry } from "./trust.js"
@@ -95,7 +97,12 @@ export function setEnabled(arg, enabled, options = {}) {
   report.warnings.push(...warnings)
   // spec 21: an uninstall surfaces every displaced original it can restore.
   // The holder teardown above is a takeover, which displaces nothing.
-  const restore = enabled ? [] : restoreDisplaced({ plugin: resolved.plugin })
+  // Spec 27 §3: a consumed record is pruned (`resolved` is the resolvePlugin
+  // result here, hence the alias)
+  const { lines: restore, resolved: pruned } = enabled
+    ? { lines: [], resolved: null }
+    : restoreDisplaced({ plugin: resolved.plugin })
+  if (pruned) writeJsonAtomic(DISPLACED_RECORD_FILE, `${JSON.stringify(pruned, null, 2)}\n`)
   return {
     marketplace: resolved.marketplace,
     plugin: resolved.plugin,

@@ -1,6 +1,6 @@
 // The trust flows of the /ocm TUI dialog (spec 10b): the prompt renders the
 // same component list the CLI prints before a trust decision (spec 07).
-import { componentRoot, denyTrust, executableComponents, grantTrust, readRegistry } from "./core.js"
+import { componentRoot, denyTrust, executableComponents, grantTrust, readRegistry, withRegistryLock } from "./core.js"
 import { NOTICE, message, toast } from "./ui-dialog.js"
 import { confirm } from "./ui-modals.js"
 
@@ -41,7 +41,7 @@ export async function trustFlow(api, name, back) {
     return
   }
   try {
-    const result = grantTrust(name)
+    const result = await withRegistryLock("ocm trust " + name + " (tui)", () => grantTrust(name))
     if (result.report?.warnings.length) toast(api, "warning", result.report.warnings.join("\n"))
     toast(api, "success", `marketplace "${name}" trusted to run code — ${NOTICE}`)
   } catch (err) {
@@ -57,7 +57,7 @@ export async function untrustFlow(api, name, back) {
     return
   }
   try {
-    const result = denyTrust(name)
+    const result = await withRegistryLock("ocm untrust " + name + " (tui)", () => denyTrust(name))
     if (result.report.warnings.length) toast(api, "warning", result.report.warnings.join("\n"))
     toast(api, "success", `marketplace "${name}" no longer trusted — ${NOTICE}`)
   } catch (err) {

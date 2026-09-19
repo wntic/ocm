@@ -3,9 +3,9 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { componentRoot, isGitRepo, readRegistry } from "../../loader/core.js"
+import { componentRoot, isGitRepo, readRegistry, registryWriterVersion, versionCompare } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
-import { installLoader, loaderStatus, reportTuiPlugin, type LoaderFileStatus } from "../loader"
+import { installLoader, loaderStatus, packageVersion, reportTuiPlugin, type LoaderFileStatus } from "../loader"
 import { materializeLinks } from "../install"
 import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OCM_REGISTRY_FILE } from "../paths"
 import { error, fixed, reportFindings, warning, type Finding } from "../findings"
@@ -29,6 +29,7 @@ export function doctor(fix: boolean): void {
   console.log("doctor")
   const findings: Finding[] = []
   const registry = readRegistry()
+  checkWriterVersion(findings)
   checkGitPath(findings)
   checkLoader(findings, fix)
   // a registry that cannot be honored must never be read as "nothing owns
@@ -47,6 +48,21 @@ export function doctor(fix: boolean): void {
   checkForbiddenPaths(registry, findings)
   for (const line of ocmPluginErrors()) findings.push(error(`${line} (ocm update)`))
   if (reportFindings(findings)) process.exitCode = 1
+}
+
+// spec 27 §4: the diagnostic surface of last resort runs especially when the
+// versions disagree — warn, and keep checking
+function checkWriterVersion(findings: Finding[]): void {
+  const writer = registryWriterVersion()
+  if (!writer) return
+  const self = packageVersion()
+  if (versionCompare(writer, self) <= 0) return
+  findings.push(
+    warning(
+      `this installation was last written by ocm ${writer}; you are running ${self}\n` +
+        "    upgrade with `npm i -g @wntic/ocm`, or run the newer ocm",
+    ),
+  )
 }
 
 function checkGitPath(findings: Finding[]): void {
@@ -103,11 +119,11 @@ function checkRegistryFile(findings: Finding[]): boolean {
   try {
     parsed = JSON.parse(raw)
   } catch {
-    findings.push(error(`${OCM_REGISTRY_FILE}: not valid JSON (ocm update)`))
+    findings.push(error(`${OCM_REGISTRY_FILE}: not valid JSON — restore it from a backup, or remove it and re-add your marketplaces`))
     return false
   }
   if (typeof parsed !== "object" || parsed === null || (parsed as Record<string, unknown>).version !== 2) {
-    findings.push(error(`${OCM_REGISTRY_FILE}: not a current v2 registry (ocm update)`))
+    findings.push(error(`${OCM_REGISTRY_FILE}: not a current v2 registry — restore it from a backup, or remove it and re-add your marketplaces`))
     return false
   }
   return true
@@ -127,11 +143,11 @@ function checkLegacyRegistryFile(findings: Finding[]): boolean {
   try {
     parsed = JSON.parse(raw)
   } catch {
-    findings.push(error(`${OCM_LEGACY_REGISTRY_FILE}: not valid JSON (ocm update)`))
+    findings.push(error(`${OCM_LEGACY_REGISTRY_FILE}: not valid JSON — restore it from a backup, or remove it and re-add your marketplaces`))
     return false
   }
   if (typeof parsed !== "object" || parsed === null) {
-    findings.push(error(`${OCM_LEGACY_REGISTRY_FILE}: not a JSON object (ocm update)`))
+    findings.push(error(`${OCM_LEGACY_REGISTRY_FILE}: not a JSON object — restore it from a backup, or remove it and re-add your marketplaces`))
     return false
   }
   return true

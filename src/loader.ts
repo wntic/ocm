@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { writeJsonAtomic } from "../loader/core.js"
 import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OPENCODE_PLUGINS_DIR, OPENCODE_TUI_CONFIG as TUI_CONFIG_FILE } from "./paths"
 
 const TUI_PLUGIN_ENTRY = "./ocm/ui.js"
@@ -61,9 +62,7 @@ function readTuiConfig(): Record<string, unknown> | undefined {
 }
 
 function writeTuiConfig(config: Record<string, unknown>): void {
-  const tmp = `${TUI_CONFIG_FILE}.ocm-tmp`
-  writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`)
-  renameSync(tmp, TUI_CONFIG_FILE)
+  writeJsonAtomic(TUI_CONFIG_FILE, `${JSON.stringify(config, null, 2)}\n`)
 }
 
 function warnTuiManual(reason: string): void {

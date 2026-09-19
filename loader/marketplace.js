@@ -1,5 +1,6 @@
 import { rmSync } from "node:fs"
 import { join, relative } from "node:path"
+import { writeJsonAtomic } from "./atomic.js"
 import { setSkillsPath } from "./config.js"
 import { collisionError, incumbentMarketplace } from "./collisions.js"
 import { restoreDisplaced } from "./displaced.js"
@@ -8,7 +9,7 @@ import { discoverMarketplace, discoveryError, readManifest } from "./manifest.js
 import { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
 import { limitRefusal, manifestRefusal } from "./limits.js"
 import { removeMcpKeys } from "./mcp.js"
-import { LINKS_DIR } from "./paths.js"
+import { DISPLACED_RECORD_FILE, LINKS_DIR } from "./paths.js"
 import { loadRegistryForWrite, saveRegistry } from "./registry.js"
 import { manifestName, normaliseMarketplaceName, parseSource, placeClone } from "./source.js"
 import { denyEntry, executableComponents, grantEntry } from "./trust.js"
@@ -144,8 +145,10 @@ export function removeMarketplace(name) {
   const warnings = []
   removeLinksFor(name, entry.dir)
   // spec 21: the restore pass runs after the links come down, so a displaced
-  // original returns to its path only when nothing now holds it
-  const restore = restoreDisplaced({ marketplace: name })
+  // original returns to its path only when nothing now holds it. Spec 27 §3:
+  // a consumed record is pruned so a later teardown stops re-reporting it
+  const { lines: restore, resolved } = restoreDisplaced({ marketplace: name })
+  if (resolved) writeJsonAtomic(DISPLACED_RECORD_FILE, `${JSON.stringify(resolved, null, 2)}\n`)
   const skillsWarning = setSkillsPath(join(LINKS_DIR, name, "skills"), false)
   if (skillsWarning) warnings.push(skillsWarning)
   // collision records never materialized, so their mcp keys are not ours to

@@ -1,6 +1,6 @@
 // The per-plugin flows of the /ocm TUI dialog (specs 10b, 22): the plugin
 // menu, install/uninstall, and the details view.
-import { readRegistry, setEnabled } from "./core.js"
+import { readRegistry, setEnabled, withRegistryLock } from "./core.js"
 import { NOTICE, backView, componentSummary, fit, message, pushView, select, toast } from "./ui-dialog.js"
 import { confirm } from "./ui-modals.js"
 import { updateFlow } from "./ui-marketplaces.js"
@@ -90,7 +90,7 @@ async function togglePlugin(api, marketplace, name, back) {
     return
   }
   try {
-    const result = setEnabled(arg, enabling)
+    const result = await withRegistryLock(`ocm ${enabling ? "install" : "uninstall"} (tui)`, () => setEnabled(arg, enabling))
     if (result.disagreement) toast(api, "warning", result.disagreement)
     if (result.report.warnings.length) toast(api, "warning", result.report.warnings.join("\n"))
     const restore = result.restore.length ? `${result.restore.join("\n")}\n` : ""

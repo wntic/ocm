@@ -10,6 +10,7 @@ import {
   pullRepo,
   readRegistry,
   removeMarketplace,
+  withRegistryLock,
   syncAll,
 } from "./core.js"
 import { NOTICE, backView, componentSummary, message, pushView, select, toast } from "./ui-dialog.js"
@@ -95,14 +96,16 @@ export async function updateFlow(api, name, back) {
   }
   busy(api, `Updating ${name}...`)
   try {
-    let changed = false
-    if (entry.local === false) {
-      const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null, entry.url)
-      if (!pull.ok) throw new Error(pull.output)
-      changed = pull.changed
-    }
-    const root = componentRoot(entry)
-    const links = materialize(name, root, { enabled: enabledPlugins(entry, root) })
+    const { changed, links } = await withRegistryLock(`ocm update ${name} (tui)`, async () => {
+      let changed = false
+      if (entry.local === false) {
+        const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null, entry.url)
+        if (!pull.ok) throw new Error(pull.output)
+        changed = pull.changed
+      }
+      const root = componentRoot(entry)
+      return { changed, links: materialize(name, root, { enabled: enabledPlugins(entry, root) }) }
+    })
     if (links.warnings.length) toast(api, "warning", links.warnings.join("\n"))
     const mutated = changed || links.created > 0
     toast(api, "success", `${name}: ${changed ? "updated to a new revision" : "already up to date"}${mutated ? ` — ${NOTICE}` : ""}`)
@@ -131,7 +134,7 @@ async function removeFlow(api, name, back) {
     return
   }
   try {
-    const result = removeMarketplace(name)
+    const result = await withRegistryLock(`ocm remove ${name} (tui)`, () => removeMarketplace(name))
     if (result.warnings.length) toast(api, "warning", result.warnings.join("\n"))
     const restore = result.restore.length ? `${result.restore.join("\n")}\n` : ""
     toast(api, "success", `${restore}removed marketplace "${name}" — ${NOTICE}`)
@@ -148,7 +151,7 @@ async function pinFlow(api, name, back) {
     return
   }
   try {
-    const result = await pinMarketplace(name, ref || null)
+    const result = await withRegistryLock(`ocm pin ${name} (tui)`, () => pinMarketplace(name, ref || null))
     toast(api, "success", `marketplace "${name}" ${result.cleared ? "unpinned" : `pinned to ${result.ref}`} — ${NOTICE}`)
   } catch (err) {
     toast(api, "error", message(err))
@@ -165,7 +168,7 @@ export async function addMarketplaceFlow(api, back) {
   busy(api, `Adding ${source}...`)
   let result
   try {
-    result = await addMarketplace(source)
+    result = await withRegistryLock("ocm add (tui)", () => addMarketplace(source))
   } catch (err) {
     // a refused add still owes the user the diagnostics behind the refusal
     if (Array.isArray(err.warnings) && err.warnings.length) toast(api, "warning", err.warnings.join("\n"))
@@ -174,7 +177,7 @@ export async function addMarketplaceFlow(api, back) {
   }
   if (result.warnings.length) toast(api, "warning", result.warnings.join("\n"))
   if (result.trustComponents.length && (await confirm(api, result.name, trustMessage(result.name, result.dir, result.trustComponents)))) {
-    const second = grantTrust(result.name)
+    const second = await withRegistryLock(`ocm trust ${result.name} (tui)`, () => grantTrust(result.name))
     if (second.report?.warnings.length) toast(api, "warning", second.report.warnings.join("\n"))
   }
   toast(api, "success", `added marketplace "${result.name}" — ${NOTICE}`)

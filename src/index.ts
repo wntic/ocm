@@ -1,8 +1,9 @@
-import { accessSync, constants } from "node:fs"
+import { accessSync, constants, existsSync } from "node:fs"
 import { basename } from "node:path"
+import { registryWriterVersion, versionCompare, withRegistryLock } from "../loader/core.js"
 import { installLoader, migrateLegacyLayout, packageVersion, reportTuiPlugin, uninstallLoader } from "./loader"
-import { migrateInstallation } from "./migrate"
-import { OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG } from "./paths"
+import { migrateInstallation, migrationNeeded } from "./migrate"
+import { OCM_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG } from "./paths"
 import { add, pin, remove } from "./commands/marketplace"
 import { update } from "./commands/update"
 import { install, scan, setMode, uninstall } from "./commands/plugins"
@@ -99,11 +100,37 @@ function preflightWritable(files: string[]): void {
   }
 }
 
+// spec 27 §4: a home written by a newer ocm refuses the next downgrade
+// before any write — forward-only, published pre-0.6 binaries have no guard
+function refuseNewerHome(): void {
+  const writer = registryWriterVersion()
+  if (!writer) return
+  const self = packageVersion()
+  if (versionCompare(writer, self) <= 0) return
+  throw new Error(
+    `error: this installation was last written by ocm ${writer}; you are running ${self}\n` +
+      "  upgrade with `npm i -g @wntic/ocm`, or run the newer ocm",
+  )
+}
+
+// the §4 guard runs before the §1 lock: a refusal writes nothing, takes no
+// lock, creates nothing
+async function mutating<T>(command: string, fn: () => T | Promise<T>): Promise<T> {
+  refuseNewerHome()
+  return withRegistryLock(command, fn)
+}
+
 export async function main(argv: string[]): Promise<void> {
-  migrateLegacyLayout()
-  migrateInstallation()
   const [command, ...rest] = argv
   const { positional, flags, values } = parseArgs(rest)
+  // migrations run under the lock whatever command triggered them, including
+  // a read-only one; an unneeded migration never touches the lock
+  if (migrationNeeded()) {
+    await withRegistryLock(command ? `ocm ${command}` : "ocm", () => {
+      migrateLegacyLayout()
+      migrateInstallation()
+    })
+  }
 
   switch (command) {
     case undefined:
@@ -118,25 +145,29 @@ export async function main(argv: string[]): Promise<void> {
       break
     case "init":
       preflightWritable([OPENCODE_TUI_CONFIG])
-      if (installLoader()) reportTuiPlugin()
+      await mutating("ocm init", () => {
+        if (installLoader()) reportTuiPlugin()
+      })
       break
     case "add":
       requireArg(positional[0], "missing marketplace url or path")
       preflightWritable([OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG])
-      await add(positional[0]!, { explicit: flags.has("explicit"), name: values.name, ref: values.ref, trust: trustFlag(flags) })
+      await mutating("ocm add", () =>
+        add(positional[0]!, { explicit: flags.has("explicit"), name: values.name, ref: values.ref, trust: trustFlag(flags) }))
       break
     case "remove":
       requireArg(positional[0], "missing marketplace name")
       preflightWritable([OPENCODE_GLOBAL_CONFIG])
-      remove(positional[0]!)
+      await mutating("ocm remove", () => remove(positional[0]!))
       break
     case "update":
       preflightWritable([OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG])
-      await update(positional[0], { quiet: flags.has("quiet"), json: flags.has("json"), trust: trustFlag(flags) })
+      await mutating("ocm update", () =>
+        update(positional[0], { quiet: flags.has("quiet"), json: flags.has("json"), trust: trustFlag(flags) }))
       break
     case "pin":
       requireArg(positional[0], "missing marketplace name")
-      await pin(positional[0]!, positional[1], flags.has("clear"))
+      await mutating("ocm pin", () => pin(positional[0]!, positional[1], flags.has("clear")))
       break
     case "list":
       list({ all: flags.has("all"), json: flags.has("json") })
@@ -153,28 +184,28 @@ export async function main(argv: string[]): Promise<void> {
     case "enable":
       requireArg(positional[0], "missing plugin name")
       preflightWritable([OPENCODE_GLOBAL_CONFIG])
-      install(positional[0]!, flags.has("force"))
+      await mutating(`ocm ${command}`, () => install(positional[0]!, flags.has("force")))
       break
     case "uninstall":
     case "disable":
       requireArg(positional[0], "missing plugin name")
       preflightWritable([OPENCODE_GLOBAL_CONFIG])
-      uninstall(positional[0]!)
+      await mutating(`ocm ${command}`, () => uninstall(positional[0]!))
       break
     case "mode":
       requireArg(positional[0], "missing marketplace name")
       requireArg(positional[1], "missing mode (auto or explicit)")
-      setMode(positional[0]!, positional[1]!)
+      await mutating("ocm mode", () => setMode(positional[0]!, positional[1]!))
       break
     case "trust":
       requireArg(positional[0], "missing marketplace name")
       preflightWritable([OPENCODE_GLOBAL_CONFIG])
-      await trust(positional[0]!, flags.has("yes"))
+      await mutating("ocm trust", () => trust(positional[0]!, flags.has("yes")))
       break
     case "untrust":
       requireArg(positional[0], "missing marketplace name")
       preflightWritable([OPENCODE_GLOBAL_CONFIG])
-      await untrust(positional[0]!)
+      await mutating("ocm untrust", () => untrust(positional[0]!))
       break
     case "scan":
       requireArg(positional[0], "missing url, path or plugin")
@@ -183,14 +214,19 @@ export async function main(argv: string[]): Promise<void> {
     case "validate":
       validate(positional[0])
       break
-    case "doctor":
-      if (flags.has("fix")) preflightWritable([OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG])
-      doctor(flags.has("fix"))
+    case "doctor": {
+      const fix = flags.has("fix")
+      if (fix) preflightWritable([OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG])
+      // the not-installed refusal happens inside doctor() before any write —
+      // the lock is taken only once the home exists
+      if (fix && existsSync(OCM_DIR)) await mutating("ocm doctor --fix", () => doctor(true))
+      else doctor(fix)
       break
+    }
     case "loader":
       if (positional[0] === "uninstall") {
         preflightWritable([OPENCODE_TUI_CONFIG])
-        uninstallLoader()
+        await mutating("ocm loader uninstall", () => uninstallLoader())
       } else {
         throw new Error('unknown loader command, expected "ocm loader uninstall"')
       }

@@ -357,6 +357,12 @@ re-installing is instant and offline.
   `doctor --fix` write `tui.json`; every mutation that materializes or
   removes a skill or an MCP server writes `opencode.json`. So a read-only
   `tui.json` stops an `add` and lets an `install` through — by design.
+- **One writer at a time.** Every mutating command takes an exclusive lock
+  at `~/.config/opencode/ocm/registry.lock` and holds it for the whole
+  command; a second ocm waits up to 10 s, then refuses naming the holder's
+  pid. The loader's startup sync never waits — it skips entirely and stays
+  due for the next start. A lock whose holder is gone, older than 10
+  minutes, or unreadable is broken with a warning.
 
 ## Trust
 
