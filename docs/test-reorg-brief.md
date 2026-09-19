@@ -116,6 +116,12 @@ lands:
 - `.opencode/skills/ocm-architecture/SKILL.md` — one line describes `test/` as
   "harness.mjs plus one phaseNN-*.mjs per spec".
 
+Every test file also carries a header comment citing `docs/specs/NN-….md`.
+Those briefs are no longer in the repository — they live untracked in
+`.work/briefs/`. While you are moving each test body, change the citation to
+name the behaviour instead of the path (`// trust: an update that changes a
+trusted file blocks it`). Do not add new commentary beyond that.
+
 Keep both within their existing budgets. Do not add new guidance while you are
 in there; this is a naming update, not a rewrite.
 

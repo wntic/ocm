@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Ask the real opencode binary what it resolves from a scratch config directory
 # containing this repository's loader files. This is the executable form of
-# docs/specs/00-contract.md: when opencode changes, this is what notices.
+# docs/opencode-contract.md: when opencode changes, this is what notices.
 #
 #   ./scripts/oc-probe.sh            probe and report
 #   ./scripts/oc-probe.sh --keep     leave the scratch directory in place

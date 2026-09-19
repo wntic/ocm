@@ -1,5 +1,11 @@
 # E2E findings — round 3 (2026-09-15)
 
+> **Brief paths in this document** (`docs/specs/NN-…`) refer to briefs that
+> are no longer in the repository: they live untracked in `.work/briefs/`,
+> and in git history up to the commit that removed them. See
+> [project.md](./project.md).
+
+
 Round 3 against ocm v0.5.0 (repo HEAD `4eb4df0`, "Mark v0.5.0 as
 published"), per [the round-3 plan](./e2e-test-plan-round3.md). Part A
 regression gate (one step per round-2 fix), Part B functional re-run, Part

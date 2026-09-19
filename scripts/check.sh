@@ -67,7 +67,7 @@ if [ "${#TEST_FILES[@]}" -gt 0 ]; then
     FAIL=1
   fi
 else
-  echo "tests: none yet (test/*.mjs is defined by docs/specs/00-contract.md)"
+  echo "tests: none yet (test/*.mjs — see the ocm-testing skill)"
 fi
 
 if [ "${1:-}" != "--no-probe" ]; then

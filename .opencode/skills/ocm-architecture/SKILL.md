@@ -26,7 +26,7 @@ schema/                JSON Schema for marketplace.json and plugin.json
 template/              a working example marketplace
 test/                  harness.mjs plus one phaseNN-*.mjs per spec
 scripts/               dev tooling: check.sh, oc-probe.sh
-docs/specs/            the specs being implemented
+.work/briefs/          the briefs being implemented (untracked)
 docs/plans/            per-spec task breakdowns (generated, gitignored)
 ```
 

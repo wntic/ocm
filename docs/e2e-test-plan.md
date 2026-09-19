@@ -1,5 +1,11 @@
 # Manual E2E test plan — ocm
 
+> **Brief paths in this document** (`docs/specs/NN-…`) refer to briefs that
+> are no longer in the repository: they live untracked in `.work/briefs/`,
+> and in git history up to the commit that removed them. See
+> [project.md](./project.md).
+
+
 Purpose: find the problems agents cannot find — wording, ordering, surprise,
 missing feedback, and anything that only shows up when a human sits in front
 of the opencode TUI and tries to *use* a plugin.

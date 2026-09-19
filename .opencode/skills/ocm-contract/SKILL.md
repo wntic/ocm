@@ -6,7 +6,7 @@ description: The verified facts about how opencode loads plugins, commands, agen
 # The opencode contract
 
 Verified against opencode **1.18.20** and source `anomalyco/opencode@d6855b6`.
-Full detail with citations: `docs/specs/00-contract.md`. Never contradict this
+Full detail with citations: `docs/opencode-contract.md`. Never contradict this
 file from memory or from opencode's own documentation — where the docs and a
 probe disagree, the probe is right.
 

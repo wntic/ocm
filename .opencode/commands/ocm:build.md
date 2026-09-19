@@ -6,7 +6,7 @@ agent: lead
 Implement the brief at `$ARGUMENTS` end to end.
 
 `$ARGUMENTS` is a path to a brief. A bare number is shorthand for
-`docs/specs/<NN>-*.md` while the specs still exist.
+`.work/briefs/<NN>-*.md`.
 
 Repository state:
 

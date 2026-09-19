@@ -1,3 +1,6 @@
 node_modules/
 *.log
 .DS_Store
+
+# working material: briefs, scratch. Never tracked, never pushed.
+.work/

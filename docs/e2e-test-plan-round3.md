@@ -1,5 +1,11 @@
 # Manual E2E test plan — round 3
 
+> **Brief paths in this document** (`docs/specs/NN-…`) refer to briefs that
+> are no longer in the repository: they live untracked in `.work/briefs/`,
+> and in git history up to the commit that removed them. See
+> [project.md](./project.md).
+
+
 Target: ocm at `main` after specs 16–26 (v0.3.0 → v0.5.0).
 Predecessors: [round-1 plan](./e2e-test-plan.md),
 [round-1 findings](./e2e-findings.md),

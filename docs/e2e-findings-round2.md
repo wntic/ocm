@@ -1,5 +1,11 @@
 # E2E findings — round 2 (2026-09-13)
 
+> **Brief paths in this document** (`docs/specs/NN-…`) refer to briefs that
+> are no longer in the repository: they live untracked in `.work/briefs/`,
+> and in git history up to the commit that removed them. See
+> [project.md](./project.md).
+
+
 Second round: a manual start (Suites 1–2, findings F1–F6) plus seven parallel
 sub-agents covering Suites 1–10 and 12 against the real opencode binary.
 Raw per-agent logs with verbatim output are in `docs/e2e-round2/a1.md` …
