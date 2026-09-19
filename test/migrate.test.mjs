@@ -1,10 +1,6 @@
-// Phase 13 — docs/specs/13-packaging.md: one test per numbered item. The
-// migration is "run automatically by any `ocm` command and by `ocm doctor`",
-// so the tests drive bin/ocm.ts (`ocm list`) against a fake home built in the
-// pre-spec-01/02/03/08 layout and assert the on-disk end state — the expected
-// interface is the migration hook src/index.ts already calls before dispatch,
-// extended to cover the whole spec 13 table. Invariants: config safety and
-// ownership in 1, idempotence in 2, no plugin-load errors in 1.
+// Migration and packaging: the legacy home layout migrates
+// automatically, and the published bin resolves.
+
 import { spawnSync } from "node:child_process"
 import { lstatSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
@@ -12,9 +8,14 @@ import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
 import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome } from "./harness.mjs"
 
+// Helpers shared verbatim by the absorbed files below.
+
 const OCM_BIN = fileURLToPath(new URL("../bin/ocm.ts", import.meta.url))
+
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url))
+
 const LOADER_DIR = join(REPO_ROOT, "loader")
+
 const PACKAGE = join(REPO_ROOT, "package.json")
 
 function ocm(home, ...args) {
@@ -35,11 +36,13 @@ function writeTree(dir, tree) {
 }
 
 const cfg = (home) => join(home, ".config", "opencode")
+
 const registryFile = (home) => join(cfg(home), "ocm", "registry.json")
+
 const MP = "mp--one"
+
 const ADDED_AT = "2026-09-01T10:00:00.000Z"
-// the pre-08 global stamp: one throttle timestamp shared by all marketplaces
-const STAMP_AT = "2026-09-08T09:00:00.000Z"
+
 const SKILL = (name) => `---\nname: ${name}\ndescription: ${name} guidance\n---\n\n# ${name}\n\nUse the house style.\n`
 
 function v1Registry(home) {
@@ -61,6 +64,11 @@ function v1Registry(home) {
     },
   }
 }
+
+// migration and packaging — absorbed from test/phase13-packaging.mjs
+{
+// the pre-08 global stamp: one throttle timestamp shared by all marketplaces
+const STAMP_AT = "2026-09-08T09:00:00.000Z"
 
 // A home in the layout the migration starts from: legacy loader files in
 // plugins/, a v1 registry with absolute sources, the global sync stamp, one
@@ -243,3 +251,4 @@ phase("4. the published package's bin resolves to a working ocm on a clean insta
   if (result.status !== 0) throw new Error(`the bin entry ${binPath} exited ${result.status} under a clean home:\n${result.stderr}`)
   if (!result.stdout.includes("ocm")) throw new Error(`expected the ocm help text from ${binPath}:\n${result.stdout}`)
 })
+}

@@ -57,7 +57,7 @@ fi
 step "tests"
 TEST_FILES=()
 if [ -d test ]; then
-  for f in test/*.mjs; do [ -e "$f" ] && TEST_FILES+=("$f"); done
+  for f in test/*.test.mjs; do [ -e "$f" ] && TEST_FILES+=("$f"); done
 fi
 if [ "${#TEST_FILES[@]}" -gt 0 ]; then
   if "${TEST_CMD[@]}" "${TEST_FILES[@]}"; then

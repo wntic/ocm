@@ -1,7 +1,6 @@
-// Phase 02 — docs/specs/02-registry.md: one test per numbered item in its
-// Tests section, plus the normalizeRegistry mirror in loader/core.js. The
-// module under test runs in a spawned child under the fake $HOME; no probe —
-// this spec changes no plugin files.
+// The on-disk registry: its format, its atomic save, and the
+// normalizeRegistry mirror in loader/core.js.
+
 import { spawnSync } from "node:child_process"
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
@@ -9,7 +8,10 @@ import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
 import { assertAbsent, withFakeHome } from "./harness.mjs"
 
+// Helpers shared verbatim by the absorbed files below.
+
 const REGISTRY_MODULE = fileURLToPath(new URL("../src/registry.ts", import.meta.url))
+
 const CORE_MODULE = fileURLToPath(new URL("../loader/core.js", import.meta.url))
 
 // Applies [name, ...args] operations to a module in the child and prints the
@@ -46,7 +48,9 @@ function cfg(home) {
 }
 
 const registryFile = (home) => join(cfg(home), "ocm", "registry.json")
+
 const legacyRegistryFile = (home) => join(cfg(home), "plugins", "ocm-registry.json")
+
 const managedDir = (home, name) => join(home, ".cache", "ocm", "marketplaces", name)
 
 function writeRegistry(path, registry) {
@@ -57,6 +61,8 @@ function writeRegistry(path, registry) {
 
 const ADDED_AT = "2026-09-01T10:00:00.000Z"
 
+// the registry: format, atomic save, the normalizeRegistry mirror — absorbed from test/phase02-registry.mjs
+{
 // v1 as stored today: top-level `path` duplicate of `url`, absolute sources.
 function v1Registry(home) {
   const dir = managedDir(home, "example--mp")
@@ -244,3 +250,4 @@ test("mirror: loader/core.js normalizes v1 and unknown versions like src/registr
     }
   })
 })
+}

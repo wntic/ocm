@@ -24,7 +24,7 @@ loader/                installed into the user's opencode config
   ui.js                  the TUI plugin     -> ~/.config/opencode/ocm/
 schema/                JSON Schema for marketplace.json and plugin.json
 template/              a working example marketplace
-test/                  harness.mjs plus one phaseNN-*.mjs per spec
+test/                  harness.mjs plus one <area>.test.mjs per behaviour area
 scripts/               dev tooling: check.sh, oc-probe.sh
 .work/briefs/          the briefs being implemented (untracked)
 docs/plans/            per-spec task breakdowns (generated, gitignored)

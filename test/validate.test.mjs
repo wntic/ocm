@@ -1,25 +1,19 @@
-// Phase 24 — docs/specs/24-validate-hardening.md: one test per numbered item.
-// Validate refuses to run nowhere instead of blessing the wrong directory
-// (§1), error messages name the rule that was broken rather than a wrong
-// reason (§2), and the README states every rule validate enforces (§3). The
-// four invariants ride item 3, the one test that performs a real add: config
-// safety and ownership around that add and the remove after it, idempotence
-// across an update of an unchanged marketplace, no plugin-load errors via the
-// probe. Item 5 is a regression guard — an empty plugins/ dir is valid today
-// and must stay that way.
+// Validate: linting a marketplace repository for its author.
+
 import { spawnSync } from "node:child_process"
-import { lstatSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, mkdirSync } from "node:fs"
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync, mkdtempSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { opencodeProbe, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome } from "./harness.mjs"
+
+// Helpers shared verbatim by the absorbed files below.
 
 const OCM_BIN = fileURLToPath(new URL("../bin/ocm.ts", import.meta.url))
-const README = fileURLToPath(new URL("../README.md", import.meta.url))
 
-function ocm(home, args, options = {}) {
+function ocm(home, ...args) {
   const result = spawnSync(process.execPath, [OCM_BIN, ...args], {
-    env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 120_000, cwd: options.cwd,
+    env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 120_000,
   })
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
 }
@@ -34,17 +28,185 @@ function writeTree(dir, tree) {
   }
 }
 
+function gitRepo(dir, tree) {
+  writeTree(dir, tree)
+  for (const args of [["init", "-b", "main"], ["add", "-A"], ["-c", "user.email=ocm@test", "-c", "user.name=ocm", "commit", "-m", "fixture"]]) {
+    const result = spawnSync("git", args, { cwd: dir, encoding: "utf8" })
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed in ${dir}: ${result.stderr}`)
+  }
+}
+
 const cfg = (home) => join(home, ".config", "opencode")
+
 const registryFile = (home) => join(cfg(home), "ocm", "registry.json")
-const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8"))
-const commandLink = (home, plugin, file) => join(cfg(home), "commands", `${plugin}:${file}`)
+
+const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
+
+const SKILL = (name, extra = "") => `---\nname: ${name}\ndescription: ${name} guidance\n${extra}---\n\n# ${name}\n\nBody.\n`
+
+const JS_PLUGIN = 'export default { id: "adw-notify", server: async () => ({}) }\n'
+
+const USER_PLUGIN = 'export default { id: "mine", server: async () => ({}) }\n'
+
+const MCP = { db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } }
+
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`
+
+const manifest = (plugins) => json({ name: "mp", plugins })
+
+const LONG = "a".repeat(65)
+
+const README = fileURLToPath(new URL("../README.md", import.meta.url))
+
+const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8"))
+
+const commandLink = (home, plugin, file) => join(cfg(home), "commands", `${plugin}:${file}`)
+
 function mcpKeys(home) {
   try {
     return JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8")).mcp ?? {}
   } catch {
     return {}
   }
+}
+
+// phase12-validate-doctor.mjs (validate half) — absorbed from test/phase12-validate-doctor.mjs
+{
+// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
+function assertResolves(dest, source) {
+  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
+  expect(realpathSync(dest)).toBe(realpathSync(source))
+}
+
+// a finding line in the spec 12 format: "  error   plugins/foo/...: message"
+function finding(output, severity, ...needles) {
+  const line = output.split("\n").find((l) => new RegExp(`^\\s*${severity}\\b`).test(l) && needles.every((n) => l.includes(n)))
+  if (!line) throw new Error(`expected a ${severity} finding containing ${JSON.stringify(needles)}:\n${output}`)
+}
+
+// spec 19: every valid plugin carries a plugin.json with a description; the
+// ERROR_CASES below stay manifest-less on purpose — phase 19 owns that error
+const PLUGIN_JSON = json({ description: "demo plugin" })
+
+// the clean fixture must produce zero findings, so its manifest also pins the
+// $schema the warning asks for
+const CLEAN_PLUGIN_JSON = json({ description: "demo plugin", $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json" })
+
+// one fixture per error class in the spec's list: [label, tree, needles]
+const ERROR_CASES = [
+  ["plugin-json", { plugins: { bad: { "plugin.json": "{ not json\n", commands: { "work.md": COMMAND } } } }, ["plugin.json", "invalid JSON at position"]],
+  ["marketplace-json", { "marketplace.json": "{ not json\n", plugins: { tool: { commands: { "work.md": COMMAND } } } }, ["marketplace.json", "invalid JSON"]],
+  ["plugin-schema", { plugins: { bad: { "plugin.json": json({ tags: "nope" }), commands: { "work.md": COMMAND } } } }, ["plugin.json", "tags"]],
+  ["marketplace-schema", { "marketplace.json": json({ plugins: "nope" }), plugins: { tool: { commands: { "work.md": COMMAND } } } }, ["marketplace.json", "plugins"]],
+  ["dir-name", { plugins: { bad_name: { commands: { "work.md": COMMAND } } } }, ["bad_name"]],
+  ["dir-length", { plugins: { [LONG]: { commands: { "work.md": COMMAND } } } }, [LONG]],
+  ["name-mismatch", { plugins: { mismatch: { "plugin.json": json({ name: "other" }), commands: { "work.md": COMMAND } } } }, ["mismatch", "other"]],
+  ["skill-no-frontmatter", { plugins: { nofm: { skills: { one: { "SKILL.md": "# No frontmatter\n\nBody.\n" } } } } }, ["nofm", "SKILL.md"]],
+  ["skill-no-name", { plugins: { noname: { skills: { one: { "SKILL.md": "---\ndescription: guidance\n---\n\nBody.\n" } } } } }, ["SKILL.md", 'frontmatter has no "name"']],
+  ["skill-no-description", { plugins: { nodesc: { skills: { one: { "SKILL.md": "---\nname: one\n---\n\nBody.\n" } } } } }, ["SKILL.md", "description"]],
+  ["skill-long-description", { plugins: { longdesc: { skills: { one: { "SKILL.md": `---\nname: one\ndescription: ${"d".repeat(1025)}\n---\n\nBody.\n` } } } } }, ["SKILL.md", "description"]],
+  ["skill-collision", { plugins: { dup: { skills: { one: { "SKILL.md": SKILL("same") }, two: { "SKILL.md": SKILL("same") } } } } }, ["one", "two", "same"]],
+  ["command-collision", { plugins: { clash: { commands: { "x.md": COMMAND }, command: { "x.md": COMMAND } } } }, ["clash", "x.md"]],
+  ["empty-body", { plugins: { empty: { commands: { "empty.md": "---\ndescription: nothing follows\n---\n" } } } }, ["empty.md"]],
+  ["wrong-export", { plugins: { badexp: { plugin: { "setup.js": 'export default { id: "x", setup: async () => ({}) }\n' }, commands: { "work.md": COMMAND } } } }, ["setup.js"]],
+  ["tui-export", { plugins: { tuiexp: { plugin: { "ui.js": 'export default { id: "x", tui: async () => ({}) }\n' }, commands: { "work.md": COMMAND } } } }, ["ui.js", "tui"]],
+  ["mcp-not-object", { plugins: { badmcp: { "mcp.json": "[]\n", commands: { "work.md": COMMAND } } } }, ["mcp.json"]],
+  ["mcp-missing-type", { plugins: { notype: { "mcp.json": json({ db: { command: ["echo"] } }), commands: { "work.md": COMMAND } } } }, ["mcp.json", "db"]],
+  ["source-unresolved", { "marketplace.json": manifest([{ name: "ghost", source: "./plugins/ghost" }]), plugins: { tool: { commands: { "work.md": COMMAND } } } }, ["ghost"]],
+  ["source-escapes", { "marketplace.json": manifest([{ name: "outside", source: "../outside" }]), plugins: { tool: { commands: { "work.md": COMMAND } } } }, ["../outside"]],
+]
+
+// one fixture per warning class: { label, tree, warnings, absent? }
+const WARNING_CASES = [
+  { label: "non-portable-frontmatter", tree: { plugins: { adw: { "plugin.json": PLUGIN_JSON, skills: { style: { "SKILL.md": SKILL("style", "allowed-tools: Bash\n") } } } } }, warnings: [["SKILL.md", 'non-portable frontmatter "allowed-tools"']] },
+  { label: "plugin-root-ref", tree: { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: {
+    "bad.md": '---\ndescription: bad reference\n---\n\npython3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_report.py"\n',
+    "good.md": '---\ndescription: good reference\n---\n\npython3 "${CLAUDE_PLUGIN_ROOT}/plugins/adw/scripts/run_report.py"\n',
+  } } } }, warnings: [["bad.md", "CLAUDE_PLUGIN_ROOT"]], absent: [["good.md"]] },
+  { label: "version-disagrees", tree: { "marketplace.json": manifest([{ name: "baz", source: "./plugins/baz", version: "1.0.0" }]), plugins: { baz: { "plugin.json": json({ version: "1.1.0", description: "demo plugin" }), commands: { "work.md": COMMAND } } } }, warnings: [["version disagrees", "1.0.0", "1.1.0"]] },
+  { label: "command-no-frontmatter", tree: { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "plain.md": "# Just markdown\n" } } } }, warnings: [["plain.md"]] },
+  { label: "typo-dirs", tree: { plugins: { typodirs: { "plugin.json": PLUGIN_JSON, skills: { one: { "SKILL.md": SKILL("one") } }, skill: { two: { "SKILL.md": SKILL("two") } } } } }, warnings: [["typodirs", "skill"]] },
+  { label: "typo-files", tree: { plugins: { typos: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND }, "plugin.ts": "// typo\n", "SKILLS.md": "# typo\n", "Skill.md": "# typo\n" } } }, warnings: [["plugin.ts"], ["SKILLS.md"], ["Skill.md"]] },
+  { label: "shell-substitution", tree: { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "shell.md": "---\ndescription: shell out\n---\n\nRun `!git status --porcelain` first.\n" } } } }, warnings: [["shell.md"]] },
+]
+
+phase("1. one fixture per error class and per warning class, asserting the exact finding line and the exit code; a clean marketplace exits 0 with only the header", async (home) => {
+  for (const [label, tree, needles] of ERROR_CASES) {
+    const dir = join(home, label)
+    writeTree(dir, tree)
+    const result = ocm(home, "validate", dir)
+    const output = `${result.stdout}\n${result.stderr}`
+    if (result.status !== 1) throw new Error(`validate ${label} exited ${result.status}, expected 1:\n${output}`)
+    finding(output, "error", ...needles)
+  }
+  // not fail-fast: every finding is reported, with a summary line
+  const both = join(home, "err-both")
+  writeTree(both, { plugins: {
+    noname: { skills: { one: { "SKILL.md": "---\ndescription: guidance\n---\n\nBody.\n" } } },
+    nodesc: { skills: { one: { "SKILL.md": "---\nname: one\n---\n\nBody.\n" } } },
+  } })
+  const bothResult = ocm(home, "validate", both)
+  const bothOutput = `${bothResult.stdout}\n${bothResult.stderr}`
+  if (bothResult.status !== 1) throw new Error(`validate err-both exited ${bothResult.status}, expected 1:\n${bothOutput}`)
+  finding(bothOutput, "error", "noname", 'frontmatter has no "name"')
+  finding(bothOutput, "error", "nodesc", "description")
+  expect(bothOutput).toMatch(/^\d+ errors?, \d+ warnings?$/m)
+  for (const { label, tree, warnings, absent } of WARNING_CASES) {
+    const dir = join(home, label)
+    writeTree(dir, tree)
+    const result = ocm(home, "validate", dir)
+    const output = `${result.stdout}\n${result.stderr}`
+    if (result.status !== 0) throw new Error(`validate ${label} exited ${result.status}, expected 0:\n${output}`)
+    for (const needles of warnings) finding(output, "warning", ...needles)
+    for (const needles of absent ?? []) {
+      if (output.split("\n").some((l) => /^\s*(error|warning)\b/.test(l) && needles.every((n) => l.includes(n)))) {
+        throw new Error(`validate ${label}: expected no finding matching ${JSON.stringify(needles)}:\n${output}`)
+      }
+    }
+  }
+  // a marketplace name colliding with one already added on this machine
+  writeTree(join(home, "taken"), { plugins: { a: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } } } })
+  expect(ocm(home, "add", join(home, "taken")).status).toBe(0)
+  const collide = join(home, "name-collide")
+  writeTree(collide, { "marketplace.json": json({ name: "taken", plugins: [{ name: "tool", source: "./plugins/tool" }] }), plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  const colliding = ocm(home, "validate", collide)
+  const collideOutput = `${colliding.stdout}\n${colliding.stderr}`
+  if (colliding.status !== 0) throw new Error(`validate name-collide exited ${colliding.status}, expected 0:\n${collideOutput}`)
+  finding(collideOutput, "warning", "taken")
+  // clean: exit 0, the header and nothing else
+  const clean = join(home, "clean")
+  writeTree(clean, { plugins: { tool: { "plugin.json": CLEAN_PLUGIN_JSON, commands: { "work.md": COMMAND }, skills: { one: { "SKILL.md": SKILL("one") } } } } })
+  const ok = ocm(home, "validate", clean)
+  if (ok.status !== 0) throw new Error(`validate clean exited ${ok.status}, expected 0:\n${ok.stdout}\n${ok.stderr}`)
+  const header = `${ok.stdout}\n${ok.stderr}`.trim()
+  if (header !== `validate ${clean}` && header !== `validate ${realpathSync(clean)}`) {
+    throw new Error(`expected only the header "validate ${clean}", got:\n${header}`)
+  }
+}, 240_000)
+
+phase("2. validate rejects YAML that opencode's sanitizer would have rescued", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: { commands: {
+    "loose.md": "---\ndescription: do it: now\n---\n\nBody.\n",
+    "quoted.md": "---\ndescription: \"do it: now\"\n---\n\nBody.\n",
+  } } } })
+  const result = ocm(home, "validate", mp)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 1) throw new Error(`validate mp exited ${result.status}, expected 1:\n${output}`)
+  finding(output, "error", "loose.md")
+  if (output.split("\n").some((l) => /^\s*(error|warning)\b/.test(l) && l.includes("quoted.md"))) {
+    throw new Error(`the quoted form parses strictly and must not be flagged:\n${output}`)
+  }
+})
+}
+
+// validate hardening: refuse to run nowhere, name the broken rule — absorbed from test/phase24-validate-hardening.mjs
+{
+function ocm(home, args, options = {}) {
+  const result = spawnSync(process.execPath, [OCM_BIN, ...args], {
+    env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 120_000, cwd: options.cwd,
+  })
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
 }
 
 // a spec 12 finding line: "  warning plugins/foo/...: message"
@@ -54,10 +216,9 @@ function finding(output, severity, ...needles) {
   return line
 }
 
-const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 // frontmatter but no body: the planted error-class defect for item 2
 const EMPTY_BODY = "---\ndescription: does nothing\n---\n\n"
-const MCP = { db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } }
+
 // spec 19: every installable plugin carries a plugin.json with a description
 const PLUGIN_JSON = json({ $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", description: "demo plugin" })
 
@@ -300,3 +461,4 @@ phase("6. the README states every rule validate enforces (the documented contrac
     )
   }
 })
+}
