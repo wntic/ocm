@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, withFakeHome } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -524,12 +524,6 @@ phase("4. trust grant/deny/revoke and pin through the core update the registry a
   assertResolves(notifyLink, join(clone, "plugins", "tool", "plugin", "notify.js"))
   expect(mcpKeys(home)["ocm--tool--db"]).toEqual(MCP.db)
   // invariant: no plugin-load errors attributable to ocm-installed files
-  const probe = opencodeProbe(cfg(home), home)
-  if (!probe.available) console.log("skipped: opencode is not on PATH")
-  else {
-    if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-    expect(probe.pluginErrors).toEqual([])
-  }
 
   coreOk(home, [{ fn: "revokeTrust", args: ["mp"] }])
   expect(readRegistry(home).marketplaces.mp.trust.code).toBe("denied")
@@ -547,7 +541,7 @@ phase("4. trust grant/deny/revoke and pin through the core update the registry a
   assertResolves(commandLink(home, "tool", "feature.md"), join(clone, "plugins", "tool", "commands", "feature.md"))
   coreOk(home, [{ fn: "pinMarketplace", args: ["mp", null] }])
   expect(readRegistry(home).marketplaces.mp.ref).toBeNull()
-}, 420_000) // opencode spawns: canary + error scan
+}, 420_000)
 
 phase("5. search through the core returns the spec 09 ranking", async (home) => {
   const mp = join(home, "mp")
@@ -798,13 +792,7 @@ phase("5. failure paths: unreachable marketplace on update, plugin-name collisio
   expect(mcpKeys(home)["ocm--tool--db"]).toEqual(MCP.db)
 
   // invariant: no plugin-load errors attributable to ocm-installed files
-  const probe = opencodeProbe(cfg(home), home)
-  if (!probe.available) console.log("skipped: opencode is not on PATH")
-  else {
-    if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-    expect(probe.pluginErrors).toEqual([])
-  }
-}, 420_000) // opencode spawns: canary + error scan
+}, 420_000)
 
 phase("6. every mutation path ends by emitting the restart notice; an unchanged update does not", async (home) => {
   const remote = join(home, "remote")
@@ -942,10 +930,6 @@ test("4. the empty-state flow chains the 'add one here' alert into the add flow:
     // invariant: ownership — a hand-written command survives
     expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
     // invariant: no plugin-load errors attributable to ocm-installed files
-    const probe = opencodeProbe(cfg(home), home)
-    if (!probe.available) console.log("skipped: opencode is not on PATH")
-    else if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-    else expect(probe.pluginErrors).toEqual([])
   })
 }, 420_000)
 

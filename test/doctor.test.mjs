@@ -5,7 +5,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync,
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, withFakeHome } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -201,12 +201,6 @@ phase("3. doctor detects a stale core by version comment, a stray ocm file in pl
   expect([coreFile, configPath, registryFile(home)].map((p) => readFileSync(p, "utf8"))).toEqual(before)
 
   // no plugin-load errors attributable to ocm files
-  const probe = opencodeProbe(cfg(home), home)
-  if (!probe.available) console.log("skipped: opencode is not on PATH")
-  else {
-    if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-    expect(probe.pluginErrors).toEqual([])
-  }
 }, 900_000)
 
 phase("4. doctor reports a marketplace whose last sync failed, with the error", async (home) => {
@@ -516,9 +510,5 @@ phase("9. config safety and ownership across the doctor flows: user keys and fil
     }
   }
   if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
-  const probe = opencodeProbe(cfg(home), home)
-  if (!probe.available) console.log("skipped: opencode is not on PATH")
-  else if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-  else expect(probe.pluginErrors).toEqual([])
 }, 900_000)
 }

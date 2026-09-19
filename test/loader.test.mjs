@@ -203,7 +203,7 @@ test("7. opencode reports no plugin-load errors for ocm files", async () => {
     expectOk(await ocm.installLoader())
     const probe = opencodeProbe(cfg(home), home)
     if (!probe.available) {
-      console.log("skipped: opencode is not on PATH")
+      console.log("skipped:", probe.optIn ? "OCM_PROBE not set" : "opencode is not on PATH")
       return
     }
     if (probe.unreliable) {

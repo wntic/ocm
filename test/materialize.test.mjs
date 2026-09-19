@@ -257,22 +257,6 @@ test("8. a SKILL.md with no name is skipped with a warning, not a crash", async 
     expect(lstatSync(join(skillsLinks(home), "adw--good")).isDirectory()).toBe(true)
   })
 })
-
-test("9. opencodeProbe sees the expected command, agent and skill names", async () => {
-  await withFakeHome(async (home) => {
-    const mp = marketplace(home, { adw: ADW })
-    materialize(home, [["mp", mp, null]])
-    const probe = opencodeProbe(cfg(home), home)
-    if (!probe.available) return console.log("skipped: opencode is not on PATH")
-    if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-    expect(probe.commands.join("\n")).toContain("adw:commit")
-    expect(probe.agents.join("\n")).toContain("adw:reviewer")
-    expect(probe.skills.join("\n")).toContain("adw:python-style")
-    // invariant: no plugin-load errors attributable to ocm-installed files
-    expect(probe.pluginErrors).toEqual([])
-  })
-  // opencode spawns: canary + error scan + name resolution (see harness.mjs)
-}, 420_000)
 }
 
 // precedence: a user file and an ocm link claiming one path — absorbed from test/phase04-precedence.mjs
@@ -429,7 +413,7 @@ test("4. a project .opencode/commands/adw:commit.md wins over the ocm-installed 
     })
 
     const probe = opencodeProbe(cfg(home), home, project)
-    if (!probe.available) return console.log("skipped: opencode is not on PATH")
+    if (!probe.available) return console.log("skipped:", probe.optIn ? "OCM_PROBE not set" : "opencode is not on PATH")
     if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
     const entry = probe.commandEntries["adw:commit"]
     if (!entry) throw new Error(`expected a resolved command "adw:commit" with cwd ${project}`)
@@ -470,3 +454,41 @@ test("5. one unreachable marketplace in a three-marketplace sync leaves the othe
   })
 }, 120_000)
 }
+
+// The suite's one probe of the real binary: a home carrying every component
+// shape ocm installs, resolved end to end. The per-file probes this replaces
+// were redundant with the on-disk assertions around them; the gate runs this
+// with OCM_PROBE=1 and scripts/oc-probe.sh scans plugin errors separately.
+test("9. opencode resolves every component shape ocm installs: command, agent, skill, JS plugin, MCP server", async () => {
+  await withFakeHome(async (home) => {
+    const mp = join(home, "mp")
+    writeTree(mp, { plugins: { adw: {
+      "plugin.json": `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`,
+      commands: { "commit.md": COMMAND },
+      agents: { "reviewer.md": AGENT },
+      skills: { "python-style": { "SKILL.md": SKILL } },
+      plugin: { "notify.js": 'export default { id: "adw-notify", server: async () => ({}) }\n' },
+      "mcp.json": `${JSON.stringify({ db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } }, null, 2)}\n`,
+    } } })
+    const added = ocm(home, "add", mp, "--trust")
+    if (added.status !== 0) throw new Error(`ocm add --trust exited ${added.status}: ${added.stderr}`)
+    const link = (path, source) => {
+      if (!lstatSync(path).isSymbolicLink()) throw new Error(`expected a symlink at ${path}`)
+      expect(realpathSync(path)).toBe(realpathSync(source))
+    }
+    link(join(cfg(home), "commands", "adw:commit.md"), join(mp, "plugins", "adw", "commands", "commit.md"))
+    link(join(cfg(home), "agents", "adw:reviewer.md"), join(mp, "plugins", "adw", "agents", "reviewer.md"))
+    expect(lstatSync(join(skillsLinks(home), "adw--python-style")).isDirectory()).toBe(true)
+    link(join(cfg(home), "plugins", "ocm--adw--notify.js"), join(mp, "plugins", "adw", "plugin", "notify.js"))
+    expect(JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8")).mcp["ocm--adw--db"]).toBeDefined()
+    const probe = opencodeProbe(cfg(home), home)
+    if (!probe.available) return console.log("skipped:", probe.optIn ? "OCM_PROBE not set" : "opencode is not on PATH")
+    if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
+    expect(probe.commands.join("\n")).toContain("adw:commit")
+    expect(probe.agents.join("\n")).toContain("adw:reviewer")
+    expect(probe.skills.join("\n")).toContain("adw:python-style")
+    // invariant: no plugin-load errors attributable to ocm-installed files
+    expect(probe.pluginErrors).toEqual([])
+  })
+  // opencode spawns: canary + error scan + name resolution (see harness.mjs)
+}, 420_000)

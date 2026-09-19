@@ -63,13 +63,17 @@ expect(readFileSync(configFile(home), "utf8")).toBe(configBytes)
 expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
 // idempotence — a second run writes nothing
 expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
-// no plugin-load errors — ask the real binary
+// no plugin-load errors — ask the real binary (opt-in: OCM_PROBE=1)
 const probe = opencodeProbe(cfg(home), home)
 if (probe.available && !probe.unreliable) expect(probe.pluginErrors).toEqual([])
 ```
 
 `opencodeProbe` shells out to the real `opencode` binary and reports
-`available: false` when it is not on PATH, so the suite still runs in CI.
+`available: false` unless `OCM_PROBE=1` is set, so a plain `bun test` never
+spawns opencode; `scripts/check.sh` sets the variable and
+`scripts/oc-probe.sh` scans plugin errors as its own gate step. The suite
+keeps exactly one resolution probe — the every-component-shape test at the
+end of `materialize.test.mjs`.
 
 ## The harness stays small
 

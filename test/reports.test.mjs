@@ -6,7 +6,7 @@ import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeF
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, withFakeHome } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -174,10 +174,6 @@ phase("5. add and uninstall print their headline before the restart notice; the 
   expect(readFileSync(join(cfg(home), "plugins", "my-own.js"), "utf8")).toBe(USER_PLUGIN)
   expect(JSON.parse(readFileSync(join(cfg(home), "tui.json"), "utf8")).plugin).toContain("my-own-tui-plugin")
   // invariant: no plugin-load errors attributable to ocm-installed files
-  const probe = opencodeProbe(cfg(home), home)
-  if (!probe.available) console.log("skipped: opencode is not on PATH")
-  else if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-  else expect(probe.pluginErrors).toEqual([])
 }, 420_000)
 
 phase("6. the trust block renders after the updating header, not before it", async (home) => {

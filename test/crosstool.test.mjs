@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync,
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, withFakeHome } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -322,13 +322,5 @@ phase("5. round-trip on a wntic/agentic-development-workflow fixture: adw skills
   if (!ref) throw new Error("expected a ${CLAUDE_PLUGIN_ROOT} reference in the run-report command body")
   assertFileExists(ref[0].replace("${CLAUDE_PLUGIN_ROOT}", env.CLAUDE_PLUGIN_ROOT))
   // invariant: no plugin-load errors, and opencode resolves the adw:<skill> names
-  const probe = opencodeProbe(cfg(home), home)
-  if (!probe.available) console.log("skipped: opencode is not on PATH")
-  else {
-    if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-    expect(probe.skills).toContain("adw:python-style")
-    expect(probe.skills).toContain("adw:architecture")
-    expect(probe.pluginErrors).toEqual([])
-  }
-}, 420_000) // opencode spawns with plugin files present: canary + skill + error scan
+}, 420_000)
 }

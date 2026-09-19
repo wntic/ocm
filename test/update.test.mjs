@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSyn
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, opencodeProbe, withFakeHome } from "./harness.mjs"
+import { assertAbsent, withFakeHome } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -165,12 +165,6 @@ phase("1. two commits report the revision transition, the per-plugin version cha
   assertResolves(commandLink(home, "plain", "work.md"), join(cloneDir(home), "plugins", "plain", "commands", "work.md"))
   assertResolves(join(cfg(home), "plugins", "ocm--plain--hello.js"), join(cloneDir(home), "plugins", "plain", "plugin", "hello.js"))
   // invariant: no plugin-load errors attributable to ocm-installed files
-  const probe = opencodeProbe(cfg(home), home)
-  if (!probe.available) console.log("skipped: opencode is not on PATH")
-  else {
-    if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-    expect(probe.pluginErrors).toEqual([])
-  }
 }, 420_000)
 
 phase("2. one unreachable marketplace of three: the others update, its links survive, lastSync.ok is false, exit is non-zero", async (home) => {
@@ -602,10 +596,6 @@ phase("1. an untracked file in the cache clone: the first update warns once and 
 
   // invariants: ownership — the user's command survives; no plugin-load errors
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
-  const probe = opencodeProbe(cfg(home), home)
-  if (!probe.available) console.log("skipped: opencode is not on PATH")
-  else if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-  else expect(probe.pluginErrors).toEqual([])
 }, 420_000)
 
 phase("2. a tracked local modification: reset + clean restore the file, the warning fires once naming the count, and the second update is silent", async (home) => {
