@@ -102,6 +102,23 @@ Three changes, in this order — measure after each:
 `bun test` under 30 s on a warm machine; `./scripts/check.sh` still
 exits 0 with the probe step green. Report the before/after wall time.
 
+## Task 3 — update what documents the layout (same commit as task 1)
+
+Two project skills describe the old naming and become wrong the moment task 1
+lands:
+
+- `.opencode/skills/ocm-test-harness/SKILL.md` — states the
+  `test/phaseNN-<name>.mjs` convention, the `all.test.mjs` shim and the
+  explicit-path invocation. Update all three to the new layout, and **rename
+  the skill directory to `ocm-testing`** (it is not only a harness any more).
+  Update the reference to it in `AGENTS.md` and in
+  `.opencode/agents/test-author.md`.
+- `.opencode/skills/ocm-architecture/SKILL.md` — one line describes `test/` as
+  "harness.mjs plus one phaseNN-*.mjs per spec".
+
+Keep both within their existing budgets. Do not add new guidance while you are
+in there; this is a naming update, not a rewrite.
+
 ## Hard rules for this work
 
 - No change to `src/`, `loader/`, `bin/`, or any behaviour of ocm. If a

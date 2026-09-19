@@ -6,36 +6,60 @@ project. Bun + TypeScript, no runtime dependencies.
 
 ## How work happens here
 
-Implementation is driven by the specs in `docs/specs/`, one at a time, in the
-order given by `docs/specs/README.md`. **The spec is the source of truth.** If
-the code and the spec disagree, the code is wrong. If two specs disagree, stop
-and say so — do not pick a side.
+Work is driven by **briefs** — one brief per independently shippable change.
+A brief is the source of truth while it exists: if the code and the brief
+disagree, the code is wrong; if two briefs disagree, stop and say so rather
+than picking a side. Briefs are scaffolding, not history — they are deleted
+once the code they describe is stable, so nothing durable may depend on a
+brief's path or number. What must outlive them lives in `AGENTS.md`, in the
+skills, and in the tests.
 
-One command per spec:
+One command runs a brief:
 
 ```
-/ocm:spec 01
+/ocm:build <path-to-brief>
 ```
 
-That dispatches the whole cycle — tests, implementation, gate, review — and
-loops the implementer on a failure up to three times. Use `/ocm:status` to see
-where you are and `/ocm:probe` to ask the real opencode binary what it sees.
+That dispatches the `lead` agent, which does not write code. It decomposes
+the brief into independently testable subtasks and dispatches one `subtask`
+agent per subtask, in order. Each `subtask` runs its own loop: `test-author`
+writes failing tests, `implementer` makes them pass, `verifier` produces
+mechanical evidence — gate output, diff scope, invariants — and the loop
+repeats on a failure up to three times. The lead runs `./scripts/check.sh`
+itself at the end, because subtask gates are scoped and only the full run
+proves they compose.
 
-If you want to drive a step by hand, `/ocm:tests NN`, `/ocm:implement NN` and
-`/ocm:check NN` each run one stage on their own. `/ocm:commit` verifies the
-gate, then stages and commits — never pushes, amends or resets.
+The split is deliberate. The lead holds the brief, the subtask list and one
+verdict each — never file contents — so its context stays clean across a long
+brief. Everything that writes a file is a subagent whose permissions stop it
+writing anywhere else.
 
 Tests are written before the implementation, by a different agent, and the
-implementer is not permitted to edit `test/`. That separation is the point: a
-test the implementer can change is not a check.
+implementer is **not permitted to edit `test/`**. That separation is the
+point: a test the implementer can change is not a check.
 
 **Write the smallest thing that passes.** The failure mode here is not bad
-syntax, it is building far more than the spec asked for. Size budgets live in
-the `ocm-code-style` skill and the evaluator enforces them.
+syntax, it is building far more than the brief asked for. Size budgets live in
+the `ocm-code-style` skill and the verifier reports against them.
+
+`/ocm:gate` runs the gate alone. `/ocm:probe` asks the real opencode binary
+what it sees. `/ocm:commit` verifies the gate, then stages and commits — never
+pushes, amends or resets.
+
+### Who verifies what
+
+Everything inside opencode runs on GLM. Its verification is **mechanical**:
+the gate is green, the diff is in scope, the invariants hold. That proves the
+code runs; it does not prove it is right.
+
+**Judgement is a Claude Code review**, run by the human after a brief lands —
+does this match what was asked, is it the smallest thing, did it invent scope.
+Write every report for that reviewer: someone who has read the brief and none
+of the diffs.
 
 ## Two traps specific to this repo
 
-**Never run bare `bun test`.** Directory traversal hangs indefinitely here;
+**Never run bare `bun test`.** Directory traversal has hung indefinitely here;
 `./scripts/check.sh` passes explicit file paths and is the command to use.
 
 **Nothing expensive at module scope in a test file.** Module bodies run during
@@ -49,8 +73,7 @@ a hang.
 ```
 
 Typecheck, tests, and a probe that asks the real opencode binary what it sees.
-Nothing is done until this exits 0. **It is red right now** — `ocm-loader.js`
-cannot import its core, which is exactly what spec 01 fixes.
+Nothing is done until this exits 0.
 
 `./scripts/oc-probe.sh` runs the probe alone. It verifies its own error
 detection with a canary before reporting, so a clean result means something.
@@ -74,7 +97,7 @@ detection with a canary before reporting, so a clean result means something.
 
 ## Skills
 
-Four project skills carry the knowledge that is not in the code:
+Five project skills carry the knowledge that is not in the code:
 
 | Skill | Load it when |
 |---|---|
@@ -88,8 +111,8 @@ Commit messages: imperative subject, prose body explaining *why*, no trailers
 of any kind. `git log` is the reference.
 
 Read the relevant one. Do not reconstruct these facts from memory — several of
-them contradict opencode's own documentation, and the specs record which was
-verified by probe.
+them contradict opencode's own documentation, and the `ocm-contract` skill
+records which was verified by probe and against which opencode version.
 
 ## Style
 

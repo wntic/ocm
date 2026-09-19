@@ -40,7 +40,7 @@ existing style — `git log` is the reference.
 - Capitalised, no trailing period, ≤50 characters ideally, 72 at the outside
 - Specific enough to understand without opening the diff
 - A `scope: detail` form is fine when it earns its keep, as in
-  `Rework spec workflow: ocm-lead loop, ocm:spec command`
+  `Rework the build workflow: a decomposing lead, one command`
 
 Prefer a precise verb:
 
@@ -54,7 +54,7 @@ Prefer a precise verb:
 **Body** — when the reason is not obvious from the diff. Blank line after the
 subject, wrapped at 72, plain prose rather than bullets. Explain *why*: what
 was wrong before, what was traded away, what was verified. A commit
-implementing a spec names it — "Implements docs/specs/01-loader.md".
+implementing a brief names it — "Implements the trust-flow brief".
 
 **No trailers.** This repository uses none: no `Co-Authored-By`, no generator
 lines, no `Signed-off-by`.
