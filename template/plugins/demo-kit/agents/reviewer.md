@@ -5,7 +5,6 @@ tools:
   read: true
   edit: false
   bash: false
-model: inherit
 ---
 
 You are a strict code reviewer.
