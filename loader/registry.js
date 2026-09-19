@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { LEGACY_REGISTRY_FILE, MARKETPLACES_DIR, OCM_DIR, REGISTRY_FILE } from "./paths.js"
+import { writeJsonAtomic } from "./atomic.js"
+import { LEGACY_REGISTRY_FILE, MARKETPLACES_DIR, REGISTRY_FILE } from "./paths.js"
 
 export function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -69,17 +70,80 @@ export function readRegistry() {
   return { version: 2, marketplaces: {} }
 }
 
+// spec 27 §4: the running ocm's own version. An installed loader has no
+// package.json beside it — the version comment src/loader.ts appends to every
+// installed file is its only source; the repo/npm layout falls back to the
+// package.json beside loader/
+export function ocmSelfVersion() {
+  try {
+    const stamped = readFileSync(new URL(import.meta.url), "utf8").match(/^\/\/ ocm-version: (\S+)/m)
+    if (stamped) return stamped[1]
+  } catch {}
+  try {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"))
+    if (isRecord(pkg) && typeof pkg.version === "string") return pkg.version
+  } catch {}
+  return null
+}
+
+// spec 27 §4: numeric compare of the first three dot-separated segments,
+// missing ones counting as 0; the field is always written by ocm itself, so
+// no prerelease handling
+export function versionCompare(a, b) {
+  const as = a.split(".")
+  const bs = b.split(".")
+  for (let i = 0; i < 3; i++) {
+    const x = Number(as[i]) || 0
+    const y = Number(bs[i]) || 0
+    if (x !== y) return x - y
+  }
+  return 0
+}
+
+// spec 27 §4: the version of the ocm that last wrote the registry; a missing
+// file or field is a pre-0.6.0 home, not a newer one
+export function registryWriterVersion() {
+  try {
+    const raw = JSON.parse(readFileSync(REGISTRY_FILE, "utf8"))
+    if (isRecord(raw) && typeof raw.ocmVersion === "string") return raw.ocmVersion
+  } catch {}
+  return null
+}
+
+// spec 27 §5: a registry that exists but does not parse, or is not a
+// version 1|2 object, is corruption — the CLI reports it instead of reading
+// an empty registry and saving over the file. Absent is a fresh install.
+export function parseRegistryStrict() {
+  // pre-02 layout; read as a fallback, never written
+  const file = existsSync(REGISTRY_FILE) ? REGISTRY_FILE : LEGACY_REGISTRY_FILE
+  let raw
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8"))
+  } catch {
+    if (!existsSync(file)) return null
+    raw = null
+  }
+  if (!isRecord(raw) || (raw.version !== 1 && raw.version !== 2)) {
+    throw new Error(
+      `error: registry at ${file} is not valid JSON — ocm will not overwrite it\n` +
+        "  inspect or move the file, then run ocm doctor; to start over, remove it and re-add your marketplaces",
+    )
+  }
+  return raw
+}
+
 // Mutating commands report the v1 → v2 upgrade when they save the migrated
 // registry, so this load also says what version was on disk.
 export function loadRegistryForWrite() {
-  // pre-02 layout; read as a fallback, never written
-  const file = existsSync(REGISTRY_FILE) ? REGISTRY_FILE : LEGACY_REGISTRY_FILE
-  try {
-    const raw = JSON.parse(readFileSync(file, "utf8"))
-    return { registry: normalizeRegistry(raw), wasV1: isRecord(raw) && raw.version === 1 }
-  } catch {
-    return { registry: { version: 2, marketplaces: {} }, wasV1: false }
-  }
+  const raw = parseRegistryStrict()
+  const loaded = raw === null
+    ? { registry: { version: 2, marketplaces: {} }, wasV1: false }
+    : { registry: normalizeRegistry(raw), wasV1: raw.version === 1 }
+  // spec 27 §4: the stamp lives on the load-for-write path, not in
+  // saveRegistry, so a read-path save of a read-path load stays byte-identical
+  const self = ocmSelfVersion()
+  if (self) loaded.registry.ocmVersion = self
+  return loaded
 }
 
 // Canonical key order: a no-op save must be byte-identical, and unknown
@@ -106,15 +170,12 @@ function serializeRegistry(registry) {
     }
     marketplaces[name] = canonicalObject({ ...entry, plugins }, MARKETPLACE_KEYS)
   }
-  return `${JSON.stringify(canonicalObject({ ...registry, version: 2, marketplaces }, ["version", "marketplaces"]), null, 2)}\n`
+  return `${JSON.stringify(canonicalObject({ ...registry, version: 2, marketplaces }, ["version", "ocmVersion", "marketplaces"]), null, 2)}\n`
 }
 
 export function saveRegistry(registry) {
-  mkdirSync(OCM_DIR, { recursive: true })
-  const tmp = `${REGISTRY_FILE}.tmp`
   try {
-    writeFileSync(tmp, serializeRegistry(registry))
-    renameSync(tmp, REGISTRY_FILE)
+    writeJsonAtomic(REGISTRY_FILE, serializeRegistry(registry))
   } catch (err) {
     throw new Error(`cannot write ${REGISTRY_FILE}: ${err instanceof Error ? err.message : String(err)}`)
   }
@@ -156,8 +217,6 @@ export function markTrustPending(name) {
     const entry = raw.marketplaces[name]
     if (entry.trustPending === true) return
     entry.trustPending = true
-    const tmp = `${REGISTRY_FILE}.tmp`
-    writeFileSync(tmp, JSON.stringify(raw, null, 2))
-    renameSync(tmp, REGISTRY_FILE)
+    writeJsonAtomic(REGISTRY_FILE, JSON.stringify(raw, null, 2))
   } catch {}
 }

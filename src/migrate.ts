@@ -6,8 +6,16 @@
 // and is deliberately not called from installLoader.
 import { existsSync, readFileSync, readdirSync, readlinkSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { componentRoot, enabledPlugins, materialize } from "../loader/core.js"
-import { OCM_LINKS_DIR, OCM_REGISTRY_FILE, OCM_STAMP_FILE, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR } from "./paths"
+import { componentRoot, enabledPlugins, materialize, readRegistry } from "../loader/core.js"
+import {
+  OCM_LEGACY_REGISTRY_FILE,
+  OCM_LINKS_DIR,
+  OCM_REGISTRY_FILE,
+  OCM_STAMP_FILE,
+  OPENCODE_AGENTS_DIR,
+  OPENCODE_COMMANDS_DIR,
+  OPENCODE_PLUGINS_DIR,
+} from "./paths"
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "./registry"
 import { reportUpgrade, reportWarnings } from "./report"
 import type { Registry } from "./types"
@@ -114,4 +122,34 @@ export function migrateInstallation(): void {
   upgradeRegistry()
   foldSyncStamp()
   relinkSkills()
+}
+
+// read-only mirror of every trigger above and of migrateLegacyLayout: main()
+// takes the registry lock only when this returns true, so it must agree with
+// the migrations exactly — a false positive blocks a read-only command on a
+// held lock, a false negative leaves a migration write unlocked
+export function migrationNeeded(): boolean {
+  if (existsSync(join(OPENCODE_PLUGINS_DIR, "ocm-core.js")) || existsSync(join(OPENCODE_PLUGINS_DIR, "ocm-ui.js"))) return true
+  const registryFile = existsSync(OCM_REGISTRY_FILE) ? OCM_REGISTRY_FILE : OCM_LEGACY_REGISTRY_FILE
+  try {
+    const raw: unknown = JSON.parse(readFileSync(registryFile, "utf8"))
+    if (isRecord(raw) && raw.version === 1) return true
+  } catch {}
+  if (existsSync(OCM_STAMP_FILE)) {
+    try {
+      JSON.parse(readFileSync(OCM_STAMP_FILE, "utf8"))
+      JSON.parse(readFileSync(OCM_REGISTRY_FILE, "utf8"))
+      return true
+    } catch {}
+  }
+  // spec 27 §5: this sweep runs before every dispatch, including help and
+  // doctor, so it reads the tolerant core registry — a corrupt one must not
+  // throw here
+  for (const [name, entry] of Object.entries(readRegistry().marketplaces)) {
+    const root = componentRoot(entry)
+    if (legacySkillLinks(join(OCM_LINKS_DIR, name, "skills"), root).length > 0) return true
+    if (existsSync(join(OPENCODE_COMMANDS_DIR, `ocm--${name}`))) return true
+    if (existsSync(join(OPENCODE_AGENTS_DIR, `ocm--${name}`))) return true
+  }
+  return false
 }

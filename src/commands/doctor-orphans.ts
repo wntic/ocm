@@ -2,11 +2,11 @@
 // registry backing (F30), single-dash strays opencode loads on every start
 // (F26), and the trust safety net that keeps an approved link from ever being
 // removed as stray, even when the records lag (F8).
-import { readdirSync, rmSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { displacedRecords, setSkillsPath } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
-import { OCM_DISPLACED_DIR, OCM_LINKS_DIR, OCM_LOADER_NAME, OPENCODE_PLUGINS_DIR } from "../paths"
+import { OCM_DISPLACED_DIR, OCM_DISPLACED_RECORD_FILE, OCM_LINKS_DIR, OCM_LOADER_NAME, OPENCODE_PLUGINS_DIR } from "../paths"
 import { error, fixed, warning, type Finding } from "../findings"
 import { removePath } from "./doctor-links"
 
@@ -96,6 +96,22 @@ export function checkOrphanMirrors(registry: CoreRegistry, findings: Finding[], 
 // informational line. A <ts> directory no record points at is a pre-21
 // removal's leftover: named, never deleted (the files are the user's)
 export function checkDisplaced(registry: CoreRegistry, findings: Finding[]): void {
+  // spec 27 §2: an unreadable records file is reported, never auto-repaired —
+  // ocm cannot prove which cache copy belongs where
+  if (existsSync(OCM_DISPLACED_RECORD_FILE)) {
+    let parses = false
+    try {
+      parses = Array.isArray(JSON.parse(readFileSync(OCM_DISPLACED_RECORD_FILE, "utf8")))
+    } catch {}
+    if (!parses) {
+      findings.push(
+        error(
+          `${OCM_DISPLACED_RECORD_FILE}: not valid JSON — displaced originals cannot be restored\n` +
+            `    the copies are still under ${OCM_DISPLACED_DIR}; move them back by hand, then delete the records file`,
+        ),
+      )
+    }
+  }
   const records = displacedRecords()
   const live = records.filter((record) => registry.marketplaces[record.marketplace])
   if (live.length) {

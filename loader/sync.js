@@ -1,11 +1,13 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
+import { writeJsonAtomic } from "./atomic.js"
 import { git, isGitRepo } from "./git.js"
+import { tryRegistryLock } from "./lock.js"
 import { removeMcpKeys } from "./mcp.js"
 import { enabledPlugins, materialize } from "./materialize.js"
 import { reconcilePluginRecords } from "./reconcile.js"
 import { DEFAULT_SYNC_INTERVAL_MS, REGISTRY_FILE, STAMP_FILE } from "./paths.js"
-import { isRecord, markTrustPending, readRegistry } from "./registry.js"
+import { isRecord, markTrustPending, ocmSelfVersion, readRegistry, registryWriterVersion, versionCompare } from "./registry.js"
 import { executableComponents, trustFingerprint } from "./trust.js"
 
 // spec 08: fetch the pinned ref when there is one, else the remote's HEAD —
@@ -61,9 +63,7 @@ function recordSync(name, value, revision) {
     if (!isRecord(raw) || !isRecord(raw.marketplaces) || !isRecord(raw.marketplaces[name])) return
     raw.marketplaces[name].lastSync = value
     if (typeof revision === "string") raw.marketplaces[name].revision = revision
-    const tmp = `${REGISTRY_FILE}.tmp`
-    writeFileSync(tmp, `${JSON.stringify(raw, null, 2)}\n`)
-    renameSync(tmp, REGISTRY_FILE)
+    writeJsonAtomic(REGISTRY_FILE, `${JSON.stringify(raw, null, 2)}\n`)
   } catch {}
 }
 
@@ -82,9 +82,7 @@ function refreshRecords(name, root) {
     if (pruned.length) removeMcpKeys(pruned)
     const after = `${JSON.stringify(raw, null, 2)}\n`
     if (after === before) return
-    const tmp = `${REGISTRY_FILE}.tmp`
-    writeFileSync(tmp, after)
-    renameSync(tmp, REGISTRY_FILE)
+    writeJsonAtomic(REGISTRY_FILE, after)
   } catch {}
 }
 
@@ -106,12 +104,9 @@ function due(entry, now) {
   return now - at >= intervalFor(entry)
 }
 
-export async function syncAll(options = {}) {
-  const result = { ran: false, changed: false, updated: [], unchanged: [], failed: [], errors: {} }
-  if (process.env.OCM_SYNC_DISABLE === "1") return result
-  const registry = readRegistry()
-  const entries = Object.entries(registry.marketplaces ?? {})
-  if (!entries.length) return result
+// the loop runs under the registry lock; a skipped sync pulls nothing,
+// materializes nothing and writes no lastSync, so every marketplace stays due
+async function runSync(entries, options, result) {
   const now = Date.now()
   for (const [name, entry] of entries) {
     // the throttle is per marketplace: one marketplace's sync never
@@ -157,5 +152,22 @@ export async function syncAll(options = {}) {
       rmSync(STAMP_FILE, { force: true })
     } catch {}
   }
+  return result
+}
+
+export async function syncAll(options = {}) {
+  const result = { ran: false, changed: false, updated: [], unchanged: [], failed: [], errors: {} }
+  if (process.env.OCM_SYNC_DISABLE === "1") return result
+  // spec 27 §4: an unattended process has nobody to refuse to — a home
+  // written by a newer ocm skips the whole sync for this start, exactly as a
+  // held lock does: nothing pulled, nothing materialized, no lastSync written
+  const writer = registryWriterVersion()
+  const self = ocmSelfVersion()
+  if (writer && self && versionCompare(writer, self) > 0) return { ...result, skipped: true }
+  const registry = readRegistry()
+  const entries = Object.entries(registry.marketplaces ?? {})
+  if (!entries.length) return result
+  const synced = await tryRegistryLock(() => runSync(entries, options, result))
+  if (synced.skipped) return { ...result, skipped: true }
   return result
 }

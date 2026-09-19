@@ -1,16 +1,16 @@
 // spec 21: displaced originals are reversible. Every takeover records where
-// the user's file went, and every teardown restores what it can — a
-// copy-back that never consumes the cache copy, so a later teardown of a
-// re-added marketplace restores again from the same place.
+// the user's file went, and every teardown restores what it can. Spec 27 §3
+// amends this: the cache copy is still never consumed (a mistake stays
+// recoverable), but a resolved record is pruned so it stops being re-reported.
 import {
   copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
-  writeFileSync,
 } from "node:fs"
 import { dirname, join, relative } from "node:path"
+import { writeJsonAtomic } from "./atomic.js"
 import { DISPLACED_RECORD_FILE, OPENCODE_DIR } from "./paths.js"
 
 // paths under the opencode config dir are shown relative to it; anything
@@ -27,8 +27,7 @@ export function appendDisplacement(entry) {
     if (Array.isArray(parsed)) records = parsed
   } catch {}
   records.push(entry)
-  mkdirSync(dirname(DISPLACED_RECORD_FILE), { recursive: true })
-  writeFileSync(DISPLACED_RECORD_FILE, `${JSON.stringify(records, null, 2)}\n`)
+  writeJsonAtomic(DISPLACED_RECORD_FILE, `${JSON.stringify(records, null, 2)}\n`)
 }
 
 function readRecords() {
@@ -54,14 +53,19 @@ export function displacedRecords() {
 // the teardown restore pass: one line per displaced original in scope, either
 // way — silence is the bug spec 21 fixes. When several displacements hold one
 // path the newest wins: it holds the newest version of the user's file.
+// Spec 27 §3: a resolved record (restored, copy gone, or dest already holding
+// the original bytes) is consumed — dropped from the records file while its
+// cache copy is kept.
 export function restoreDisplaced(scope) {
   const lines = []
+  const records = readRecords()
   const latest = new Map()
-  for (const record of readRecords()) {
+  for (const record of records) {
     if (scope.marketplace !== undefined && record.marketplace !== scope.marketplace) continue
     if (scope.plugin !== undefined && record.plugin !== scope.plugin) continue
     latest.set(record.dest, record)
   }
+  const consumed = new Set()
   for (const record of latest.values()) {
     const cache = join(record.dir, record.dest)
     const display = displayPath(record.dest)
@@ -71,18 +75,30 @@ export function restoreDisplaced(scope) {
       occupied = true
     } catch {}
     if (occupied) {
-      lines.push(`your ${display} was displaced by ${record.plugin} and the path is taken — original kept at ${cache}`)
+      // a full byte compare, no size or mtime shortcut: only content that is
+      // already the original counts as restored
+      let identical = false
+      try {
+        identical = readFileSync(record.dest).equals(readFileSync(cache))
+      } catch {}
+      if (identical) {
+        consumed.add(record)
+      } else {
+        lines.push(`your ${display} was displaced by ${record.plugin} and the path is taken — original kept at ${cache}`)
+      }
     } else if (!existsSync(cache)) {
       lines.push(`displacement copy missing: your ${display} was displaced by ${record.plugin} but ${cache} is gone — nothing to restore`)
+      consumed.add(record)
     } else {
       try {
         mkdirSync(dirname(record.dest), { recursive: true })
         copyFileSync(cache, record.dest)
         lines.push(`restored your ${display} (was displaced by ${record.plugin})`)
+        consumed.add(record)
       } catch (err) {
         lines.push(`cannot restore your ${display} (was displaced by ${record.plugin}): ${err instanceof Error ? err.message : String(err)}`)
       }
     }
   }
-  return lines
+  return { lines, resolved: consumed.size ? records.filter((record) => !consumed.has(record)) : null }
 }

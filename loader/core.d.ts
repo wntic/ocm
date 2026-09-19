@@ -39,6 +39,7 @@ export interface CoreSyncResult {
   failed: string[]
   errors: Record<string, string>
   warnings?: string[]
+  skipped?: boolean
 }
 
 export interface CoreExecutableComponent {
@@ -112,6 +113,7 @@ export interface CoreMarketplaceEntry {
 
 export interface CoreRegistry {
   version: 2
+  ocmVersion?: string
   marketplaces: Record<string, CoreMarketplaceEntry>
 }
 
@@ -237,18 +239,24 @@ export declare const LEGACY_REGISTRY_FILE: string
 export declare const STAMP_FILE: string
 export declare const DEFAULT_SYNC_INTERVAL_MS: number
 
+export declare function writeJsonAtomic(path: string, content: string): void
+export declare function withRegistryLock<T>(command: string, fn: () => T | Promise<T>): Promise<T>
+export declare function tryRegistryLock<T>(fn: () => T | Promise<T>): Promise<T | { skipped: true }>
 export declare function discoverPlugins(marketplaceDir: string): CoreDiscoveredPlugin[]
 export declare function dirClashes(pluginDir: string): string[]
 export declare function displacedRecords(): CoreDisplacementRecord[]
-export declare function restoreDisplaced(scope: { marketplace?: string; plugin?: string }): string[]
+export declare function restoreDisplaced(scope: { marketplace?: string; plugin?: string }): { lines: string[]; resolved: CoreDisplacementRecord[] | null }
 export declare function pluginLimitViolation(plugin: CoreManifestPlugin): string | null
 export declare function lintCrossTool(marketplaceDir: string): string[]
 export declare function isGitRepo(dir: string): boolean
 export declare function git(args: string[], cwd?: string): Promise<{ ok: boolean; stdout: string; stderr: string }>
 export declare function pullRepo(dir: string, ref?: string | null, url?: string): Promise<CorePullResult>
 export declare function readRegistry(): CoreRegistry
+export declare function registryWriterVersion(): string | null
+export declare function versionCompare(a: string, b: string): number
 export declare function pluginRootEnv(): Record<string, string>
 export declare function normalizeRegistry(raw: unknown): CoreRegistry
+export declare function parseRegistryStrict(): unknown
 export declare function loadRegistryForWrite(): { registry: CoreRegistry; wasV1: boolean }
 export declare function saveRegistry(registry: CoreRegistry): void
 export declare function materialize(

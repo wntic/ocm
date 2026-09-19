@@ -2,6 +2,7 @@
 // TUI plugin, and src/ via core.d.ts) import this module; the implementation
 // lives in the siblings it re-exports. Siblings never import core.js — shared
 // constants come from paths.js, so no module's top level depends on this one.
+export { writeJsonAtomic } from "./atomic.js"
 export {
   CACHE_DIR,
   DEFAULT_SYNC_INTERVAL_MS,
@@ -23,7 +24,8 @@ export { displacedRecords, restoreDisplaced } from "./displaced.js"
 export { git, isGitRepo } from "./git.js"
 export { pluginLimitViolation } from "./limits.js"
 export { lintCrossTool } from "./lint.js"
-export { loadRegistryForWrite, normalizeRegistry, pluginRootEnv, readRegistry, saveRegistry } from "./registry.js"
+export { tryRegistryLock, withRegistryLock } from "./lock.js"
+export { loadRegistryForWrite, normalizeRegistry, parseRegistryStrict, pluginRootEnv, readRegistry, registryWriterVersion, saveRegistry, versionCompare } from "./registry.js"
 export { reconcilePluginRecords } from "./reconcile.js"
 export { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
 export { setSkillsPath } from "./config.js"
