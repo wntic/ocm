@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { join, relative } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, withFakeHome, withFakeOpencode } from "./harness.mjs"
 import http from "node:http"
 import { tmpdir } from "node:os"
 
@@ -15,7 +15,7 @@ import { tmpdir } from "node:os"
 const OCM_BIN = fileURLToPath(new URL("../bin/ocm.ts", import.meta.url))
 
 function ocm(home, args, timeout = 120_000) {
-  const r = spawnSync(process.execPath, [OCM_BIN, ...args], { env: { ...process.env, HOME: home }, encoding: "utf8", timeout })
+  const r = spawnSync(process.execPath, [OCM_BIN, ...args], { env: withFakeOpencode({ ...process.env, HOME: home }), encoding: "utf8", timeout })
   return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }
 }
 

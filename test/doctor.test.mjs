@@ -5,7 +5,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync,
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -13,7 +13,7 @@ const OCM_BIN = fileURLToPath(new URL("../bin/ocm.ts", import.meta.url))
 
 function ocm(home, ...args) {
   const result = spawnSync(process.execPath, [OCM_BIN, ...args], {
-    env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 120_000,
+    env: withFakeOpencode({ ...process.env, HOME: home }), encoding: "utf8", timeout: 120_000,
   })
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
 }
@@ -285,8 +285,10 @@ phase("6. a full add → install → update → remove cycle creates nothing und
 
 // doctor config safety: an unparseable config is never rewritten; the orphan sweep stays scoped — absorbed from test/phase20-doctor-config-safety.mjs
 {
-function ocm(home, args, timeout = 120_000) {
-  const r = spawnSync(process.execPath, [OCM_BIN, ...args], { env: { ...process.env, HOME: home }, encoding: "utf8", timeout })
+function ocm(home, args, timeout = 120_000, options = {}) {
+  const r = spawnSync(process.execPath, [OCM_BIN, ...args], {
+    env: withFakeOpencode({ ...process.env, HOME: home, ...options.env }, options), encoding: "utf8", timeout,
+  })
   return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }
 }
 
@@ -511,4 +513,16 @@ phase("9. config safety and ownership across the doctor flows: user keys and fil
   }
   if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
 }, 900_000)
+
+// the probe's error path: the fake opencode reports one ocm-attributable
+// plugin-load error on demand (OCM_FAKE_PLUGIN_ERROR), so doctor's handling
+// of probe output is covered without a real opencode start
+phase("10. doctor reports a plugin-load error the probe attributes to ocm, with the update remedy, exit 1", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  const diagnosed = ocm(home, ["doctor"], 120_000, { env: { OCM_FAKE_PLUGIN_ERROR: "1" } })
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status} with a plugin-load error to report:\n${diagnosed.output}`)
+  for (const needle of ["ocm--demo--broken.js", "(ocm update)", "1 error, 0 warnings"]) {
+    if (!diagnosed.output.includes(needle)) throw new Error(`the plugin-error finding lacks "${needle}":\n${diagnosed.output}`)
+  }
+}, 300_000)
 }
