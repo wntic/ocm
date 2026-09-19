@@ -39,6 +39,7 @@ about opencode that turned out to be wrong (see
 | [24 — Validate hardening](./24-validate-hardening.md) | shipped | 06, 12, 15, 19 |
 | [25 — List, info & search display](./25-display.md) | shipped | 07, 08, 09 |
 | [26 — Update engine hygiene](./26-update-hygiene.md) | shipped | 08 |
+| [35 — Authoring surface](./35-authoring-surface.md) | §1/§3/§4 shipped, §2 planned | 03, 06, 11 |
 
 Specs 16–26 are the triage of two e2e rounds
 ([round 1](../e2e-findings.md),
@@ -131,8 +132,7 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.3.0 | specs 16–19 | published 2026-09-14 |
 | v0.4.0 | specs 20–22 | published 2026-09-15 |
 | v0.5.0 | specs 23–26 | published 2026-09-15 |
-| v0.4.0 | specs 20–22 | planned |
-| v0.5.0 | specs 23–26 | planned |
+| v0.5.1 | spec 35 §1, §3, §4 (docs and template only) | planned |
 
 Rules:
 

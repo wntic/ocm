@@ -136,6 +136,16 @@ supporting scripts use
 `OCM_PLUGIN_ROOT` (and `CLAUDE_PLUGIN_ROOT` as an alias) pointing at the
 marketplace root.
 
+**Where those variables are set.** The loader exports them through
+opencode's `shell.env` hook, which fires when opencode spawns a shell for
+the model's bash tool. They are therefore available to a script the model
+runs, and **not** inside a command template's `!` block — opencode's
+template engine does not call the hook. With more than one marketplace
+added, only the per-marketplace forms (`OCM_PLUGIN_ROOT_<MARKETPLACE>`,
+the name upper-cased with `-` as `_`) are set: a flat name cannot say which
+root it means. A command that must reference a script path inside a `!`
+block should instruct the model to run the script instead.
+
 ### Command and agent frontmatter
 
 Every file in `commands/` or `agents/` is a YAML frontmatter block plus a
@@ -143,7 +153,11 @@ body — the body is the template opencode runs, and an empty body is a
 validate error: opencode requires the template. description is required
 (opencode rejects a command without it); the other recognized fields are
 `agent`, `mode`, `tools`, `model`, `extension`, `allowed-tools` and
-`$schema`. A file with no frontmatter at all is a warning. A frontmatter
+`$schema`. `model` takes opencode's `provider/model` form
+(`anthropic/claude-sonnet-4-5`); **omit it to inherit the session's model**.
+A bare model name, or Claude Code's `model: inherit`, is parsed as a
+provider and fails at runtime with `Model not found: inherit/.` — the agent
+silently falls back to a general one. A file with no frontmatter at all is a warning. A frontmatter
 value containing an unquoted `": "` is an error — strict YAML rejects it
 even where opencode's lenient parser would rescue it; quote the value. A
 body using `!` shell substitution draws a warning, because `ocm info`
@@ -154,7 +168,7 @@ A complete command file:
 ```markdown
 ---
 description: commit helper
-model: sonnet
+model: anthropic/claude-sonnet-4-5
 allowed-tools:
   - Read
   - Bash
@@ -171,6 +185,7 @@ should use the new location.
 
 ```json
 {
+  "$schema": "https://raw.githubusercontent.com/wntic/ocm/main/schema/marketplace-v1.json",
   "name": "my-marketplace",
   "description": "Team plugin catalog",
   "owner": { "name": "…", "email": "…", "url": "…" },
@@ -337,7 +352,11 @@ re-installing is instant and offline.
 - **A config that does not parse is never rewritten.** ocm warns and prints
   the exact manual edit instead.
 - **A read-only config is never bypassed.** The mutation is refused before
-  any write — `chmod +w` the file, then re-run.
+  any write — `chmod +w` the file, then re-run. A command refuses only over
+  the files it would actually touch: `ocm add`, `ocm update`, `ocm init` and
+  `doctor --fix` write `tui.json`; every mutation that materializes or
+  removes a skill or an MCP server writes `opencode.json`. So a read-only
+  `tui.json` stops an `add` and lets an `install` through — by design.
 
 ## Trust
 
