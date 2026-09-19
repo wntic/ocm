@@ -77,10 +77,12 @@ end of `materialize.test.mjs`.
 
 ## The harness stays small
 
-Budget: **150 lines, 8 exports**. It exists to remove repetition from the
-tests, not to be a testing framework. Add a helper when a test in front of you
-calls it — never for a test you have not written yet. If it is over budget,
-the fix is deleting helpers with one call site, not splitting the file.
+Budget: **175 lines, 8 exports**. The export count is the real constraint —
+it is what stops the harness becoming a junk drawer; the line count follows
+from it. It exists to remove repetition from the tests, not to be a testing
+framework. Add a helper when a test in front of you calls it — never for a
+test you have not written yet. If it is over budget, the fix is deleting
+helpers with one call site, not splitting the file.
 
 ## Rules
 
