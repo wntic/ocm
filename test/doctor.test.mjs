@@ -665,6 +665,19 @@ phase("13. an install in the default root is reported as stranded when XDG_CONFI
   if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
 }, 420_000)
 
+phase("13b. an install made before the breadcrumb existed is still reported: no roots.json, XDG_CONFIG_HOME set (review finding)", async (home) => {
+  // the upgrade path: everything installed by v0.5.0 left no breadcrumb, so a
+  // user who already had XDG_CONFIG_HOME set would otherwise see their whole
+  // install vanish with no explanation — the default root is checked directly
+  expect(ocm(home, ["init"]).status).toBe(0)
+  expect(ocm(home, ["add", localMp(home)]).status).toBe(0)
+  rmSync(ROOTS_FILE(home), { force: true })
+  const xdg = join(home, "xdg")
+  const diagnosed = ocm(home, ["doctor"], 300_000, { env: { XDG_CONFIG_HOME: xdg } })
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a pre-breadcrumb install stranded:\n${diagnosed.output}`)
+  expectStranded(diagnosed.output, cfg(home), join(xdg, "opencode"), true)
+}, 300_000)
+
 phase("14. the reverse direction via the breadcrumb: an install made with XDG_CONFIG_HOME set is reported as stranded once the variable is gone", async (home) => {
   const xdg = join(home, "xdg")
   const env = { XDG_CONFIG_HOME: xdg }

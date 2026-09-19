@@ -3,6 +3,7 @@
 // the cache does not move, so the check is symmetric in both directions.
 // ocm reports and never migrates — the user picks the root.
 import { existsSync, readFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { OCM_CACHE_DIR, OCM_REGISTRY_FILE, OPENCODE_GLOBAL_DIR } from "./paths"
 
@@ -33,10 +34,22 @@ function countMarketplaces(root: string): number {
   return 0
 }
 
+// Every root ocm has written since the breadcrumb existed, plus the default
+// one. The default matters for the case the breadcrumb cannot cover: an
+// install made before this version left no crumb, so a user who already had
+// XDG_CONFIG_HOME set sees their whole install vanish on upgrade — the exact
+// harm this check exists to report. The reverse direction (XDG unset, install
+// under some XDG root) is unknowable without a crumb and stays breadcrumb-only.
+function candidateRoots(): string[] {
+  const roots = readRecordedRoots()
+  if (process.env.XDG_CONFIG_HOME) roots.push(join(homedir(), ".config", "opencode"))
+  return [...new Set(roots)]
+}
+
 export function strandedRoots(): StrandedRoot[] {
   const active = resolve(OPENCODE_GLOBAL_DIR)
   const stranded: StrandedRoot[] = []
-  for (const recorded of readRecordedRoots()) {
+  for (const recorded of candidateRoots()) {
     const root = resolve(recorded)
     if (root === active) continue
     const marketplaces = countMarketplaces(root)
