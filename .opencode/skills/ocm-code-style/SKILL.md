@@ -12,16 +12,35 @@ list have already happened once. This skill exists to stop that.
 
 ## Size budgets
 
-These are limits, not targets. Crossing one is a signal to stop and reconsider,
-not a rule to route around.
+These catch **over-engineering while you write**, which is this repository's
+most common failure. They are smells, not gates: crossing one means stop and
+say why in your report, not split a file to satisfy a number. None of them
+comes from a JavaScript or TypeScript standard — there isn't one; they come
+from what went wrong here before.
 
 | Thing | Budget | If you exceed it |
 |---|---|---|
 | a function | 40 lines | split it, or admit it is doing two jobs |
-| a source file | 200 lines | it is probably two modules |
-| a test file | 250 lines | the spec asked for fewer tests than you wrote |
-| a test helper module | 150 lines | you are building a framework; stop |
+| a source file | 300 lines | ask whether it is two concerns — if it is one, say so and move on |
+| one test | 50 lines | it is asserting two behaviours, or its fixture belongs in a helper |
+| a test helper module | 175 lines | you are building a framework; stop |
 | exported helpers in one module | 8 | most of them have one caller |
+
+**Test files have no line budget.** Since the suite was reorganised by
+behaviour, one file holds every test for an area — `manifests.test.mjs`
+carries four briefs' worth — so its length says nothing about whether anyone
+over-built. The budget that bites there is the per-test one: a test over ~50
+lines is usually asserting two things and will fail for a third reason.
+
+The two that catch real damage are the **function** budget and the **export**
+count: a 90-line function is doing two jobs, and a ninth export is usually a
+helper with one caller. A file that is long because it holds many small
+functions of one concern is not a defect — `src/commands/doctor.ts` is an
+orchestrator plus nine `check*` functions, and splitting it further would
+produce a module named after nothing.
+
+A budget is never a reason to churn code that already shipped. It applies to
+what you are writing now.
 
 Before writing a helper, count its call sites in the code you are about to
 write. **One call site is not a helper, it is a detour.** Inline it.
