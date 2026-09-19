@@ -247,10 +247,14 @@ export declare function dirClashes(pluginDir: string): string[]
 export declare function displacedRecords(): CoreDisplacementRecord[]
 export declare function restoreDisplaced(scope: { marketplace?: string; plugin?: string }): { lines: string[]; resolved: CoreDisplacementRecord[] | null }
 export declare function pluginLimitViolation(plugin: CoreManifestPlugin): string | null
+export declare function foldedDirPairs(names: string[]): string[][]
+export declare function foldedComponentGroups(
+  components: CorePluginComponents,
+): { type: "command" | "agent" | "skill" | "plugin"; names: string[] }[]
 export declare function lintCrossTool(marketplaceDir: string): string[]
 export declare function isGitRepo(dir: string): boolean
 export declare function git(args: string[], cwd?: string): Promise<{ ok: boolean; stdout: string; stderr: string }>
-export declare function pullRepo(dir: string, ref?: string | null, url?: string): Promise<CorePullResult>
+export declare function pullRepo(entry: CoreMarketplaceEntry, name: string): Promise<CorePullResult>
 export declare function readRegistry(): CoreRegistry
 export declare function registryWriterVersion(): string | null
 export declare function versionCompare(a: string, b: string): number

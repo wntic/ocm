@@ -3,11 +3,12 @@ import { join, relative } from "node:path"
 import { writeJsonAtomic } from "./atomic.js"
 import { setSkillsPath } from "./config.js"
 import { collisionError, incumbentMarketplace } from "./collisions.js"
+import { discoverPlugins } from "./discovery.js"
 import { restoreDisplaced } from "./displaced.js"
-import { git } from "./git.js"
+import { git, treePluginFiles } from "./git.js"
 import { discoverMarketplace, discoveryError, readManifest } from "./manifest.js"
 import { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
-import { limitRefusal, manifestRefusal } from "./limits.js"
+import { caseFoldRefusal, limitRefusal, manifestRefusal, treeFoldRefusal } from "./limits.js"
 import { removeMcpKeys } from "./mcp.js"
 import { DISPLACED_RECORD_FILE, LINKS_DIR } from "./paths.js"
 import { loadRegistryForWrite, saveRegistry } from "./registry.js"
@@ -77,8 +78,7 @@ export async function addMarketplace(source, options = {}) {
   if (registry.marketplaces[wanted]) {
     throw new Error(`marketplace "${wanted}" already added (use "ocm update ${wanted}")`)
   }
-  const { name, dir, head } = parsed.isGit
-    ? await placeClone(parsed, wanted, ref, registry, options.name !== undefined)
+  const { name, dir, head } = parsed.isGit ? await placeClone(parsed, wanted, ref, registry, options.name !== undefined)
     : { name: wanted, dir: parsed.url, head: "" }
   const root = parsed.subdir ? join(dir, parsed.subdir) : dir
   const discovered = discoverMarketplace(root)
@@ -91,7 +91,11 @@ export async function addMarketplace(source, options = {}) {
       discovered.warnings, parsed, dir,
     )
   }
-  const refusal = discoveryError(plugins) ?? limitRefusal(plugins) ?? manifestRefusal(name, plugins)
+  // brief 28 §3: the local check fires where both directories really exist;
+  // the tree check catches a pair a case-insensitive checkout has collapsed
+  const refusal = discoveryError(plugins) ?? caseFoldRefusal(name, discoverPlugins(root)) ??
+    (parsed.isGit ? treeFoldRefusal(name, head, (await treePluginFiles(dir, head, parsed.subdir)) ?? []) : null) ??
+    limitRefusal(plugins) ?? manifestRefusal(name, plugins)
   if (refusal) addRefusal(refusal, discovered.warnings, parsed, dir)
   const collision = collisionError(registry, name, plugins)
   if (collision) addRefusal(collision, discovered.warnings, parsed, dir)

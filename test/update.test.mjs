@@ -2,7 +2,7 @@
 // writing nothing when nothing changed.
 
 import { spawnSync } from "node:child_process"
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
@@ -544,6 +544,106 @@ phase("syncIntervalMs 0 syncs on every start; OCM_SYNC_DISABLE=1 turns startup s
   if (third.status !== 0) throw new Error(`loader sync exited ${third.status}: ${third.stderr}`)
   assertResolves(commandLink(home, "tool", "extra.md"), join(cloneDir(home), "plugins", "tool", "commands", "extra.md"))
 }, 180_000)
+
+// brief 28 §3: case-folded plugin directories. A pair appearing upstream in
+// a git tree stops that marketplace's update at the fetched ref (F89); a
+// local pair is skipped with a warning and the rest of the update proceeds.
+
+// git hash-object -w --stdin: create a blob without touching the working
+// tree, so the index can hold a path the checkout cannot represent
+function gitBlob(dir, contents) {
+  const result = spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd: dir, encoding: "utf8", input: contents })
+  if (result.status !== 0) throw new Error(`git hash-object failed in ${dir}: ${result.stderr}`)
+  return result.stdout.trim()
+}
+
+// commit a plugins/case-kit sibling beside the on-disk plugins/case-Kit:
+// the tree ships both names even where a checkout cannot hold both (F66)
+function commitFoldedSibling(dir) {
+  for (const [path, contents] of [
+    ["plugins/case-kit/plugin.json", PLUGIN_JSON],
+    ["plugins/case-kit/commands/run.md", COMMAND],
+  ]) {
+    git(dir, ["update-index", "--add", "--cacheinfo", `100644,${gitBlob(dir, contents)},${path}`])
+  }
+  // the index is committed directly: git add -A would collapse the folded
+  // entries back to the working tree's single directory on this host
+  git(dir, ["-c", "user.email=ocm@test", "-c", "user.name=ocm", "commit", "-m", "folded sibling"])
+  const listed = git(dir, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n")
+  for (const path of ["plugins/case-Kit/plugin.json", "plugins/case-kit/plugin.json"]) {
+    if (!listed.includes(path)) throw new Error(`fixture error: ${dir} HEAD does not ship ${path}: ${JSON.stringify(listed)}`)
+  }
+}
+
+phase("a folded plugins pair appearing upstream stops that marketplace's update and leaves it at its previous revision; the other marketplace updates", async (home) => {
+  // the folded marketplace is clean at add time; the pair appears upstream
+  const foldRemote = join(home, "remote-fold")
+  gitRepo(foldRemote, { plugins: { "case-Kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } } })
+  const firstSha = shortSha(foldRemote)
+  expect(ocm(home, "add", `file://${foldRemote}`, "--name", "fold").status).toBe(0)
+  const cleanRemote = join(home, "remote-clean")
+  gitRepo(cleanRemote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  expect(ocm(home, "add", `file://${cleanRemote}`, "--name", "clean").status).toBe(0)
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" }) // ownership probe file
+
+  commitFoldedSibling(foldRemote)
+  writeFileSync(join(cleanRemote, "plugins", "tool", "commands", "new.md"), COMMAND)
+  commitAll(cleanRemote, "advance clean")
+  const cleanSha = shortSha(cleanRemote)
+
+  const updated = ocm(home, "update")
+  if (updated.status === 0) {
+    throw new Error(`ocm update must not exit 0 while a marketplace ships a folded plugins pair:\n${updated.stdout}\n${updated.stderr}`)
+  }
+  const output = `${updated.stdout}\n${updated.stderr}`
+  for (const needle of ["differ only in case", "plugins/case-Kit and plugins/case-kit", "ask the author to rename one"]) {
+    expect(output).toContain(needle)
+  }
+  // the folded marketplace keeps its previous revision and stays materialized
+  const fold = readRegistry(home).marketplaces.fold
+  if (!fold.revision?.includes(firstSha)) {
+    throw new Error(`expected fold.revision to still contain ${firstSha} after the refused update, got ${JSON.stringify(fold.revision)} in ${registryFile(home)}`)
+  }
+  assertResolves(commandLink(home, "case-kit", "run.md"), join(cloneDir(home, "fold"), "plugins", "case-Kit", "commands", "run.md"))
+  // the failure is isolated: the clean marketplace advanced in the same run
+  const clean = readRegistry(home).marketplaces.clean
+  if (!clean.revision?.includes(cleanSha)) {
+    throw new Error(`expected clean.revision to contain ${cleanSha} after the update, got ${JSON.stringify(clean.revision)} in ${registryFile(home)}`)
+  }
+  assertResolves(commandLink(home, "tool", "new.md"), join(cloneDir(home, "clean"), "plugins", "tool", "commands", "new.md"))
+  // the failure is recorded for the folded marketplace
+  if (fold.lastSync?.ok !== false) {
+    throw new Error(`expected fold.lastSync.ok === false in ${registryFile(home)}, got ${JSON.stringify(fold.lastSync)}`)
+  }
+  // invariant: ownership — the user's command survives the refused update
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+}, 240_000)
+
+phase("a local marketplace gaining a folded plugins pair between add and update skips the pair with a warning and keeps the installed link", async (home) => {
+  const mp = join(home, "mp-local")
+  writeTree(mp, { plugins: { "case-Kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp-local exited ${added.status}: ${added.stderr}`)
+  assertResolves(commandLink(home, "case-kit", "run.md"), join(mp, "plugins", "case-Kit", "commands", "run.md"))
+  // the sibling appears on disk between add and update
+  writeTree(join(mp, "plugins"), { "case-kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } })
+  // a case-insensitive host folds the pair onto one directory; the skip is
+  // only observable where both names really exist
+  const shipped = readdirSync(join(mp, "plugins"))
+  if (!shipped.includes("case-Kit") || !shipped.includes("case-kit")) return
+  const updated = ocm(home, "update", "mp-local")
+  if (updated.status !== 0) {
+    throw new Error(`the local update must succeed with the folded pair skipped, got exit ${updated.status}:\n${updated.stdout}\n${updated.stderr}`)
+  }
+  const output = `${updated.stdout}\n${updated.stderr}`
+  const skipped = output.split("\n").find((l) => l.includes("skipped"))
+  if (!skipped) throw new Error(`expected a skipped warning naming the folded pair in:\n${output}`)
+  for (const name of ["case-Kit", "case-kit"]) {
+    if (!skipped.includes(name)) throw new Error(`the skipped warning must name plugins/${name}:\n${skipped}`)
+  }
+  // the previously-installed plugin's link survives the skip untouched
+  assertResolves(commandLink(home, "case-kit", "run.md"), join(mp, "plugins", "case-Kit", "commands", "run.md"))
+})
 }
 
 // update hygiene: an unchanged update writes nothing — absorbed from test/phase26-update-hygiene.mjs

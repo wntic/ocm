@@ -4,6 +4,7 @@ import { dirname, join } from "node:path"
 import { setSkillsPath } from "./config.js"
 import { discoverPlugins, PLUGIN_NAME_RE } from "./discovery.js"
 import { gcTargets, isRenderedFile, link, mirror } from "./links.js"
+import { foldedComponentGroups } from "./limits.js"
 import { syncMcp } from "./mcp.js"
 import { LINKS_DIR, DISPLACED_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "./paths.js"
 import { readRegistry, isRecord } from "./registry.js"
@@ -106,7 +107,18 @@ export function materialize(name, dir, options = {}) {
       warnings.push(`skipped plugin "${plugin.name}": name must match ${PLUGIN_NAME_RE}`)
       continue
     }
+    // brief 28 §4: two component names that fold to one link name cannot
+    // both be served — the first in discovery order is kept, the sibling
+    // skipped before it can reach a desired set and silently replace it
+    const folded = new Set()
+    for (const group of foldedComponentGroups(plugin.components)) {
+      for (const name of group.names.slice(1)) {
+        folded.add(`${group.type}/${name}`)
+        warnings.push(`skipped ${plugin.name}:${name}: differs from ${group.names[0]} only in case — rename one in the marketplace`)
+      }
+    }
     for (const file of plugin.components.command ?? []) {
+      if (folded.has(`command/${file}`)) continue
       const source = resolveSource(plugin.dir, ["commands", "command"], file, ctx, plugin.name)
       if (!source) continue
       counts.command += 1
@@ -117,6 +129,7 @@ export function materialize(name, dir, options = {}) {
       else if (status !== "ok") skipped += 1
     }
     for (const file of plugin.components.agent ?? []) {
+      if (folded.has(`agent/${file}`)) continue
       const source = resolveSource(plugin.dir, ["agents", "agent"], file, ctx, plugin.name)
       if (!source) continue
       counts.agent += 1
@@ -127,6 +140,7 @@ export function materialize(name, dir, options = {}) {
       else if (status !== "ok") skipped += 1
     }
     for (const rel of plugin.components.skill ?? []) {
+      if (folded.has(`skill/${rel}`)) continue
       const sourceDir = resolveSource(plugin.dir, ["skills", "skill"], rel, ctx, plugin.name)
       if (!sourceDir) continue
       const skillMd = join(sourceDir, "SKILL.md")
@@ -146,6 +160,7 @@ export function materialize(name, dir, options = {}) {
       removed += mirrored.removed
     }
     for (const file of plugin.components.plugin ?? []) {
+      if (folded.has(`plugin/${file}`)) continue
       const source = resolveSource(plugin.dir, ["plugin", "plugins"], file, ctx, plugin.name)
       if (!source) continue
       counts.plugin += 1

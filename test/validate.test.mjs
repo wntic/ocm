@@ -198,6 +198,29 @@ phase("2. validate rejects YAML that opencode's sanitizer would have rescued", a
     throw new Error(`the quoted form parses strictly and must not be flagged:\n${output}`)
   }
 })
+
+// brief 28 §4: the fold rule is a name-level one, so validate reports it —
+// an author sees the pair before publishing, not after a user reports it
+phase("3. a folded plugin-directory pair and a folded command pair are both validate errors", async (home) => {
+  const mp = join(home, "folded-mp")
+  // the two case-Kit dirs ship different files, so the exact-name collision
+  // lint stays quiet and only the fold rule can fire
+  writeTree(mp, { plugins: {
+    "case-Kit": { "plugin.json": PLUGIN_JSON, commands: { "a.md": COMMAND } },
+    "case-kit": { "plugin.json": PLUGIN_JSON, commands: { "b.md": COMMAND } },
+    folded: { "plugin.json": PLUGIN_JSON, commands: { "Run.md": COMMAND, "run.md": COMMAND } },
+  } })
+  // a case-insensitive host folds both pairs onto single spellings; the
+  // lints are only observable where both names really exist
+  const dirs = readdirSync(join(mp, "plugins"))
+  const files = readdirSync(join(mp, "plugins", "folded", "commands"))
+  if (!dirs.includes("case-Kit") || !dirs.includes("case-kit") || !files.includes("Run.md") || !files.includes("run.md")) return
+  const result = ocm(home, "validate", mp)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 1) throw new Error(`validate folded-mp exited ${result.status}, expected 1:\n${output}`)
+  finding(output, "error", "differ only in case", "case-Kit", "case-kit")
+  finding(output, "error", "differ only in case", "Run.md", "run.md")
+})
 }
 
 // validate hardening: refuse to run nowhere, name the broken rule — absorbed from test/phase24-validate-hardening.mjs

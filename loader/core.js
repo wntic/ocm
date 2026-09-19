@@ -22,7 +22,7 @@ export {
 export { dirClashes, discoverPlugins } from "./discovery.js"
 export { displacedRecords, restoreDisplaced } from "./displaced.js"
 export { git, isGitRepo } from "./git.js"
-export { pluginLimitViolation } from "./limits.js"
+export { foldedComponentGroups, foldedDirPairs, pluginLimitViolation } from "./limits.js"
 export { lintCrossTool } from "./lint.js"
 export { tryRegistryLock, withRegistryLock } from "./lock.js"
 export { loadRegistryForWrite, normalizeRegistry, parseRegistryStrict, pluginRootEnv, readRegistry, registryWriterVersion, saveRegistry, versionCompare } from "./registry.js"

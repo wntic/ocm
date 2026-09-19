@@ -2,7 +2,9 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 export const HOME = homedir()
-export const OPENCODE_DIR = join(HOME, ".config", "opencode")
+// opencode's own rule: XDG_CONFIG_HOME replaces $HOME/.config; empty falls back
+const CONFIG_HOME = process.env.XDG_CONFIG_HOME || join(HOME, ".config")
+export const OPENCODE_DIR = join(CONFIG_HOME, "opencode")
 export const OPENCODE_CONFIG_FILE = join(OPENCODE_DIR, "opencode.json")
 export const OPENCODE_COMMANDS_DIR = join(OPENCODE_DIR, "commands")
 export const OPENCODE_AGENTS_DIR = join(OPENCODE_DIR, "agents")

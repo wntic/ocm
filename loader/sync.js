@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { writeJsonAtomic } from "./atomic.js"
-import { git, isGitRepo } from "./git.js"
+import { git, isGitRepo, treePluginFiles } from "./git.js"
+import { treeFoldRefusal } from "./limits.js"
 import { tryRegistryLock } from "./lock.js"
 import { removeMcpKeys } from "./mcp.js"
 import { enabledPlugins, materialize } from "./materialize.js"
@@ -15,7 +16,9 @@ import { executableComponents, trustFingerprint } from "./trust.js"
 // cloned branch rather than the default. Then hard-reset to FETCH_HEAD,
 // with @{u} as the fallback. An unreachable source fails as an ocm error
 // naming the url (spec 17).
-export async function pullRepo(dir, ref, url) {
+export async function pullRepo(entry, name) {
+  const dir = entry.dir
+  const ref = typeof entry.ref === "string" ? entry.ref : null
   const before = (await git(["rev-parse", "HEAD"], dir)).stdout
   // spec 26: `??` lines are untracked, the rest local changes — the counts
   // let the warning name what was discarded
@@ -27,8 +30,17 @@ export async function pullRepo(dir, ref, url) {
   if (!fetch.ok) {
     return {
       ok: false, changed: false, before, after: before, dirty, localChanges, untracked,
-      output: `cannot access ${url}${ref ? ` (ref "${ref}")` : ""} — the repository is private, unreachable, or the URL is wrong`,
+      output: `cannot access ${entry.url}${ref ? ` (ref "${ref}")` : ""} — the repository is private, unreachable, or the URL is wrong`,
     }
+  }
+  // brief 28 §3: the fetched tree is checked before the working tree moves —
+  // a folded pair cannot be held on a case-insensitive filesystem, so the
+  // reset would leave the clone incomplete (F89)
+  const sha = (await git(["rev-parse", "FETCH_HEAD"], dir)).stdout
+  const files = await treePluginFiles(dir, "FETCH_HEAD", entry.subdir)
+  const fold = files ? treeFoldRefusal(name, sha, files) : null
+  if (fold) {
+    return { ok: false, changed: false, before, after: before, dirty, localChanges, untracked, output: fold }
   }
   let reset = await git(["reset", "--hard", "FETCH_HEAD"], dir)
   if (!reset.ok) reset = await git(["reset", "--hard", "@{u}"], dir)
@@ -120,7 +132,7 @@ async function runSync(entries, options, result) {
     // `local === false` rather than `!entry.local`: an entry missing the
     // field must never be treated as an ocm-managed clone
     if (entry.local === false && isGitRepo(entry.dir)) {
-      const pull = await pullRepo(entry.dir, typeof entry.ref === "string" ? entry.ref : null, entry.url)
+      const pull = await pullRepo(entry, name)
       if (!pull.ok) {
         result.failed.push(name)
         result.errors[name] = pull.output

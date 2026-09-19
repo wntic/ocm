@@ -81,12 +81,12 @@ export function recloneMarketplace(entry: MarketplaceEntry): string {
 
 // pull, or re-clone a cleared cache (spec 08 edge cases); the revision
 // pair and the re-clone note land on the report
-async function pullMarketplace(entry: MarketplaceEntry, report: MarketplaceReport): Promise<void> {
+async function pullMarketplace(entry: MarketplaceEntry, name: string, report: MarketplaceReport): Promise<void> {
   if (entry.local) {
     // a local directory is the user's: reported and skipped, never re-created
     if (!existsSync(entry.dir)) report.note = `directory missing (${entry.dir}), skipping`
   } else if (existsSync(entry.dir)) {
-    const pull = await pullRepo(entry.dir, entry.ref, entry.url)
+    const pull = await pullRepo(entry, name)
     if (!pull.ok) throw new Error(pull.output)
     report.before = pull.before
     report.after = pull.after
@@ -112,7 +112,7 @@ async function updateOne(registry: Registry, name: string, trust?: boolean, plug
     renamed: [], removed: [], pruned: [], refused: [], plugins: [], warnings: [], materialized: null,
   }
   try {
-    await pullMarketplace(entry, report)
+    await pullMarketplace(entry, name, report)
     if (!report.note) {
       reconcile(registry, name, report, plugin)
       await decideUpdateTrust(name, entry, componentRoot(entry), trust)

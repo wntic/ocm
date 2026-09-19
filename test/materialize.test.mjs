@@ -492,3 +492,47 @@ test("9. opencode resolves every component shape ocm installs: command, agent, s
   })
   // opencode spawns: canary + error scan + name resolution (see harness.mjs)
 }, 420_000)
+
+// brief 28 §4: after the add-time refusals, no materialization run may
+// produce two desired link names that fold to one — the folded sibling is
+// skipped with a warning instead of silently replacing its twin
+test("10. a plugin shipping folded component names materializes at most one of each pair: no destination holds two names that fold to one", async () => {
+  await withFakeHome(async (home) => {
+    const JS = 'export default { id: "case-kit-notify", server: async () => ({}) }\n'
+    const mp = marketplace(home, { "case-kit": {
+      commands: { "Run.md": COMMAND, "run.md": COMMAND },
+      skills: {
+        Thing: { "SKILL.md": "---\nname: Thing\ndescription: thing guidance\n---\n\nBody.\n" },
+        thing: { "SKILL.md": "---\nname: thing\ndescription: thing guidance\n---\n\nBody.\n" },
+      },
+      plugin: { "Notify.js": JS, "notify.js": JS },
+    } })
+    const [report] = materialize(home, [["mp", mp, null]])
+    // compared folded, so the assertion also holds on a case-sensitive CI
+    // host: the guard must have skipped the sibling the pair folds onto
+    for (const dir of [join(cfg(home), "commands"), join(cfg(home), "agents"), join(cfg(home), "plugins"), skillsLinks(home)]) {
+      let names
+      try {
+        names = readdirSync(dir)
+      } catch {
+        continue // nothing materialized there
+      }
+      const seen = new Set()
+      for (const name of names) {
+        const folded = name.toLowerCase()
+        if (seen.has(folded)) throw new Error(`two materialized names fold to one in ${dir}: ${name}`)
+        seen.add(folded)
+      }
+    }
+    // where the fixture really ships both spellings, the folded sibling is
+    // skipped with a warning naming the collision; a case-insensitive host
+    // cannot hold the pair, so the fixture itself collapses there
+    const shipped = readdirSync(join(mp, "plugins", "case-kit", "commands"))
+    if (shipped.includes("Run.md") && shipped.includes("run.md")) {
+      const foldWarnings = (report.warnings ?? []).filter((l) => l.includes("only in case"))
+      if (!foldWarnings.some((l) => l.includes("case-kit"))) {
+        throw new Error(`expected a warning naming the folded command pair:\n${JSON.stringify(report.warnings)}`)
+      }
+    }
+  })
+})

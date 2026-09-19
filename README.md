@@ -364,6 +364,26 @@ re-installing is instant and offline.
   due for the next start. A lock whose holder is gone, older than 10
   minutes, or unreadable is broken with a warning.
 
+## Platform
+
+- **The config root follows opencode exactly.** ocm resolves the opencode
+  config root as `$XDG_CONFIG_HOME/opencode` when `XDG_CONFIG_HOME` is set
+  and non-empty, else `~/.config/opencode`; a relative value is joined, not
+  resolved, and `ocm doctor` warns about it. `~/.cache/ocm` always follows
+  `$HOME` and never moves. `OPENCODE_CONFIG_DIR` is ignored — opencode
+  appends to the config with it, it does not relocate the global config. If
+  the variable changes between shells, ocm reports the stranded install (an
+  error from `ocm doctor`, a stderr notice from mutating commands) and never
+  migrates it; recovery is re-adding the marketplaces or unsetting the
+  variable.
+- **Names must not differ only in case.** Plugin directory names, and the
+  component files within a plugin — commands, agents, skills, plugin JS
+  files — must not contain names that differ only in case. They are refused
+  at `ocm add`, reported by `ocm validate`, and skipped or stopped at
+  update. This holds on every platform, not just case-insensitive
+  filesystems, because plugin names are lowercased. MCP server keys are
+  exempt — they are JSON keys, with no filesystem behind them.
+
 ## Trust
 
 JS plugins and MCP servers execute. They materialize only after you approve

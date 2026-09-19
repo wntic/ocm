@@ -36,3 +36,14 @@ export function git(args, cwd) {
     child.on("close", (code) => finish({ ok: code === 0, stdout: stdout.trim(), stderr: stderr.trim() }))
   })
 }
+
+// brief 28 §3/§4: what the tree ships, not what the checkout could hold — a
+// case-insensitive checkout collapses a folded pair before discovery sees
+// it (F66). Returns marketplace-root-relative plugin file paths, or null on
+// a git error or an empty listing.
+export async function treePluginFiles(dir, ref, subdir) {
+  const pathspec = subdir ? `${subdir}/plugins/` : "plugins/"
+  const result = await git(["ls-tree", "-r", "--name-only", ref, "--", pathspec], dir)
+  if (!result.ok || !result.stdout) return null
+  return result.stdout.split("\n").map((line) => (subdir ? line.slice(subdir.length + 1) : line))
+}

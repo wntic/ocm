@@ -519,6 +519,223 @@ test("8. a quoted ~/ argument is expanded by ocm itself, and a bare owner/repo g
     assertAbsent(registryFile(home))
   })
 }, 240_000)
+
+// brief 28 §3: case-folded plugin directories. Two plugins/ entries that
+// differ only in case cannot both be represented on a case-insensitive
+// filesystem, so the pair is refused before any write.
+
+// git hash-object -w --stdin: create a blob without touching the working
+// tree, so the index can hold a path the checkout cannot represent
+function gitBlob(dir, contents) {
+  const result = spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd: dir, encoding: "utf8", input: contents })
+  if (result.status !== 0) throw new Error(`git hash-object failed in ${dir}: ${result.stderr}`)
+  return result.stdout.trim()
+}
+
+// commit a plugins/case-kit sibling beside the on-disk plugins/case-Kit:
+// the tree ships both names even where a checkout cannot hold both (F66)
+function commitFoldedSibling(dir) {
+  for (const [path, contents] of [
+    ["plugins/case-kit/plugin.json", PLUGIN_JSON],
+    ["plugins/case-kit/commands/run.md", COMMAND],
+  ]) {
+    git(dir, ["update-index", "--add", "--cacheinfo", `100644,${gitBlob(dir, contents)},${path}`])
+  }
+  // the index is committed directly: git add -A would collapse the folded
+  // entries back to the working tree's single directory on this host
+  git(dir, ["-c", "user.email=ocm@test", "-c", "user.name=ocm", "commit", "-m", "folded sibling"])
+  const listed = git(dir, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n")
+  for (const path of ["plugins/case-Kit/plugin.json", "plugins/case-kit/plugin.json"]) {
+    if (!listed.includes(path)) throw new Error(`fixture error: ${dir} HEAD does not ship ${path}: ${JSON.stringify(listed)}`)
+  }
+}
+
+// invariant: ocm never writes under another tool's directories
+function assertNoForeignToolDirs(home) {
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}
+
+phase("9. a local directory shipping a folded plugins pair is refused whole; a lone mixed-case directory adds cleanly", async (home) => {
+  // the user's config and command predate the refused add (invariants: config safety, ownership)
+  writeTree(cfg(home), {
+    "opencode.json": `${JSON.stringify({ model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }, null, 2)}\n`,
+    commands: { "mine.md": "# my own command\n" },
+  })
+  // negative control, runs on every host: mixed case alone is not a refusal
+  const lone = join(home, "lone-mp")
+  writeTree(lone, { plugins: { "mixed-Kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } } })
+  const loneAdd = ocm(home, ["add", lone])
+  if (loneAdd.status !== 0) {
+    throw new Error(`a lone mixed-case plugin directory must add cleanly — the refusal is about the pair, not the case — got exit ${loneAdd.status}:\n${loneAdd.output}`)
+  }
+  assertResolves(commandLink(home, "mixed-kit", "run.md"), join(lone, "plugins", "mixed-Kit", "commands", "run.md"))
+
+  const folded = join(home, "folded-mp")
+  writeTree(folded, { plugins: {
+    "case-Kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } },
+    "case-kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } },
+  } })
+  // a case-insensitive host folds the pair onto one directory; the refusal
+  // is only observable where both names really exist
+  const shipped = readdirSync(join(folded, "plugins"))
+  if (!shipped.includes("case-Kit") || !shipped.includes("case-kit")) return
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+  const links = snapOutput(home)
+  const result = ocm(home, ["add", folded])
+  if (result.status !== 1) throw new Error(`expected exit 1 from the folded-pair add, got ${result.status}:\n${result.output}`)
+  for (const needle of ["differ only in case", "plugins/case-Kit and plugins/case-kit", "ask the author to rename one"]) {
+    expect(result.output).toContain(needle)
+  }
+  // zero writes: registry, config and every link surface are byte-identical
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes)
+  expect(snapOutput(home)).toBe(links)
+  expect(readRegistry(home).marketplaces["folded-mp"]).toBeUndefined()
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+  assertNoForeignToolDirs(home)
+}, 240_000)
+
+phase("10. a git marketplace whose tree ships a folded plugins pair is refused whole: exit 1, the clone removed, zero writes", async (home) => {
+  // the user's config and command predate the refused add (invariants: config safety, ownership)
+  writeTree(cfg(home), {
+    "opencode.json": `${JSON.stringify({ model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }, null, 2)}\n`,
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const good = join(home, "good")
+  writeTree(good, { plugins: { keep: { "plugin.json": PLUGIN_JSON, commands: { "keep.md": COMMAND } } } })
+  expect(ocm(home, ["add", good]).status).toBe(0)
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+  const links = snapOutput(home)
+
+  const remote = join(home, "remote-case")
+  gitRepo(remote, { plugins: { "case-Kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } } })
+  commitFoldedSibling(remote)
+  const result = ocm(home, ["add", `file://${remote}`, "--name", "case-mp"])
+  if (result.status !== 1) throw new Error(`expected exit 1 from the folded-pair add, got ${result.status}:\n${result.output}`)
+  for (const needle of ["differ only in case", "plugins/case-Kit and plugins/case-kit", "ask the author to rename one"]) {
+    expect(result.output).toContain(needle)
+  }
+  assertAbsent(join(home, ".cache", "ocm", "marketplaces", "case-mp")) // the refused clone is cleaned up
+  // zero writes: registry, config and every link surface are byte-identical
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes)
+  expect(snapOutput(home)).toBe(links)
+  expect(readRegistry(home).marketplaces["case-mp"]).toBeUndefined()
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+  assertNoForeignToolDirs(home)
+}, 240_000)
+
+// brief 28 §4: case folding inside a plugin. Two component files that
+// differ only in case install to one link name on a case-insensitive
+// filesystem, so the pair is refused before any write — a name-level rule,
+// and the git half fires from the tree where a checkout cannot hold both.
+
+// commit a commands/run.md blob beside the on-disk commands/Run.md: the
+// tree ships both names even where a checkout cannot hold both
+function commitFoldedCommand(dir) {
+  git(dir, ["update-index", "--add", "--cacheinfo", `100644,${gitBlob(dir, COMMAND)},plugins/case-kit/commands/run.md`])
+  // the index is committed directly: git add -A would collapse the folded
+  // entry back to the working tree's single file on this host
+  git(dir, ["-c", "user.email=ocm@test", "-c", "user.name=ocm", "commit", "-m", "folded command sibling"])
+  const listed = git(dir, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n")
+  for (const path of ["plugins/case-kit/commands/Run.md", "plugins/case-kit/commands/run.md"]) {
+    if (!listed.includes(path)) throw new Error(`fixture error: ${dir} HEAD does not ship ${path}: ${JSON.stringify(listed)}`)
+  }
+}
+
+phase("11. a plugin shipping commands that differ only in case is refused whole; a lone mixed-case command adds cleanly", async (home) => {
+  // the user's config and command predate the refused add (invariants: config safety, ownership)
+  writeTree(cfg(home), {
+    "opencode.json": `${JSON.stringify({ model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }, null, 2)}\n`,
+    commands: { "mine.md": "# my own command\n" },
+  })
+  // negative control, runs on every host: mixed case alone is not a refusal
+  const lone = join(home, "lone-mp")
+  writeTree(lone, { plugins: { solo: { "plugin.json": PLUGIN_JSON, commands: { "Run.md": COMMAND } } } })
+  const loneAdd = ocm(home, ["add", lone])
+  if (loneAdd.status !== 0) {
+    throw new Error(`a lone mixed-case command must add cleanly — the refusal is about the pair, not the case — got exit ${loneAdd.status}:\n${loneAdd.output}`)
+  }
+  assertResolves(commandLink(home, "solo", "Run.md"), join(lone, "plugins", "solo", "commands", "Run.md"))
+
+  // local half: a case-insensitive host folds the pair onto one file; the
+  // refusal is only observable where both names really exist
+  const folded = join(home, "folded-mp")
+  writeTree(folded, { plugins: { "case-kit": { "plugin.json": PLUGIN_JSON, commands: { "Run.md": COMMAND, "run.md": COMMAND } } } })
+  const shipped = readdirSync(join(folded, "plugins", "case-kit", "commands"))
+  if (shipped.includes("Run.md") && shipped.includes("run.md")) {
+    const registryBytes = readFileSync(registryFile(home), "utf8")
+    const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+    const links = snapOutput(home)
+    const result = ocm(home, ["add", folded])
+    if (result.status !== 1) throw new Error(`expected exit 1 from the folded-command add, got ${result.status}:\n${result.output}`)
+    for (const needle of [
+      'plugin "case-kit" ships two commands that differ only in case',
+      "commands/Run.md and commands/run.md both install as case-kit:run.md",
+      "rename one in the marketplace",
+    ]) {
+      expect(result.output).toContain(needle)
+    }
+    // zero writes: registry, config and every link surface are byte-identical
+    expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
+    expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes)
+    expect(snapOutput(home)).toBe(links)
+    expect(readRegistry(home).marketplaces["folded-mp"]).toBeUndefined()
+  }
+
+  // git half, runs on every host: the tree ships both paths even where a
+  // checkout cannot hold both — this is the half that covers F66
+  const good = join(home, "good")
+  writeTree(good, { plugins: { keep: { "plugin.json": PLUGIN_JSON, commands: { "keep.md": COMMAND } } } })
+  expect(ocm(home, ["add", good]).status).toBe(0)
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+  const links = snapOutput(home)
+  const remote = join(home, "remote-case")
+  gitRepo(remote, { plugins: { "case-kit": { "plugin.json": PLUGIN_JSON, commands: { "Run.md": COMMAND } } } })
+  commitFoldedCommand(remote)
+  const result = ocm(home, ["add", `file://${remote}`, "--name", "case-mp"])
+  if (result.status !== 1) throw new Error(`expected exit 1 from the folded-command add, got ${result.status}:\n${result.output}`)
+  for (const needle of ["differ only in case", "plugins/case-kit/commands/Run.md and plugins/case-kit/commands/run.md", "both install as case-kit:run.md"]) {
+    expect(result.output).toContain(needle)
+  }
+  assertAbsent(join(home, ".cache", "ocm", "marketplaces", "case-mp")) // the refused clone is cleaned up
+  // zero writes: registry, config and every link surface are byte-identical
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes)
+  expect(snapOutput(home)).toBe(links)
+  expect(readRegistry(home).marketplaces["case-mp"]).toBeUndefined()
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+  assertNoForeignToolDirs(home)
+}, 240_000)
+
+phase("12. mcp.json server keys that differ only in case stay two servers: the fold rule guards link names, never JSON keys", async (home) => {
+  // invariant: config safety — the user's key predates the add and survives it
+  writeTree(cfg(home), { "opencode.json": `${JSON.stringify({ model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }, null, 2)}\n` })
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { p: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "work.md": COMMAND },
+    "mcp.json": json({ Everything: { type: "local", command: ["echo", "upper"], enabled: true }, everything: { type: "local", command: ["echo", "lower"], enabled: true } }),
+  } } })
+  const added = ocm(home, ["add", mp, "--trust"])
+  if (added.status !== 0) throw new Error(`ocm add --trust exited ${added.status}:\n${added.output}`)
+  const mcp = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8")).mcp
+  expect(mcp["ocm--p--Everything"]).toEqual({ type: "local", command: ["echo", "upper"], enabled: true })
+  expect(mcp["ocm--p--everything"]).toEqual({ type: "local", command: ["echo", "lower"], enabled: true })
+  expect(mcp["user-server"]).toEqual({ type: "local", command: ["echo"] })
+})
 }
 
 // collisions: plugin-name collisions across marketplaces — absorbed from test/phase18-collisions.mjs
@@ -893,4 +1110,101 @@ phase("6. ownership and cache layout: user config and files survive the cycle, t
   if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
   // invariant: no plugin-load errors attributable to ocm-installed files
 }, 900_000)
+}
+
+// brief 28 §2.3: the stranded-install mutation notice — add, init, update,
+// install and trust warn once on stderr and proceed; nothing is refused
+{
+const NOTICE_LEAD = "warning: an ocm install is stranded in another config root"
+
+// the file-level ocm helper cannot set the child's XDG_CONFIG_HOME, and the
+// notice only exists when the variable moves the active root
+function ocmEnv(home, args, env = {}, timeout = 120_000) {
+  const r = spawnSync(process.execPath, [OCM_BIN, ...args], {
+    env: withFakeOpencode({ ...process.env, HOME: home, ...env }), encoding: "utf8", timeout,
+  })
+  return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }
+}
+
+const noticeCount = (stderr) => stderr.split("\n").filter((l) => l.includes(NOTICE_LEAD)).length
+
+// the whole default config tree as one comparable string: names and contents
+// (walkPaths lists directories too; only files and links carry bytes)
+const snapConfig = (home) => {
+  const root = join(home, ".config")
+  return walkPaths(root)
+    .filter((p) => !lstatSync(p).isDirectory())
+    .map((p) => `${relative(root, p)}\n${readFileSync(p, "utf8")}`)
+    .join("\n--\n")
+}
+
+phase("1. ocm add under a set XDG_CONFIG_HOME warns once about the install stranded in the default root, still succeeds, and leaves the default root byte-identical", async (home) => {
+  expect(ocmEnv(home, ["init"]).status).toBe(0)
+  writeTree(join(home, "mp-one"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocmEnv(home, ["add", join(home, "mp-one")]).status).toBe(0)
+  const configSnapshot = snapConfig(home)
+  const xdg = join(home, "xdg")
+  writeTree(join(home, "mp-two"), { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } } } })
+  const added = ocmEnv(home, ["add", join(home, "mp-two")], { XDG_CONFIG_HOME: xdg })
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}, expected the mutation to proceed:\n${added.output}`)
+  if (noticeCount(added.stderr) !== 1) throw new Error(`expected the stranded notice exactly once on stderr, got ${noticeCount(added.stderr)}:\n${added.stderr}`)
+  for (const needle of [`installed at: ${join(home, ".config", "opencode")} (1 marketplace)`, `this shell:   ${join(xdg, "opencode")} (XDG_CONFIG_HOME is set)`]) {
+    if (!added.stderr.includes(needle)) throw new Error(`the stranded notice lacks "${needle}":\n${added.stderr}`)
+  }
+  const xdgRegistry = JSON.parse(readFileSync(join(xdg, "opencode", "ocm", "registry.json"), "utf8"))
+  if (!xdgRegistry.marketplaces["mp-two"]) {
+    throw new Error(`expected marketplace "mp-two" in ${join(xdg, "opencode", "ocm", "registry.json")}, got ${JSON.stringify(Object.keys(xdgRegistry.marketplaces))}`)
+  }
+  expect(snapConfig(home)).toBe(configSnapshot) // the default root does not move
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 420_000)
+
+phase("2. a fresh install under a set XDG_CONFIG_HOME, with no install anywhere, prints no stranded notice and breadcrumbs its own root", async (home) => {
+  const env = { XDG_CONFIG_HOME: join(home, "xdg") }
+  const init = ocmEnv(home, ["init"], env)
+  if (init.status !== 0) throw new Error(`ocm init exited ${init.status}:\n${init.output}`)
+  if (noticeCount(init.stderr) !== 0) throw new Error(`nothing is stranded anywhere, yet stderr carries the notice:\n${init.stderr}`)
+  writeTree(join(home, "mp"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  const added = ocmEnv(home, ["add", join(home, "mp")], env)
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}:\n${added.output}`)
+  if (noticeCount(added.stderr) !== 0) throw new Error(`nothing is stranded anywhere, yet stderr carries the notice:\n${added.stderr}`)
+  assertFileExists(join(home, "xdg", "opencode", "ocm", "registry.json"))
+  const rootsFile = join(home, ".cache", "ocm", "roots.json")
+  const recorded = existsSync(rootsFile) ? JSON.parse(readFileSync(rootsFile, "utf8")) : null
+  if (!recorded?.roots?.includes(join(home, "xdg", "opencode"))) {
+    throw new Error(`expected the breadcrumb at ${rootsFile} to record the xdg root after a registry write, got ${JSON.stringify(recorded)}`)
+  }
+}, 300_000)
+
+phase("3. every noticing command prints the stranded notice once before its own behaviour: init, update, install, trust", async (home) => {
+  expect(ocmEnv(home, ["init"]).status).toBe(0)
+  writeTree(join(home, "mp"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocmEnv(home, ["add", join(home, "mp")]).status).toBe(0)
+  const xdg = join(home, "xdg")
+  const env = { XDG_CONFIG_HOME: xdg }
+  const defaultRoot = join(home, ".config", "opencode")
+  const noticed = (label, result) => {
+    const count = noticeCount(result.stderr)
+    if (count !== 1) throw new Error(`expected the stranded notice exactly once on stderr from ocm ${label}, got ${count}:\n${result.stderr}`)
+    if (!result.stderr.includes(`installed at: ${defaultRoot}`)) throw new Error(`the notice from ocm ${label} must name the stranded default root:\n${result.stderr}`)
+  }
+  const init = ocmEnv(home, ["init"], env)
+  if (init.status !== 0) throw new Error(`ocm init exited ${init.status}:\n${init.output}`)
+  noticed("init", init)
+  // every remaining command must see an active root with no registry file —
+  // the notice's condition — so the xdg root is cleared before each run
+  for (const args of [["update"], ["install", "some-plugin"], ["trust", "mp"]]) {
+    rmSync(xdg, { recursive: true, force: true })
+    noticed(args.join(" "), ocmEnv(home, args, env))
+  }
+}, 600_000)
 }

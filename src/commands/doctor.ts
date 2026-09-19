@@ -10,8 +10,9 @@ import { materializeLinks } from "../install"
 import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OCM_REGISTRY_FILE } from "../paths"
 import { error, fixed, reportFindings, warning, type Finding } from "../findings"
 import { ocmPluginErrors } from "../probe"
+import { strandedMessage, strandedRoots } from "../stranded"
 import { checkConfig } from "./doctor-config"
-import { checkBrokenLinks, checkForbiddenPaths, checkMaterialized } from "./doctor-links"
+import { checkBrokenLinks, checkFoldedRecords, checkForbiddenPaths, checkMaterialized } from "./doctor-links"
 import { checkDisplaced, checkOrphanMirrors, checkStrays } from "./doctor-orphans"
 import { recloneMarketplace } from "./update"
 
@@ -19,15 +20,34 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+// brief 28 §1 edge case: a relative XDG_CONFIG_HOME makes the install move
+// with the cwd — warn rather than silently resolving it, because an install
+// that moves is not an install
+function relativeXdgWarning(): string | null {
+  const xdg = process.env.XDG_CONFIG_HOME
+  if (!xdg || xdg.startsWith("/")) return null
+  return "XDG_CONFIG_HOME is relative — every ocm command run from a different directory sees a different install; set it to an absolute path"
+}
+
 export function doctor(fix: boolean): void {
-  // spec 20 F1: diagnostics explain a broken install, not an absent one
+  // brief 28 §2.2: an install stranded in the other config root replaces the
+  // not-installed sentence — the install exists, and `ocm init` would create
+  // a second one
+  const stranded = strandedRoots()
+  const relative = relativeXdgWarning()
   if (!existsSync(OCM_DIR)) {
-    console.error("error: ocm is not installed here — run ocm init")
+    if (relative) console.error(`warning: ${relative}`)
+    // brief 28 §2.2: every stranded root, not just the first — a user who
+    // fixes the first should not discover the second later
+    for (const s of stranded) console.error(`error: ${strandedMessage(s)}`)
+    if (!stranded.length) console.error("error: ocm is not installed here — run ocm init")
     process.exitCode = 1
     return
   }
   console.log("doctor")
   const findings: Finding[] = []
+  if (relative) findings.push(warning(relative))
+  for (const s of stranded) findings.push(error(strandedMessage(s)))
   const registry = readRegistry()
   checkWriterVersion(findings)
   checkGitPath(findings)
@@ -45,6 +65,7 @@ export function doctor(fix: boolean): void {
   checkOrphanMirrors(registry, findings, fix && registryUsable)
   checkDisplaced(registry, findings)
   checkMaterialized(registry, findings, fix)
+  checkFoldedRecords(registry, findings)
   checkForbiddenPaths(registry, findings)
   for (const line of ocmPluginErrors()) findings.push(error(`${line} (ocm update)`))
   if (reportFindings(findings)) process.exitCode = 1
