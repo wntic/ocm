@@ -42,6 +42,13 @@ point: a test the implementer can change is not a check.
 syntax, it is building far more than the brief asked for. Size budgets live in
 the `ocm-code-style` skill and the verifier reports against them.
 
+A brief that changes the repository's own machinery — the test suite, the
+gate, the skills, the docs — goes to `/ocm:refactor <brief>` instead. That
+agent's permissions **deny `src/`, `loader/` and `bin/` outright**, so a
+tooling brief cannot quietly change what ocm does; the T-series briefs
+(`T1`, `T2`, …) are all of this kind. `/ocm:build` is for briefs that change
+ocm's behaviour, and only those.
+
 `/ocm:gate` runs the gate alone. `/ocm:probe` asks the real opencode binary
 what it sees. `/ocm:commit` verifies the gate, then stages and commits — never
 pushes, amends or resets.
