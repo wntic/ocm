@@ -22,6 +22,7 @@ const LOADER_MODULE = fileURLToPath(new URL("../src/loader.ts", import.meta.url)
 const PLUGIN_ERROR = /level=ERROR.*failed to load plugin/
 
 let opencodeOnPath
+let canaryDetectsErrors
 
 export async function withFakeHome(fn) {
   const home = mkdtempSync(join(tmpdir(), "ocm-home-"))
@@ -53,52 +54,62 @@ function runChild(home, modulePath, exportName) {
 // plugin proves this probe can still detect errors before a clean result is
 // believed (same contract as scripts/oc-probe.sh exit 2). Never call this at
 // module scope — the opencode spawns belong inside test bodies.
+//
+// Opt-in: without OCM_PROBE=1 the probe reports unavailable, so a plain
+// `bun test` never pays for opencode spawns. scripts/check.sh sets it for its
+// test step, and scripts/oc-probe.sh scans plugin errors as its own step.
 export function opencodeProbe(configDir, home, cwd = REPO_ROOT) {
+  if (!process.env.OCM_PROBE) return { available: false, optIn: true }
   if (opencodeOnPath === undefined) {
     opencodeOnPath = spawnSync("opencode", ["--version"], { encoding: "utf8", timeout: 30_000 }).status === 0
   }
   if (!opencodeOnPath) return { available: false }
-  const scratch = mkdtempSync(join(tmpdir(), "ocm-probe-"))
-  try {
-    const canaryHome = join(scratch, "home")
-    const canaryConfig = join(scratch, "config")
-    mkdirSync(canaryHome)
-    mkdirSync(join(canaryConfig, "plugins"), { recursive: true })
-    writeFileSync(
-      join(canaryConfig, "plugins", "canary.js"),
-      'export default { id: "probe-canary", setup: async () => ({}) }\n',
-    )
-    if (pluginErrorLines(canaryConfig, canaryHome).length === 0) return { available: true, unreliable: true }
-    let config, skills
-    return {
-      available: true,
-      pluginErrors: pluginErrorLines(configDir, home, cwd),
-      // resolved names are lazy getters: each spawns opencode, and a caller
-      // that only wants pluginErrors must not pay for spawns it never uses
-      get commands() {
-        config ??= debugJson(configDir, home, cwd, ["debug", "config"]) ?? {}
-        return Object.keys(config.command ?? {})
-      },
-      // the full resolved entries, not just names — precedence tests need to
-      // see which file's description won
-      get commandEntries() {
-        config ??= debugJson(configDir, home, cwd, ["debug", "config"]) ?? {}
-        return config.command ?? {}
-      },
-      get agents() {
-        config ??= debugJson(configDir, home, cwd, ["debug", "config"]) ?? {}
-        return Object.keys(config.agent ?? {})
-      },
-      get skills() {
-        if (skills === undefined) {
-          const parsed = debugJson(configDir, home, cwd, ["debug", "skill"])
-          skills = Array.isArray(parsed) ? parsed.map((s) => s?.name).filter(Boolean) : []
-        }
-        return skills
-      },
+  // the canary is identical every call, so its spawn is cached for the
+  // process — one canary per suite instead of one per probe
+  if (canaryDetectsErrors === undefined) {
+    const scratch = mkdtempSync(join(tmpdir(), "ocm-probe-"))
+    try {
+      const canaryHome = join(scratch, "home")
+      const canaryConfig = join(scratch, "config")
+      mkdirSync(canaryHome)
+      mkdirSync(join(canaryConfig, "plugins"), { recursive: true })
+      writeFileSync(
+        join(canaryConfig, "plugins", "canary.js"),
+        'export default { id: "probe-canary", setup: async () => ({}) }\n',
+      )
+      canaryDetectsErrors = pluginErrorLines(canaryConfig, canaryHome).length > 0
+    } finally {
+      rmSync(scratch, { recursive: true, force: true })
     }
-  } finally {
-    rmSync(scratch, { recursive: true, force: true })
+  }
+  if (!canaryDetectsErrors) return { available: true, unreliable: true }
+  let config, skills
+  return {
+    available: true,
+    pluginErrors: pluginErrorLines(configDir, home, cwd),
+    // resolved names are lazy getters: each spawns opencode, and a caller
+    // that only wants pluginErrors must not pay for spawns it never uses
+    get commands() {
+      config ??= debugJson(configDir, home, cwd, ["debug", "config"]) ?? {}
+      return Object.keys(config.command ?? {})
+    },
+    // the full resolved entries, not just names — precedence tests need to
+    // see which file's description won
+    get commandEntries() {
+      config ??= debugJson(configDir, home, cwd, ["debug", "config"]) ?? {}
+      return config.command ?? {}
+    },
+    get agents() {
+      config ??= debugJson(configDir, home, cwd, ["debug", "config"]) ?? {}
+      return Object.keys(config.agent ?? {})
+    },
+    get skills() {
+      if (skills === undefined) {
+        const parsed = debugJson(configDir, home, cwd, ["debug", "skill"])
+        skills = Array.isArray(parsed) ? parsed.map((s) => s?.name).filter(Boolean) : []
+      }
+      return skills
+    },
   }
 }
 

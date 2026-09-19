@@ -1,19 +1,24 @@
-// Phase 01 — docs/specs/01-loader.md. One test per numbered item in its
-// Tests section, then the edge cases, with the spec 00 invariants asserted
-// where they apply (config safety, idempotence, ownership, no plugin errors).
+// The loader bootstrap: what `ocm init` installs, what opencode
+// loads at startup, and uninstall hygiene.
+
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { expect, mock, test } from "bun:test"
 import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome } from "./harness.mjs"
 
+// Helpers shared verbatim by the absorbed files below.
+
 // The installed set is the repository's loader/ directory, by definition
 // (spec 01, "Installation set"): ocm-loader.js -> plugins/, every other
 // *.js / *.d.ts -> ocm/. Derived, never enumerated, so a split of the core
 // needs no amendment here — but a partial install or a stray still fails.
 const LOADER_DIR = fileURLToPath(new URL("../loader", import.meta.url))
+
 const LOADER_NAMES = readdirSync(LOADER_DIR).filter((name) => /\.(js|d\.ts)$/.test(name))
+
 const INSTALLED = LOADER_NAMES.map((name) => (name === "ocm-loader.js" ? `plugins/${name}` : `ocm/${name}`))
+
 const OCM_FILES = LOADER_NAMES.filter((name) => name !== "ocm-loader.js")
 
 function cfg(home) {
@@ -39,6 +44,8 @@ function assertDirContains(dir, names) {
   }
 }
 
+// the loader bootstrap — absorbed from test/phase01-loader.mjs
+{
 test("1. installs exactly the repository's loader/ directory; plugins/ holds only ocm-loader.js", async () => {
   await withFakeHome(async (home, ocm) => {
     expectOk(await ocm.installLoader())
@@ -196,7 +203,7 @@ test("7. opencode reports no plugin-load errors for ocm files", async () => {
     expectOk(await ocm.installLoader())
     const probe = opencodeProbe(cfg(home), home)
     if (!probe.available) {
-      console.log("skipped: opencode is not on PATH")
+      console.log("skipped:", probe.optIn ? "OCM_PROBE not set" : "opencode is not on PATH")
       return
     }
     if (probe.unreliable) {
@@ -255,3 +262,4 @@ test("edge: unparseable tui.json — warn, leave untouched, print the manual ent
     expect(result.stderr).toContain("./ocm/ui.js")
   })
 })
+}

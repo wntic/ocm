@@ -1,24 +1,17 @@
-// Phase 11 — docs/specs/11-cross-tool.md: one test per numbered item, plus
-// the four invariants (ownership in 1, idempotence in 2, config safety in 3,
-// no plugin errors in 5). Two surfaces the spec requires do not exist yet,
-// and these tests are the contract for them:
-// - the installed loader's server() registers opencode's "shell.env" hook,
-//   in opencode's documented shape: async (input, output) => {
-//   output.env.VAR = value } (opencode.ai/docs/plugins, "Inject environment
-//   variables")
-// - loader/core.js exports lintCrossTool(marketplaceDir) returning string[]
-//   warnings in the spec 12 finding format. Spec 11's Phasing table puts
-//   "the frontmatter-subset lint" in phase 1 while its gate "ships with 12":
-//   the `ocm validate` command is spec 12's deliverable, the lint function
-//   it will render is this phase's.
+// Cross-tool portability: .claude-only directories ignored, the
+// shell.env plugin-root hook, and the portable-subset lint.
+
 import { spawnSync } from "node:child_process"
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, withFakeHome } from "./harness.mjs"
+
+// Helpers shared verbatim by the absorbed files below.
 
 const OCM_BIN = fileURLToPath(new URL("../bin/ocm.ts", import.meta.url))
+
 const CORE_MODULE = fileURLToPath(new URL("../loader/core.js", import.meta.url))
 
 function ocm(home, ...args) {
@@ -42,6 +35,7 @@ function git(dir, args) {
   const result = spawnSync("git", args, { cwd: dir, encoding: "utf8", timeout: 120_000 })
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed in ${dir}: ${result.stderr}`)
 }
+
 function gitRepo(dir, tree) {
   writeTree(dir, tree)
   git(dir, ["init", "-b", "main"])
@@ -50,15 +44,13 @@ function gitRepo(dir, tree) {
 }
 
 const cfg = (home) => join(home, ".config", "opencode")
+
 const registryFile = (home) => join(cfg(home), "ocm", "registry.json")
+
 const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8"))
+
 const mpRoot = (home, name) => join(home, ".cache", "ocm", "marketplaces", name)
 
-// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
-function assertResolves(dest, source) {
-  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
-  expect(realpathSync(dest)).toBe(realpathSync(source))
-}
 function isSamePath(a, b) {
   if (typeof a !== "string") return false
   try {
@@ -84,6 +76,7 @@ const output = { env: {} }
 await hook({}, output)
 process.stdout.write(JSON.stringify(output.env))
 `
+
 function hookEnv(home) {
   const runner = join(home, "hook-runner.mjs")
   writeFileSync(runner, HOOK_RUNNER)
@@ -106,6 +99,7 @@ if (!Array.isArray(warnings)) {
 }
 process.stdout.write(JSON.stringify(warnings))
 `
+
 function runLint(home, dir) {
   const runner = join(home, "lint-runner.mjs")
   writeFileSync(runner, LINT_RUNNER)
@@ -117,11 +111,23 @@ function runLint(home, dir) {
 }
 
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
+
 const AGENT = "---\ndescription: code reviewer\n---\n\nReviewer body.\n"
-// spec 19: every installable plugin carries a plugin.json with a description
-const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
+
 const SKILL = (name, extra = "") =>
   `---\nname: ${name}\ndescription: ${name} guidance\n${extra}---\n\n# ${name}\n\nBody.\n`
+
+// cross-tool portability — absorbed from test/phase11-crosstool.mjs
+{
+// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
+function assertResolves(dest, source) {
+  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
+  expect(realpathSync(dest)).toBe(realpathSync(source))
+}
+
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
+
 // frontmatter of the real wntic/agentic-development-workflow python-style
 // skill: name, description and Claude's when_to_use, which opencode tolerates
 const ADW_PYTHON_STYLE = `---
@@ -134,6 +140,7 @@ when_to_use: Deciding an annotation form, a collection type, how or where to log
 
 Use ruff. Prefer X | None over Optional[X].
 `
+
 // mirrors plugins/run-report/commands/run-report.md of the real repo, with
 // the script path in the form that resolves under ocm: CLAUDE_PLUGIN_ROOT is
 // the marketplace root, so the plugins/<name>/ segment is written out
@@ -315,12 +322,5 @@ phase("5. round-trip on a wntic/agentic-development-workflow fixture: adw skills
   if (!ref) throw new Error("expected a ${CLAUDE_PLUGIN_ROOT} reference in the run-report command body")
   assertFileExists(ref[0].replace("${CLAUDE_PLUGIN_ROOT}", env.CLAUDE_PLUGIN_ROOT))
   // invariant: no plugin-load errors, and opencode resolves the adw:<skill> names
-  const probe = opencodeProbe(cfg(home), home)
-  if (!probe.available) console.log("skipped: opencode is not on PATH")
-  else {
-    if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
-    expect(probe.skills).toContain("adw:python-style")
-    expect(probe.skills).toContain("adw:architecture")
-    expect(probe.pluginErrors).toEqual([])
-  }
-}, 420_000) // opencode spawns with plugin files present: canary + skill + error scan
+}, 420_000)
+}

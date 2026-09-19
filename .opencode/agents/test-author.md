@@ -54,14 +54,14 @@ behaviour, not an accident of the test.
 
 ## Rules
 
-- **Load `ocm-test-harness` and `ocm-code-style` before writing.** The
+- **Load `ocm-testing` and `ocm-code-style` before writing.** The
   fake-home pattern is not guessable, and the size budgets are what keep the
   harness a harness instead of a framework.
 - **The harness is shared and small.** Add a helper to it only when this
   phase's tests actually call it. A helper written for a future phase is
   deleted on sight.
 - **Tests must fail first, for the right reason.** After writing, run
-  `bun test test/phase<NN>-*.mjs` and confirm each failure is "not
+  `bun test test/<area>.test.mjs` and confirm each failure is "not
   implemented" — a missing export, a missing file — and not a typo in your
   own fixture. Report the failure list.
 - **Assert observable behaviour.** The symlink exists and points here; the

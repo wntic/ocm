@@ -57,10 +57,12 @@ fi
 step "tests"
 TEST_FILES=()
 if [ -d test ]; then
-  for f in test/*.mjs; do [ -e "$f" ] && TEST_FILES+=("$f"); done
+  for f in test/*.test.mjs; do [ -e "$f" ] && TEST_FILES+=("$f"); done
 fi
 if [ "${#TEST_FILES[@]}" -gt 0 ]; then
-  if "${TEST_CMD[@]}" "${TEST_FILES[@]}"; then
+  # OCM_PROBE=1 turns the opt-in in-test probes back on for the gate; a plain
+  # `bun test` runs the same files without ever spawning opencode.
+  if OCM_PROBE=1 "${TEST_CMD[@]}" "${TEST_FILES[@]}"; then
     echo "tests: passed"
   else
     echo "tests: FAILED"

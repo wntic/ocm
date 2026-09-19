@@ -105,7 +105,7 @@ Five project skills carry the knowledge that is not in the code:
 | `ocm-contract` | touching the loader, the materializer, or any config write |
 | `ocm-architecture` | deciding which file a change belongs in |
 | `ocm-invariants` | before calling any file-writing change done |
-| `ocm-test-harness` | writing anything under `test/` |
+| `ocm-testing` | writing anything under `test/` |
 
 Commit messages: imperative subject, prose body explaining *why*, no trailers
 of any kind. `git log` is the reference.
