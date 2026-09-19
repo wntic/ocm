@@ -701,7 +701,7 @@ reference agent, command rendering, docs (35).
 | F83 raw EACCES/ENOTDIR from `~/.cache` | fix — ocm-style error, name the path and the action | 32 §3 | v0.8.0 |
 | F84 plugin-root vars empty in `!` blocks | fix — render-time substitution (decision 2) | 35 §2 | v0.7.0 |
 | F85 `--fix` promises removals it never does | fix — message states what `--fix` will actually do | 33 §2 | v0.8.0 |
-| F86 corrupt registry: `ocm update` exits 0 | fix — corruption is an error with a recovery path | 32 §4 | v0.8.0 |
+| F86 corrupt registry: `ocm update` exits 0 | fix — corruption is an error, never an empty registry. **Re-triaged as data loss**: `loadRegistryForWrite` (`loader/registry.js:74-83`) turns an unparseable registry into an empty one, and any mutation then saves that back over the user's marketplaces; the likeliest cause is F64's race, so the two ship together | 27 §5 | **v0.6.0** |
 | F87 stale displacement records re-reported | fix — consume/prune records on restore | 27 §3 | v0.6.0 |
 | F88 plugin-scoped update strands mirrors | fix — form dropped (decision 3) | 31 §5 | v0.7.0 |
 | F89 case collision cross-wires a command link | fix — with F66 | 28 §2 | v0.6.0 |
