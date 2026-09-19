@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, withFakeHome, assertFileExists } from "./harness.mjs"
+import { assertAbsent, withFakeHome, assertFileExists, withFakeOpencode } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -289,7 +289,7 @@ phase("7. ocm untrust removes the executable components and leaves stuff in plac
 // the trust flow: add-time decisions, fingerprints, what stays blocked — absorbed from test/phase16-trust-flow.mjs
 {
 function ocm(home, args, timeout = 120_000) {
-  const r = spawnSync(process.execPath, [OCM_BIN, ...args], { env: { ...process.env, HOME: home }, encoding: "utf8", timeout })
+  const r = spawnSync(process.execPath, [OCM_BIN, ...args], { env: withFakeOpencode({ ...process.env, HOME: home }), encoding: "utf8", timeout })
   return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }
 }
 

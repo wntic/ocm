@@ -1,0 +1,19 @@
+#!/bin/sh
+# Fake opencode for tests that run `ocm doctor`. The product's probe
+# (src/probe.ts) shells out to `opencode debug skill --print-logs
+# --log-level ERROR`; this stub answers that exact call in milliseconds, so
+# a doctor test does not pay a real opencode start (~6s each). Set
+# OCM_FAKE_PLUGIN_ERROR=1 to make it report one ocm-attributable
+# plugin-load error instead — the line must satisfy the probe's filters
+# (level=ERROR, "failed to load plugin", an /ocm-- path) or doctor will
+# not count it.
+case "$*" in
+  "debug skill --print-logs --log-level ERROR") ;;
+  *)
+    echo "fake-opencode: unexpected arguments: $*" >&2
+    exit 1
+    ;;
+esac
+if [ -n "${OCM_FAKE_PLUGIN_ERROR:-}" ]; then
+  echo "level=ERROR msg=\"failed to load plugin\" plugin=${OPENCODE_CONFIG_DIR:-/unknown}/plugins/ocm--demo--broken.js error=\"fake plugin error\""
+fi

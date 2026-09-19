@@ -50,6 +50,15 @@ function runChild(home, modulePath, exportName) {
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
 }
 
+// Prepend test/fixtures (home of the fake-opencode stub) to a child env's
+// PATH, so the product's doctor probe (src/probe.ts) answers in milliseconds
+// instead of one real opencode start per doctor run. Opt out per call with
+// { real: true } when a test wants the genuine binary.
+export function withFakeOpencode(env, { real = false } = {}) {
+  if (real) return env
+  return { ...env, PATH: `${fileURLToPath(new URL("./fixtures", import.meta.url))}:${env.PATH ?? ""}` }
+}
+
 // Ask the real opencode binary what it sees in configDir. The canary broken
 // plugin proves this probe can still detect errors before a clean result is
 // believed (same contract as scripts/oc-probe.sh exit 2). Never call this at

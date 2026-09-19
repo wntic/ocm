@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, withFakeHome } from "./harness.mjs"
+import { assertAbsent, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -881,7 +881,7 @@ phase("9. config safety and idempotence across an add/update cycle for a .openco
 {
 function ocm(home, args, timeout = 120_000) {
   const result = spawnSync(process.execPath, [OCM_BIN, ...args], {
-    env: { ...process.env, HOME: home }, encoding: "utf8", timeout,
+    env: withFakeOpencode({ ...process.env, HOME: home }), encoding: "utf8", timeout,
   })
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", output: `${result.stdout ?? ""}\n${result.stderr ?? ""}` }
 }
