@@ -21,7 +21,8 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.3.0 | specs 16–19 | published 2026-09-14 |
 | v0.4.0 | specs 20–22 | published 2026-09-15 |
 | v0.5.0 | specs 23–26 | published 2026-09-15 |
-| v0.5.1 | spec 35 §1, §3, §4 (docs and template only) | planned |
+| v0.5.1 | brief 35 §1, §3, §4 (docs and template only) | published 2026-09-19 |
+| v0.6.0 | briefs 27, 28, 29, 34 — write safety, platform, manifest gate, MCP shape | tagged 2026-09-20 |
 
 Rules:
 
