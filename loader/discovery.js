@@ -134,7 +134,12 @@ export function mcpShapeError(server) {
 
 function listMcpServers(pluginDir) {
   const servers = readMcpServers(join(pluginDir, "mcp.json"))
-  return servers ? Object.keys(servers).sort() : []
+  // $schema is metadata, not a server. A native-shape file carrying one used
+  // to surface it as a component everywhere — listed by ocm list, offered for
+  // approval in the trust prompt, and written into opencode.json, which
+  // refused to start. syncMcp and lintMcpJson already skip it; these are the
+  // remaining two readers that must agree (brief 34 §1.1).
+  return servers ? Object.keys(servers).filter((name) => name !== "$schema").sort() : []
 }
 
 // the mcp source file: the marketplace entry's mcpServers path when it

@@ -776,6 +776,11 @@ phase("19. a shape-invalid ocm-- MCP key is a doctor error naming plugin and ser
   // the pre-1.18 shape v0.5.0 wrote: no "type", a string command. The plugin
   // is known to the registry, so the orphaned-key check cannot be what fires
   before.mcp["ocm--adw--legacy"] = { command: "node", args: ["server.js"] }
+  // review finding: a server name may itself contain "--". Deriving a plugin
+  // name from the bad key and handing it to the plugin-scoped writer would
+  // take this valid sibling with it through the writer's prefix branch.
+  const nested = { type: "local", command: ["date"], enabled: true }
+  before.mcp["ocm--adw--legacy--sub"] = nested
   writeFileSync(configPath, json(before))
   const userServer = JSON.stringify(before.mcp["user-server"])
 
@@ -792,6 +797,7 @@ phase("19. a shape-invalid ocm-- MCP key is a doctor error naming plugin and ser
   const after = JSON.parse(readFileSync(configPath, "utf8"))
   expect(after.mcp["ocm--adw--legacy"]).toBeUndefined() // exactly the offending key removed
   expect(after.mcp["ocm--adw--db"]).toBeDefined() // the valid sibling of the same plugin survives
+  expect(after.mcp["ocm--adw--legacy--sub"]).toEqual(nested) // a server whose name contains "--" is not collateral
   expect(JSON.stringify(after.mcp["user-server"])).toBe(userServer) // the user's own entry, byte-identical
   expect(after.model).toBe(userConfig.model) // config safety: outside ocm's keys, untouched
 }, 600_000)

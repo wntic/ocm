@@ -335,4 +335,5 @@ export declare function skipTrust(name: string): void
 export declare function denyTrust(name: string): CoreDenyResult
 export declare function revokeTrust(name: string): CoreDenyResult
 export declare function removeMcpKeys(pluginNames: string[]): string | null
+export declare function removeMcpKeysExact(keys: string[]): string | null
 export declare function searchPlugins(query: string, options?: { enabledOnly?: boolean }): CoreSearchMatch[]

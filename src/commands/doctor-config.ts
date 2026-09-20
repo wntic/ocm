@@ -3,7 +3,7 @@
 // return a warning string on failure instead of throwing — a failed write is
 // an error finding, never a corrupted config.
 import { existsSync, readFileSync } from "node:fs"
-import { mcpShapeError, removeMcpKeys, setSkillsPath } from "../../loader/core.js"
+import { mcpShapeError, removeMcpKeys, removeMcpKeysExact, setSkillsPath } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { OCM_LINKS_DIR, OPENCODE_GLOBAL_CONFIG } from "../paths"
 import { error, fixed, warning, type Finding } from "../findings"
@@ -87,10 +87,9 @@ function checkMcpKeys(config: Record<string, unknown>, registry: CoreRegistry, f
     else for (const { key } of orphaned) findings.push(fixed(`${key}: removed from opencode.json`))
   }
   if (invalid.length) {
-    // the key's suffix, not the plugin segment: the writer's exact-match
-    // branch then removes precisely the offending key, and a valid sibling
-    // like ocm--<plugin>--db survives
-    const failure = removeMcpKeys([...new Set(invalid.map(({ key }) => key.slice(5)))])
+    // exactly the offending keys: a valid sibling like ocm--<plugin>--db
+    // stays, and so does anything nested under the bad key's name
+    const failure = removeMcpKeysExact(invalid.map(({ key }) => key))
     if (failure) findings.push(error(failure))
     else for (const { key } of invalid) findings.push(fixed(`${key}: removed from opencode.json`))
   }

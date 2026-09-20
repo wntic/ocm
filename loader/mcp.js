@@ -100,6 +100,21 @@ export function syncMcp(plugins, dir, entry, enabled, approved, warnings, name) 
 // servers left in it. Returns a warning instead of printing — the core
 // never prints.
 export function removeMcpKeys(pluginNames) {
+  return removeOwnedMcp((key) =>
+    pluginNames.some((name) => key === `ocm--${name}` || key.startsWith(`ocm--${name}--`)),
+  )
+}
+
+// doctor's invalid-entry fix needs key precision, not plugin-scoped removal:
+// exactly these keys go, and a valid sibling under the same plugin stays.
+// Passing a key's suffix to removeMcpKeys would work through its prefix
+// branch and also take ocm--<plugin>--<key>--*, which is not what was asked.
+export function removeMcpKeysExact(keys) {
+  const wanted = new Set(keys)
+  return removeOwnedMcp((key) => wanted.has(key))
+}
+
+function removeOwnedMcp(matches) {
   let raw
   try {
     raw = readFileSync(OPENCODE_CONFIG_FILE, "utf8")
@@ -114,9 +129,7 @@ export function removeMcpKeys(pluginNames) {
   }
   if (!isRecord(config) || !isRecord(config.mcp)) return null
   const mcp = config.mcp
-  const owned = Object.keys(mcp).filter((key) =>
-    pluginNames.some((name) => key === `ocm--${name}` || key.startsWith(`ocm--${name}--`)),
-  )
+  const owned = Object.keys(mcp).filter((key) => key.startsWith("ocm--") && matches(key))
   if (!owned.length) return null
   for (const key of owned) delete mcp[key]
   if (!Object.keys(mcp).length) delete config.mcp

@@ -1418,5 +1418,12 @@ phase("6. a native mcp.json's top-level $schema is metadata, not a server entry:
   const schemaKeys = Object.keys(mcp).filter((key) => key.endsWith("--$schema"))
   if (schemaKeys.length) throw new Error(`expected no ocm--*--$schema key in ${configFile(home)}, found: ${schemaKeys.join(", ")}`)
   expect(mcp["user-server"]).toEqual(userServer)
+  // review finding: skipping $schema at the write is half the job — it must
+  // not be a component either, or ocm list offers a phantom server and the
+  // trust prompt asks the user to approve a metadata key
+  const listed = ocm(home, ["list", "--all"])
+  if (listed.stdout.includes("$schema")) throw new Error(`$schema must not be listed as a component:\n${listed.stdout}`)
+  const info = ocm(home, ["info", "clock"])
+  if (info.stdout.includes("$schema")) throw new Error(`$schema must not appear in ocm info:\n${info.stdout}`)
 })
 }
