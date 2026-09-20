@@ -52,6 +52,9 @@ export function executableComponents(dir, entry) {
     // actually run rather than an Agent Plugins wrapper key
     const servers = readMcpServers(mcpFile)
     for (const [server, value] of Object.entries(servers ?? {})) {
+      // metadata, not a server: it must never be offered for approval, nor
+      // sit in the fingerprint (brief 34 §1.1 — the readers agree)
+      if (server === "$schema") continue
       components.push({
         rel: `${relative(dir, mcpFile)}:${server}`,
         hash: sha256(canonicalJson(value)),

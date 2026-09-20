@@ -3,7 +3,7 @@
 // return a warning string on failure instead of throwing — a failed write is
 // an error finding, never a corrupted config.
 import { existsSync, readFileSync } from "node:fs"
-import { removeMcpKeys, setSkillsPath } from "../../loader/core.js"
+import { mcpShapeError, removeMcpKeys, removeMcpKeysExact, setSkillsPath } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { OCM_LINKS_DIR, OPENCODE_GLOBAL_CONFIG } from "../paths"
 import { error, fixed, warning, type Finding } from "../findings"
@@ -61,19 +61,36 @@ function checkMcpKeys(config: Record<string, unknown>, registry: CoreRegistry, f
     for (const name of Object.keys(entry.plugins ?? {})) known.add(name)
   }
   const orphaned: { key: string; plugin: string }[] = []
-  for (const key of Object.keys(mcp)) {
+  const invalid: { key: string; plugin: string; server: string; shapeError: string }[] = []
+  for (const [key, value] of Object.entries(mcp)) {
     if (!key.startsWith("ocm--")) continue
-    const plugin = key.slice(5).split("--")[0]!
+    const rest = key.slice(5)
+    const plugin = rest.split("--")[0]!
     if (!known.has(plugin)) orphaned.push({ key, plugin })
+    // brief 34 §1.4: every ocm-- entry, not just known plugins' — a bad key
+    // written by v0.5.0 predates the registry's shape guarantee
+    const shapeError = mcpShapeError(value)
+    if (shapeError !== null) invalid.push({ key, plugin, server: rest.slice(plugin.length + 2), shapeError })
   }
-  if (!orphaned.length) return
   if (!fix) {
     for (const { key, plugin } of orphaned) {
       findings.push(error(`${key}: orphaned MCP key — plugin "${plugin}" is not in the registry`))
     }
+    for (const { key, plugin, server, shapeError } of invalid) {
+      findings.push(error(`${key}: invalid MCP entry — plugin "${plugin}", server "${server}" ${shapeError}; opencode would refuse to start (ocm doctor --fix)`))
+    }
     return
   }
-  const failure = removeMcpKeys([...new Set(orphaned.map(({ plugin }) => plugin))])
-  if (failure) findings.push(error(failure))
-  else for (const { key } of orphaned) findings.push(fixed(`${key}: removed from opencode.json`))
+  if (orphaned.length) {
+    const failure = removeMcpKeys([...new Set(orphaned.map(({ plugin }) => plugin))])
+    if (failure) findings.push(error(failure))
+    else for (const { key } of orphaned) findings.push(fixed(`${key}: removed from opencode.json`))
+  }
+  if (invalid.length) {
+    // exactly the offending keys: a valid sibling like ocm--<plugin>--db
+    // stays, and so does anything nested under the bad key's name
+    const failure = removeMcpKeysExact(invalid.map(({ key }) => key))
+    if (failure) findings.push(error(failure))
+    else for (const { key } of invalid) findings.push(fixed(`${key}: removed from opencode.json`))
+  }
 }

@@ -263,8 +263,12 @@ materialize only after trust is granted for their marketplace — until then
 they are reported as `blocked (untrusted)`. Each must default-export
 `{ id, server }` (see `template/plugins/demo-kit/plugin/notify.js`).
 
-`mcp.json` uses exactly opencode's `mcp` entry shape; an entry missing "type"
-is a validate error:
+`mcp.json` uses exactly opencode's `mcp` entry shape: `"type": "local"`
+with a `command` array of strings, or `"type": "remote"` with a `url`. An
+omitted `enabled` is normalised to `true` at the write; an entry
+missing "type" — or the pre-1.18 `command`/`args` form — is a validate
+error, and ocm blocks it at install with a warning rather than writing
+it, because opencode refuses to start over it:
 
 ```json
 {

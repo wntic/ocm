@@ -3,7 +3,7 @@
 // dependency; the schema files exist for editors).
 import { existsSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
-import { marketplaceManifestFile, pluginGateFindings, readRegistry } from "../loader/core.js"
+import { marketplaceManifestFile, mcpShapeError, pluginGateFindings, readMcpServers, readRegistry } from "../loader/core.js"
 import type { CoreDiscoveredPlugin } from "../loader/core.js"
 import { error, warning, type Finding } from "./findings"
 
@@ -262,12 +262,19 @@ export function lintMcpJson(root: string, pluginDir: string, findings: Finding[]
   const servers = mcpServers ?? parsed
   for (const [server, value] of Object.entries(servers)) {
     if (server === "$schema") continue
-    if (!isRecord(value) || value.type === undefined) {
-      findings.push(error(`${rel}: entry "${server}" is missing "type"`))
-    } else if (mcpServers !== undefined && value.type === "stdio" && typeof value.command !== "string") {
+    if (mcpServers !== undefined && isRecord(value) && value.type === "stdio" && typeof value.command !== "string") {
       // AP requires "command", so the file is malformed; the entry is skipped
       // at install time too (spec 14 §9)
       findings.push(warning(`${rel}: entry "${server}" is missing "command" — skipped; Agent Plugins requires it`))
     }
+  }
+  // brief 34 §1.4: judge the translated entries — what syncMcp would write —
+  // not the raw file, or every Agent Plugins entry would be rejected
+  const translated = readMcpServers(file)
+  if (!translated) return
+  for (const [server, value] of Object.entries(translated)) {
+    if (server === "$schema") continue
+    const shapeError = mcpShapeError(value)
+    if (shapeError !== null) findings.push(error(`${rel}: entry "${server}" ${shapeError}`))
   }
 }

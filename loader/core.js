@@ -19,7 +19,7 @@ export {
   REGISTRY_FILE,
   STAMP_FILE,
 } from "./paths.js"
-export { dirClashes, discoverPlugins } from "./discovery.js"
+export { dirClashes, discoverPlugins, mcpShapeError, readMcpServers } from "./discovery.js"
 export { displacedRecords, restoreDisplaced } from "./displaced.js"
 export { git, isGitRepo } from "./git.js"
 export { foldedComponentGroups, foldedDirPairs, pluginLimitViolation } from "./limits.js"
@@ -44,5 +44,6 @@ export {
 } from "./marketplace.js"
 export { incumbentMarketplace } from "./collisions.js"
 export { denyTrust, grantTrust, resolvePlugin, revokeTrust, setEnabled, skipTrust } from "./mutations.js"
-export { removeMcpKeys } from "./mcp.js"
+export { mcpTrustLine } from "./mcp-line.js"
+export { removeMcpKeys, removeMcpKeysExact } from "./mcp.js"
 export { searchPlugins } from "./search.js"

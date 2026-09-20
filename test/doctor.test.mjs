@@ -751,4 +751,54 @@ phase("18. an installed marketplace whose registry records a folded command pair
   // the links are left alone: the report never uninstalls a working command
   assertResolves(link, join(mp, "plugins", "case-kit", "commands", "run.md"))
 }, 420_000)
+
+// brief 34 §1.4: a shape-invalid ocm-- mcp key written by v0.5.0, before the
+// guard existed — doctor reports it naming the plugin and the server, and
+// --fix removes exactly the offending key (the only recovery path that does
+// not require hand-editing JSON, since ocm still runs when opencode does not)
+phase("19. a shape-invalid ocm-- MCP key is a doctor error naming plugin and server; --fix removes exactly that key and leaves the user's own mcp entries byte-identical", async (home) => {
+  // config safety: the user's keys predate every ocm write
+  const userConfig = { model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }
+  writeTree(cfg(home), { "opencode.json": json(userConfig) })
+  expect(ocm(home, ["init"]).status).toBe(0)
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "commit.md": COMMAND },
+    "mcp.json": json({ db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } }),
+  } } })
+  expect(ocm(home, ["add", mp, "--trust"]).status).toBe(0)
+  const configPath = configFile(home)
+  const before = JSON.parse(readFileSync(configPath, "utf8"))
+  if (before.mcp?.["ocm--adw--db"] === undefined) {
+    throw new Error(`expected ocm--adw--db in ${configPath} after the add:\n${JSON.stringify(before.mcp ?? null)}`)
+  }
+  // the pre-1.18 shape v0.5.0 wrote: no "type", a string command. The plugin
+  // is known to the registry, so the orphaned-key check cannot be what fires
+  before.mcp["ocm--adw--legacy"] = { command: "node", args: ["server.js"] }
+  // review finding: a server name may itself contain "--". Deriving a plugin
+  // name from the bad key and handing it to the plugin-scoped writer would
+  // take this valid sibling with it through the writer's prefix branch.
+  const nested = { type: "local", command: ["date"], enabled: true }
+  before.mcp["ocm--adw--legacy--sub"] = nested
+  writeFileSync(configPath, json(before))
+  const userServer = JSON.stringify(before.mcp["user-server"])
+
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) {
+    throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a shape-invalid ocm-- key:\n${diagnosed.output}`)
+  }
+  // the key names the plugin and the server: ocm--<plugin>--<server>
+  const line = diagnosed.output.split("\n").find((l) => /^\s*error\b/.test(l) && l.includes("ocm--adw--legacy"))
+  if (!line) throw new Error(`expected an error finding naming the bad key ocm--adw--legacy:\n${diagnosed.output}`)
+
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}:\n${fixed.output}`)
+  const after = JSON.parse(readFileSync(configPath, "utf8"))
+  expect(after.mcp["ocm--adw--legacy"]).toBeUndefined() // exactly the offending key removed
+  expect(after.mcp["ocm--adw--db"]).toBeDefined() // the valid sibling of the same plugin survives
+  expect(after.mcp["ocm--adw--legacy--sub"]).toEqual(nested) // a server whose name contains "--" is not collateral
+  expect(JSON.stringify(after.mcp["user-server"])).toBe(userServer) // the user's own entry, byte-identical
+  expect(after.model).toBe(userConfig.model) // config safety: outside ocm's keys, untouched
+}, 600_000)
 }

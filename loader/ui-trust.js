@@ -1,6 +1,7 @@
 // The trust flows of the /ocm TUI dialog (spec 10b): the prompt renders the
 // same component list the CLI prints before a trust decision (spec 07).
 import { componentRoot, denyTrust, executableComponents, grantTrust, readRegistry, withRegistryLock } from "./core.js"
+import { mcpTrustLine } from "./mcp-line.js"
 import { NOTICE, message, toast } from "./ui-dialog.js"
 import { confirm } from "./ui-modals.js"
 
@@ -11,10 +12,7 @@ function trustMessage(name, dir, components) {
     if (component.kind === "plugin") {
       lines.push(`  plugin  ${component.plugin}/${component.name.replace(/\.[jt]s$/, "")} (${component.rel})`)
     } else {
-      const value = component.value
-      const command = Array.isArray(value?.command) ? value.command.join(" ") : ""
-      const detail = value && typeof value.url === "string" ? `remote server: ${value.url}` : `local server: ${command}`
-      lines.push(`  mcp     ${component.plugin}/${component.name} (${detail})`)
+      lines.push(mcpTrustLine(component))
     }
   }
   lines.push("this code runs with your shell's permissions on every opencode start.")

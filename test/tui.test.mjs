@@ -1037,3 +1037,52 @@ test("10. the scroll viewport moves on ↑/↓/j/k, clamps at the ends, and indi
   })
 })
 }
+
+// brief 34 §2: the TUI's trust message and the CLI's trust listing are one
+// block (spec 07) — compared directly, so the two renderers cannot drift
+// apart again
+test("1. trustMessage equals the CLI trust listing for the same components, across every command form", async () => {
+  await withFakeHome(async (home) => {
+    // invariants: config safety and ownership — the user's keys and file
+    // predate the add and survive it
+    writeTree(cfg(home), {
+      "opencode.json": `${JSON.stringify({ model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }, null, 2)}\n`,
+      commands: { "mine.md": "# my own command\n" },
+    })
+    const mp = join(home, "mp")
+    // every form §2 renders: array command, string command + args, remote
+    // url, nothing renderable — the last two are shape-invalid, so their
+    // lines carry the annotation
+    writeTree(mp, { plugins: { p: {
+      "plugin.json": PLUGIN_JSON,
+      plugin: { "notify.js": JS_PLUGIN },
+      "mcp.json": mcpJson({
+        array: { type: "local", command: ["node", "server.js"], enabled: true },
+        bare: {},
+        remote: { type: "remote", url: "https://mcp.example.com/sse", enabled: true },
+        string: { command: "node", args: ["/path/server.js", "--port", "3000"] },
+      }),
+    } } })
+    const added = cli(home, "add", mp, "--trust")
+    if (added.status !== 0) throw new Error(`ocm add --trust exited ${added.status}:\n${added.stdout}\n${added.stderr}`)
+    const lines = added.stdout.split("\n")
+    const start = lines.findIndex((l) => l.includes("ships code that opencode will execute"))
+    const end = lines.findIndex((l) => l.startsWith("review it at "))
+    if (start === -1 || end === -1 || end < start) throw new Error(`expected the trust listing block in:\n${added.stdout}`)
+    const block = lines.slice(start, end + 1)
+    const name = block[0].match(/^marketplace "(.+)" ships code/)?.[1]
+    const dir = block[block.length - 1].slice("review it at ".length)
+    const core = await loadModule("core.js")
+    const components = core.executableComponents(mp, null)
+    const ui = await loadModule("ui-trust.js")
+    if (typeof ui.trustMessage !== "function") throw new Error("loader/ui-trust.js does not export trustMessage()")
+    // trustMessage ends with the question the CLI asks separately (with its
+    // [y/N/skip] hint, on stderr); everything before it is the listing
+    expect(ui.trustMessage(name, dir, components)).toBe([...block, "trust this marketplace to run code?"].join("\n"))
+    const config = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
+    expect(config.model).toBe("claude-sonnet-4-6")
+    expect(config.mcp["user-server"]).toEqual({ type: "local", command: ["echo"] })
+    expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+    // invariant: no plugin-load errors attributable to ocm-installed files
+  })
+})

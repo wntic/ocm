@@ -600,4 +600,95 @@ phase("8. search matches plugin JS file names and MCP server names, with matched
     }
   }
 })
+
+phase("9. a piped add leaves trust undecided: list and list --all mark the executables blocked, search agrees, and info is unchanged", async (home) => {
+  // invariants: config safety and ownership — the user's keys and their own
+  // command predate the add and must survive the renders
+  writeTree(cfg(home), {
+    "opencode.json": json({ model: "claude-sonnet-4-6", permission: { edit: "allow" } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { kit: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "work.md": COMMAND },
+    plugin: { "notify.js": JS_PLUGIN },
+    "mcp.json": mcpJson({ everything: SERVER }),
+  } } })
+  // spawned stdio is not a TTY: the trust prompt is skipped, not answered
+  expect(ocm(home, ["add", mp]).status).toBe(0)
+  const trust = readRegistry(home).marketplaces.mp.trust.code
+  if (trust !== "none") throw new Error(`expected the piped add to leave trust "none", got "${trust}"`)
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+
+  const marker = "(blocked \u2014 ocm trust mp)"
+  const listed = ocm(home, ["list"])
+  if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}: ${listed.output}`)
+  const all = ocm(home, ["list", "--all"])
+  if (all.status !== 0) throw new Error(`ocm list --all exited ${all.status}: ${all.output}`)
+  for (const output of [listed.stdout, all.stdout]) {
+    expect(lineWith(output, "plugins: notify.js")).toContain(marker)
+    expect(lineWith(output, "mcp: everything")).toContain(marker)
+  }
+
+  const found = ocm(home, ["search", "kit"])
+  if (found.status !== 0) throw new Error(`ocm search kit exited ${found.status}: ${found.output}`)
+  const searchLine = lineWith(found.stdout, "kit@mp")
+  expect(searchLine).toContain("(blocked)")
+  // list and search agree on the boolean: both call the executables blocked
+  const listBlocked = lineWith(listed.stdout, "plugins: notify.js").includes("(blocked")
+  expect(listBlocked).toBe(searchLine.includes("(blocked)"))
+
+  // info is unchanged by this: no blocked marker, the trust line states the code
+  const info = ocm(home, ["info", "kit"])
+  if (info.status !== 0) throw new Error(`ocm info kit exited ${info.status}: ${info.output}`)
+  expect(info.stdout).not.toContain("blocked")
+  const trustLine = info.stdout.split("\n").find((l) => /^\s*trust\b/.test(l))
+  if (!trustLine || !trustLine.includes("none")) {
+    throw new Error(`expected the trust line to state none in:\n${info.stdout}`)
+  }
+
+  // invariant: idempotence — the renders write nothing
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes)
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+  // invariant: no plugin-load errors attributable to ocm-installed files
+})
+
+phase("10. a granted marketplace is marked by neither surface, a denied one by both: list and search agree", async (home) => {
+  // distinct component names, so each marketplace's lines are unambiguous
+  const addKit = (mpName, plugin, pluginFile, serverName, ...flags) => {
+    const dir = join(home, mpName)
+    writeTree(dir, { plugins: { [plugin]: {
+      "plugin.json": PLUGIN_JSON,
+      commands: { "work.md": COMMAND },
+      plugin: { [pluginFile]: JS_PLUGIN },
+      "mcp.json": mcpJson({ [serverName]: SERVER }),
+    } } })
+    expect(ocm(home, ["add", dir, ...flags]).status).toBe(0)
+  }
+  addKit("mp-ok", "ok-kit", "notify.js", "db", "--trust")
+  addKit("mp-deny", "deny-kit", "alert.js", "store", "--no-trust")
+
+  const listed = ocm(home, ["list"])
+  if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}: ${listed.output}`)
+  const found = ocm(home, ["search", "kit"])
+  if (found.status !== 0) throw new Error(`ocm search kit exited ${found.status}: ${found.output}`)
+
+  // list and search agree on blocked-ness in every trust state
+  const cases = [
+    // [list needle, search result line, expected blocked]
+    ["plugins: notify.js", "ok-kit@mp-ok", false], // granted
+    ["mcp: db", "ok-kit@mp-ok", false],
+    ["plugins: alert.js", "deny-kit@mp-deny", true], // denied
+    ["mcp: store", "deny-kit@mp-deny", true],
+  ]
+  for (const [listNeedle, searchNeedle, expected] of cases) {
+    expect(lineWith(listed.stdout, listNeedle).includes("(blocked")).toBe(expected)
+    expect(lineWith(found.stdout, searchNeedle).includes("(blocked)")).toBe(expected)
+  }
+  // the denied marker carries the remedy, as it already did (no regression)
+  expect(lineWith(listed.stdout, "plugins: alert.js")).toContain("(blocked \u2014 ocm trust mp-deny)")
+}, 420_000)
 }

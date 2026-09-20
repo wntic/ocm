@@ -13,7 +13,7 @@ import { componentRoot, materializeLinks } from "../install"
 import { loadRegistryForWrite, saveRegistry } from "../registry"
 import { reportMutationWarnings, reportRestart, reportUpgrade, reportWarnings } from "../report"
 import type { MarketplaceEntry } from "../types"
-import { promptTrust } from "./trust-prompt"
+import { printTrustListing, promptTrust } from "./trust-prompt"
 
 // a decline: first sight denies the whole marketplace (spec 07); a re-prompt
 // denies only the components it was about, naming what stops running
@@ -137,11 +137,16 @@ export async function trust(name: string, yes = false): Promise<void> {
     console.log(`marketplace "${name}" already trusted`)
     return
   }
-  const decision = yes
-    ? "granted"
-    : await promptTrust(name, entry.dir, components, () => {
+  let decision: "granted" | "denied" | "skipped"
+  if (yes) {
+    // a blind grant still shows what it grants (spec 16 §4)
+    printTrustListing(name, entry.dir, components)
+    decision = "granted"
+  } else {
+    decision = await promptTrust(name, entry.dir, components, () => {
       console.error(`interrupted — marketplace "${name}" is unchanged; the trust decision was not recorded`)
     })
+  }
   if (decision === "granted") {
     const result = grantTrust(name)
     reportDecision(name, result)
