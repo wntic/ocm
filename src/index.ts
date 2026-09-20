@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs"
 import { basename } from "node:path"
 import { registryWriterVersion, versionCompare, withRegistryLock } from "../loader/core.js"
-import { installLoader, migrateLegacyLayout, packageVersion, reportTuiPlugin, uninstallLoader } from "./loader"
+import { installLoader, loaderStatus, migrateLegacyLayout, packageVersion, reportTuiPlugin, uninstallLoader } from "./loader"
 import { migrateInstallation, migrationNeeded } from "./migrate"
 import { OCM_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG } from "./paths"
 import { add, pin, remove } from "./commands/marketplace"
@@ -121,6 +121,29 @@ async function mutating<T>(command: string, fn: () => T | Promise<T>): Promise<T
   return withRegistryLock(command, fn)
 }
 
+// An upgraded CLI left the installed loader behind: opencode kept running the
+// previous version's modules at every start — with its config root and none of
+// this version's fixes — until the user happened to run a mutating command.
+// Refreshing is idempotent and belongs to ocm, so any command may do it; it
+// writes, so it takes the lock, on the same detect-first rule migrations use.
+// A home where the loader was never installed is left alone: that is `ocm
+// init`'s job, not a side effect of running `ocm list`.
+async function refreshStaleLoader(command: string | undefined): Promise<void> {
+  if (command === undefined || command === "help" || command === "init") return
+  const status = loaderStatus()
+  if (!status.some((file) => file.state !== "missing")) return
+  if (!status.some((file) => file.state !== "current")) return
+  const previous = registryWriterVersion()
+  await withRegistryLock(`ocm ${command}`, () => {
+    installLoader(false, false)
+    console.log(
+      previous && previous !== packageVersion()
+        ? `refreshed the auto-sync loader: ${previous} → ${packageVersion()} (restart opencode to activate)`
+        : `refreshed the auto-sync loader to ${packageVersion()} (restart opencode to activate)`,
+    )
+  })
+}
+
 export async function main(argv: string[]): Promise<void> {
   const [command, ...rest] = argv
   const { positional, flags, values } = parseArgs(rest)
@@ -132,6 +155,7 @@ export async function main(argv: string[]): Promise<void> {
       migrateInstallation()
     })
   }
+  await refreshStaleLoader(command)
 
   switch (command) {
     case undefined:

@@ -34,6 +34,12 @@ function terminalSize() {
 // spec 22 §2: greedy word wrap; a word longer than the width is broken across
 // lines, never clipped
 export function wrapText(text, width) {
+  // a terminal that reports zero columns makes every derived width negative,
+  // and `rest.slice(0, -n)` is "" while `rest.slice(-n)` is the whole word —
+  // the hard-break loop below then never terminates and opencode spins at
+  // 100% CPU until it is killed. There is nothing sensible to wrap to here,
+  // so hand the text back unwrapped.
+  if (!(width > 0)) return String(text).split("\n")
   const lines = []
   for (const paragraph of String(text).split("\n")) {
     let line = ""
@@ -75,7 +81,8 @@ export function fit(lines) {
   const terminal = terminalSize()
   const need = dialogSize(lines, terminal)
   const bucket = BUCKETS.find(([, columns]) => need.width <= columns && columns <= terminal.width - 2) ?? BUCKETS[0]
-  const frame = Math.min(bucket[1], terminal.width - 2)
+  // never below the chrome the rows themselves need (see wrapText)
+  const frame = Math.max(ROW_CHROME + 1, Math.min(bucket[1], terminal.width - 2))
   const wrapped = lines.flatMap((line) => wrapText(line, frame - ROW_CHROME))
   const cap = Math.max(1, terminal.height - Math.floor(terminal.height / 4) - 6)
   return { lines: wrapped, size: bucket[0], viewport: wrapped.length > cap ? createViewport(wrapped.length, cap) : null }

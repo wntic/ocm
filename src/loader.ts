@@ -175,11 +175,14 @@ export function migrateLegacyLayout(): void {
 // Returns whether the TUI plugin entry was written: the files must install
 // before a trust prompt (spec 16), but the line is a notice and prints after
 // the verb's headline (spec 23 §6)
-export function installLoader(acknowledgeCurrent = true): boolean {
+// `announce` is off for the stale-loader refresh, which prints its own line
+// naming the version transition — the generic "installed" line there would say
+// less and say it twice
+export function installLoader(acknowledgeCurrent = true, announce = true): boolean {
   migrateLegacyLayout()
   const written = installFiles(loaderSourceDir())
-  if (written.loader) console.log(`installed auto-sync loader (${join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME)})`)
-  else if (acknowledgeCurrent) console.log("auto-sync loader already current")
+  if (written.loader && announce) console.log(`installed auto-sync loader (${join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME)})`)
+  else if (!written.loader && acknowledgeCurrent) console.log("auto-sync loader already current")
   return written.tui
 }
 

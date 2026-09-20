@@ -988,8 +988,35 @@ test("8. wrapText wraps at the width: the expected line count, no line wider tha
     const broken = wrapText("abcdefghij", 4)
     expect(broken.length).toBe(3)
     expect(broken.every((l) => l.length <= 4)).toBe(true)
+    // round-4 F206: a terminal reporting zero columns makes every derived
+    // width negative. slice(0, -n) is "" and slice(-n) is the whole word, so
+    // the hard-break loop above never terminated and opencode span at 100%
+    // CPU until it was killed. Nothing sensible to wrap to: hand it back.
+    expect(wrapText("a long word here", -11)).toEqual(["a long word here"])
+    expect(wrapText("x", 0)).toEqual(["x"])
+    expect(wrapText("one\ntwo", -1)).toEqual(["one", "two"])
   })
 })
+
+test("8b. fit() terminates and stays inside the frame when the terminal reports no size (round-4 F206)", async () => {
+  await withFakeHome(async () => {
+    const mod = await loadModule("ui-dialog.js")
+    const fit = required(mod, "fit", "loader/ui-dialog.js", "round-4 F206: an unsized pty must not hang the dialog")
+    const columns = process.stdout.columns
+    const rows = process.stdout.rows
+    try {
+      Object.defineProperty(process.stdout, "columns", { value: 0, configurable: true })
+      Object.defineProperty(process.stdout, "rows", { value: 0, configurable: true })
+      // the assertion is that this returns at all — before the fix it spun
+      const result = fit(["a long option description that would need wrapping", "second"])
+      expect(Array.isArray(result.lines)).toBe(true)
+      expect(result.lines.length).toBeGreaterThan(0)
+    } finally {
+      Object.defineProperty(process.stdout, "columns", { value: columns, configurable: true })
+      Object.defineProperty(process.stdout, "rows", { value: rows, configurable: true })
+    }
+  })
+}, 30_000)
 
 test("9. dialogSize: width = min(content need, terminal width − 4) with floor 40; height = min(wrapped lines, terminal height − 2)", async () => {
   await withFakeHome(async () => {
