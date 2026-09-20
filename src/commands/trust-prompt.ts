@@ -1,3 +1,4 @@
+import { mcpTrustLine } from "../../loader/core.js"
 import type { CoreExecutableComponent } from "../../loader/core.js"
 
 // the listing every trust decision prints before asking: what runs, where it
@@ -9,12 +10,7 @@ export function printTrustListing(name: string, dir: string, components: CoreExe
     if (component.kind === "plugin") {
       console.log(`  plugin  ${component.plugin}/${component.name.replace(/\.[jt]s$/, "")} (${component.rel})`)
     } else {
-      const value = component.value as Record<string, unknown> | undefined
-      const detail =
-        value && typeof value.url === "string"
-          ? `remote server: ${value.url}`
-          : `local server: ${Array.isArray(value?.command) ? (value.command as string[]).join(" ") : ""}`
-      console.log(`  mcp     ${component.plugin}/${component.name} (${detail})`)
+      console.log(mcpTrustLine(component))
     }
   }
   console.log("this code runs with your shell's permissions on every opencode start.")

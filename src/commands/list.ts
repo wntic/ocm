@@ -59,8 +59,8 @@ export function list(options: ListOptions = {}): void {
       if (plugin.components.agent) parts.push(`agents: ${plugin.components.agent.join(", ")}`)
       if (plugin.components.command) parts.push(`commands: ${plugin.components.command.join(", ")}`)
       if (plugin.components.skill) parts.push(`skills: ${plugin.components.skill.join(", ")}`)
-      // a denied marketplace's executables list as blocked with the remedy (spec 25 §1)
-      const blocked = entry.trust.code === "denied" ? ` (blocked — ocm trust ${name})` : ""
+      // a not-granted marketplace's executables list as blocked with the remedy (spec 25 §1)
+      const blocked = entry.trust.code !== "granted" ? ` (blocked — ocm trust ${name})` : ""
       if (plugin.components.plugin) parts.push(`plugins: ${plugin.components.plugin.join(", ")}${blocked}`)
       if (plugin.components.mcp) parts.push(`mcp: ${plugin.components.mcp.join(", ")}${blocked}`)
       // the marketplace revision is the implicit version of a versionless

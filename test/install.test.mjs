@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { join, relative } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, withFakeHome, withFakeOpencode } from "./harness.mjs"
+import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome, withFakeOpencode } from "./harness.mjs"
 import http from "node:http"
 import { tmpdir } from "node:os"
 
@@ -1207,4 +1207,216 @@ phase("3. every noticing command prints the stranded notice once before its own 
     noticed(args.join(" "), ocmEnv(home, args, env))
   }
 }, 600_000)
+}
+
+// brief 34 §1: the MCP shape guard — no server entry that fails the shape
+// predicate is ever written into opencode.json. A pre-1.18 native entry is
+// blocked per server with a warning while the rest of the plugin installs;
+// a modern native entry without "enabled" is written normalised to
+// enabled: true at the write, never in readMcpServers — that reader's output
+// is what the trust fingerprint hashes, so normalising there would force a
+// spurious re-trust prompt on upgrade (§1.2).
+{
+// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
+function assertResolves(dest, source) {
+  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
+  expect(realpathSync(dest)).toBe(realpathSync(source))
+}
+
+// invariant: ocm never writes under another tool's directories
+function assertNoForeignToolDirs(home) {
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}
+
+// v0.5.0's values for the AP fixture below, computed against the pre-brief-34
+// code and verified deterministic across two fresh homes. The fingerprint
+// hashes canonicalJson of what readMcpServers returns, so normalising
+// "enabled" inside that reader (§1.2's trap) would change these and force a
+// spurious re-trust prompt for every affected marketplace on upgrade.
+const AP_FINGERPRINT_V050 = "b643fd833f33fde0b940a4f491c17950e7ac52fa7e0e0ecaeca317604c10ce70"
+const AP_COMPONENT_HASH_V050 = "4efc701136870ddc247b064443fa8a2321c8d4479622c80b4398b6e2f9fa620b" // plugins/apkit/mcp.json:everything
+
+const SKILL = "---\nname: notify-style\ndescription: notify style guidance\n---\n\n# Notify style\n\nBody.\n"
+
+// the pre-1.18 opencode-native shape: a bare map with no "type" per entry
+const PRE_1_18_MCP = json({ everything: { command: "node", args: ["server.js"] } })
+
+const MODERN_MCP = json({ time: { type: "local", command: ["date"] } })
+
+const AP_MCP = json({ $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", mcpServers: { everything: { type: "stdio", command: "npx", args: ["-y", "some-server"] } } })
+
+phase("1. a pre-1.18 native mcp.json entry is blocked at add: exit 0, no server in opencode.json, the warning names the entry and the fix, the command still links", async (home) => {
+  // invariant: config safety — the user's config and own server predate the add;
+  // the blocked entry must not take the user's server down with it
+  const userServer = { type: "local", command: ["echo"], enabled: true }
+  writeTree(cfg(home), { "opencode.json": json({ model: "claude-sonnet-4-6", mcp: { "user-server": userServer } }) })
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { notify: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "ping.md": COMMAND },
+    "mcp.json": PRE_1_18_MCP,
+  } } })
+  const added = ocm(home, ["add", mp, "--trust"])
+  if (added.status !== 0) throw new Error(`ocm add --trust exited ${added.status}:\n${added.stdout}\n${added.stderr}`)
+  const output = `${added.stdout}\n${added.stderr}`
+  for (const needle of [
+    "notify:mcp/everything not installed",
+    'mcp.json entry "everything" is missing "type" (expected "local" or "remote")',
+    "opencode would refuse to start with it",
+    "ask the author to fix it",
+    "ocm validate",
+  ]) {
+    if (!output.includes(needle)) throw new Error(`the add output lacks "${needle}":\n${output}`)
+  }
+  const mcp = JSON.parse(readFileSync(configFile(home), "utf8")).mcp ?? {}
+  if (mcp["ocm--notify--everything"] !== undefined) {
+    throw new Error(`expected no "ocm--notify--everything" key in ${configFile(home)}, got ${JSON.stringify(mcp["ocm--notify--everything"])}`)
+  }
+  // opencode refuses the whole config over one entry lacking "type", so nothing ocm wrote may lack it
+  const typeless = Object.entries(mcp).filter(([, value]) =>
+    typeof value !== "object" || value === null || Array.isArray(value) || value.type === undefined,
+  ).map(([key]) => key)
+  if (typeless.length) throw new Error(`mcp entries lacking "type" in ${configFile(home)}: ${typeless.join(", ")}`)
+  // the user's own server survives beside the blocked one, value unchanged
+  expect(mcp["user-server"]).toEqual(userServer)
+  assertResolves(join(cfg(home), "commands", "notify:ping.md"), join(mp, "plugins", "notify", "commands", "ping.md"))
+})
+
+phase("2. the pre-1.18 fixture the whole way through: the probe reports zero config errors — opencode still starts with what ocm wrote", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { notify: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "ping.md": COMMAND },
+    skills: { "notify-style": { "SKILL.md": SKILL } },
+    "mcp.json": PRE_1_18_MCP,
+  } } })
+  const added = ocm(home, ["add", mp, "--trust"])
+  if (added.status !== 0) throw new Error(`ocm add --trust exited ${added.status}:\n${added.stdout}\n${added.stderr}`)
+  const probe = opencodeProbe(cfg(home), home)
+  if (!probe.available) return console.log("skipped:", probe.optIn ? "OCM_PROBE not set" : "opencode is not on PATH")
+  if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
+  expect(probe.pluginErrors).toEqual([])
+  // an invalid opencode.json makes opencode exit non-zero before anything
+  // loads — the lazy getters throw with opencode's own config error, so
+  // touching one is the assertion that the config ocm handed over is valid
+  expect(probe.commands.join("\n")).toContain("notify:ping")
+  expect(probe.skills.join("\n")).toContain("notify-style")
+  // opencode spawns: canary + error scan + name resolution (see harness.mjs)
+}, 420_000)
+
+phase("3. a modern native entry without enabled is written normalised to enabled: true, and a second ocm update reports no change", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { clock: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "tick.md": COMMAND },
+    "mcp.json": MODERN_MCP,
+  } } })
+  const added = ocm(home, ["add", mp, "--trust"])
+  if (added.status !== 0) throw new Error(`ocm add --trust exited ${added.status}:\n${added.stdout}\n${added.stderr}`)
+  const entry = () => JSON.parse(readFileSync(configFile(home), "utf8")).mcp?.["ocm--clock--time"]
+  expect(entry()).toEqual({ type: "local", command: ["date"], enabled: true })
+  const first = ocm(home, ["update"])
+  if (first.status !== 0) throw new Error(`ocm update exited ${first.status}:\n${first.stdout}\n${first.stderr}`)
+  expect(entry()).toEqual({ type: "local", command: ["date"], enabled: true }) // update must not strip the normalised value
+  const bytes = readFileSync(configFile(home), "utf8")
+  const second = ocm(home, ["update"])
+  if (second.status !== 0) throw new Error(`second ocm update exited ${second.status}:\n${second.stdout}\n${second.stderr}`)
+  const output = `${second.stdout}\n${second.stderr}`
+  expect(output).not.toContain("restart opencode") // nothing created
+  expect(output).not.toContain("created") // the materializer's all-zero line says nothing
+  expect(readFileSync(configFile(home), "utf8")).toBe(bytes) // invariant: idempotence — the second update writes nothing
+})
+
+phase("4. an Agent Plugins mcp.json installs unchanged and its registry fingerprint is byte-identical to v0.5.0's", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { apkit: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "ap.md": COMMAND },
+    "mcp.json": AP_MCP,
+  } } })
+  const added = ocm(home, ["add", mp, "--trust"])
+  if (added.status !== 0) throw new Error(`ocm add --trust exited ${added.status}:\n${added.stdout}\n${added.stderr}`)
+  expect(JSON.parse(readFileSync(configFile(home), "utf8")).mcp?.["ocm--apkit--everything"]).toEqual({ type: "local", command: ["npx", "-y", "some-server"], enabled: true })
+  const trust = readRegistry(home).marketplaces.mp.trust
+  if (trust?.fingerprint !== AP_FINGERPRINT_V050) {
+    throw new Error(`expected v0.5.0's fingerprint ${AP_FINGERPRINT_V050} in ${registryFile(home)}, got ${trust?.fingerprint} — §1.2: normalisation must not happen in readMcpServers`)
+  }
+  const hash = trust?.components?.["plugins/apkit/mcp.json:everything"]
+  if (hash !== AP_COMPONENT_HASH_V050) {
+    throw new Error(`expected v0.5.0's component hash ${AP_COMPONENT_HASH_V050} for plugins/apkit/mcp.json:everything in ${registryFile(home)}, got ${hash}`)
+  }
+})
+
+// the config minus the keys ocm owns (mcp.ocm--* and skills.paths): the
+// user's half of every structure below must survive byte-identically
+function userOwned(config) {
+  const copy = { ...config }
+  if (copy.mcp) {
+    const mcp = Object.fromEntries(Object.entries(copy.mcp).filter(([key]) => !key.startsWith("ocm--")))
+    if (Object.keys(mcp).length) copy.mcp = mcp
+    else delete copy.mcp
+  }
+  if (copy.skills) {
+    const { paths, ...rest } = copy.skills
+    if (Object.keys(rest).length) copy.skills = rest
+    else delete copy.skills
+  }
+  return copy
+}
+
+phase("5. invariants across every case: opencode.json keys outside mcp.ocm--* and skills.paths byte-identical, nothing under ~/.claude or ~/.agents", async (home) => {
+  const userConfig = { model: "claude-sonnet-4-6", permission: { edit: "allow" }, mcp: { "user-server": { type: "local", command: ["echo"], enabled: true } } }
+  writeTree(cfg(home), { "opencode.json": json(userConfig) })
+  const cases = [
+    ["mp-bad", { notify: { "plugin.json": PLUGIN_JSON, commands: { "ping.md": COMMAND }, skills: { "notify-style": { "SKILL.md": SKILL } }, "mcp.json": PRE_1_18_MCP } }],
+    ["mp-modern", { clock: { "plugin.json": PLUGIN_JSON, commands: { "tick.md": COMMAND }, "mcp.json": MODERN_MCP } }],
+    ["mp-ap", { apkit: { "plugin.json": PLUGIN_JSON, commands: { "ap.md": COMMAND }, "mcp.json": AP_MCP } }],
+  ]
+  for (const [name, plugins] of cases) {
+    const mp = join(home, name)
+    writeTree(mp, { plugins })
+    const added = ocm(home, ["add", mp, "--trust"])
+    if (added.status !== 0) throw new Error(`ocm add ${name} exited ${added.status}:\n${added.stdout}\n${added.stderr}`)
+  }
+  const updated = ocm(home, ["update"])
+  if (updated.status !== 0) throw new Error(`ocm update exited ${updated.status}:\n${updated.stdout}\n${updated.stderr}`)
+  // invariant: config safety — only ocm-owned keys moved
+  const after = JSON.parse(readFileSync(configFile(home), "utf8"))
+  expect(JSON.stringify(userOwned(after))).toBe(JSON.stringify(userOwned(userConfig)))
+  assertNoForeignToolDirs(home)
+}, 240_000)
+
+phase("6. a native mcp.json's top-level $schema is metadata, not a server entry: no shape warning, no ocm--*--$schema key, the real server installs", async (home) => {
+  // invariant: config safety — the user's config and own server predate the add
+  const userServer = { type: "local", command: ["echo"], enabled: true }
+  writeTree(cfg(home), { "opencode.json": json({ model: "claude-sonnet-4-6", mcp: { "user-server": userServer } }) })
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { clock: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "tick.md": COMMAND },
+    // native shape (no mcpServers wrapper), so readMcpServers returns it
+    // verbatim including $schema — lintMcpJson skips that key, syncMcp must too
+    "mcp.json": json({ $schema: "https://opencode.ai/schema/mcp.json", time: { type: "local", command: ["date"] } }),
+  } } })
+  const added = ocm(home, ["add", mp, "--trust"])
+  if (added.status !== 0) throw new Error(`ocm add --trust exited ${added.status}:\n${added.stdout}\n${added.stderr}`)
+  const output = `${added.stdout}\n${added.stderr}`
+  for (const needle of ["$schema not installed", 'mcp.json entry "$schema"']) {
+    if (output.includes(needle)) throw new Error(`the add output must not treat $schema as a server entry ("${needle}"):\n${output}`)
+  }
+  const mcp = JSON.parse(readFileSync(configFile(home), "utf8")).mcp ?? {}
+  expect(mcp["ocm--clock--time"]).toEqual({ type: "local", command: ["date"], enabled: true })
+  const schemaKeys = Object.keys(mcp).filter((key) => key.endsWith("--$schema"))
+  if (schemaKeys.length) throw new Error(`expected no ocm--*--$schema key in ${configFile(home)}, found: ${schemaKeys.join(", ")}`)
+  expect(mcp["user-server"]).toEqual(userServer)
+})
 }

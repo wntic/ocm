@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
-import { mcpSourceFile, PLUGIN_NAME_RE, readMcpServers } from "./discovery.js"
+import { mcpShapeError, mcpSourceFile, PLUGIN_NAME_RE, readMcpServers } from "./discovery.js"
 import { OPENCODE_CONFIG_FILE, OPENCODE_DIR } from "./paths.js"
 import { isRecord } from "./registry.js"
 import { componentKey } from "./trust.js"
 
 // desired keys are ocm--<plugin>--<server>; every other key in the mcp object
-// is the user's and survives byte-identically outside the keys ocm owns
+// is the user's and survives byte-identically outside the keys ocm owns.
 function applyMcpKeys(desired, prefixes) {
   let raw
   try {
@@ -70,12 +70,24 @@ export function syncMcp(plugins, dir, entry, enabled, approved, warnings, name) 
       continue
     }
     for (const [server, value] of Object.entries(servers)) {
+      // $schema is metadata, not a server entry — lintMcpJson skips it too;
+      // readMcpServers returns native files verbatim, $schema included
+      if (server === "$schema") continue
       if (!approved.get(componentKey("mcp", plugin.name, server))) {
         warnings.push(`blocked (untrusted): ${plugin.name}:mcp/${server} not installed — run \`ocm trust ${name}\` to approve`)
         continue
       }
+      const shapeError = mcpShapeError(value)
+      if (shapeError !== null) {
+        warnings.push(`${plugin.name}:mcp/${server} not installed — mcp.json entry "${server}" ${shapeError}\n  opencode would refuse to start with it; ask the author to fix it, or run \`ocm validate ${dir}\` against the marketplace`)
+        continue
+      }
       count += 1
-      desired.set(`ocm--${plugin.name}--${server}`, value)
+      // brief 34 §1.2: "enabled" is normalised here, at the write, never in
+      // readMcpServers — that reader's output is what the trust fingerprint
+      // hashes, so normalising there would force a spurious re-trust on upgrade
+      const normalised = value.enabled === undefined ? { ...value, enabled: true } : value
+      desired.set(`ocm--${plugin.name}--${server}`, normalised)
     }
   }
   const warning = applyMcpKeys(desired, prefixes)

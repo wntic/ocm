@@ -108,6 +108,30 @@ export function readMcpServers(file) {
   return servers
 }
 
+// brief 34 §1.1: the shape every ocm-written mcp entry must have — opencode
+// refuses to start over anything else. Operates on a post-readMcpServers
+// object (translated for Agent Plugins files, verbatim for native ones) so
+// every consumer agrees. Returns null when the entry is writable, else the
+// reason; an absent "enabled" is not an error — it is normalised at the
+// write (§1.2), never here, because this reader's output is what the trust
+// fingerprint hashes.
+export function mcpShapeError(server) {
+  if (!isRecord(server)) return "not a JSON object"
+  if (server.type === undefined) return 'is missing "type" (expected "local" or "remote")'
+  if (server.type !== "local" && server.type !== "remote") {
+    return `has "type" ${JSON.stringify(server.type)} (expected "local" or "remote")`
+  }
+  if (server.type === "local") {
+    const command = server.command
+    if (!Array.isArray(command) || !command.length || command.some((part) => typeof part !== "string")) {
+      return '"command" must be an array of strings, e.g. ["node", "server.js"]'
+    }
+    return null
+  }
+  if (typeof server.url !== "string" || !server.url) return '"url" must be a string'
+  return null
+}
+
 function listMcpServers(pluginDir) {
   const servers = readMcpServers(join(pluginDir, "mcp.json"))
   return servers ? Object.keys(servers).sort() : []

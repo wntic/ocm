@@ -589,4 +589,46 @@ phase("4. the superset invariant: every gate message appears verbatim in validat
   const stubs = output.split("\n").filter((l) => l.includes("minimal content"))
   if (stubs.length !== 1) throw new Error(`expected the stub printed once, got ${stubs.length}:\n${output}`)
 })
+
+// brief 34 §1.4: mcp.json entries are judged by the shape opencode accepts —
+// the predicate over the TRANSLATED entries, so a native file carrying the
+// AP word "stdio" or a string command is an error (today both pass validate
+// and brick opencode), while an Agent Plugins file is judged after translation
+// and stays clean
+
+// zero findings requires the $schema pin the warning asks for
+const CLEAN_PLUGIN_JSON = json({ description: "demo plugin", $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json" })
+
+phase("5. a native mcp.json with type \"stdio\" or a string command is a validate error; an Agent Plugins file with type \"stdio\" is clean", async (home) => {
+  const cases = [
+    ["native-stdio", json({ db: { type: "stdio", command: "node", args: ["server.js"] } }), 'expected "local" or "remote"'],
+    ["native-string-command", json({ db: { type: "local", command: "node" } }), "must be an array of strings"],
+  ]
+  for (const [label, mcpJson, needle] of cases) {
+    const dir = join(home, label)
+    writeTree(dir, { plugins: { p1: { "plugin.json": PLUGIN_JSON, "mcp.json": mcpJson, commands: { "work.md": COMMAND } } } })
+    const result = ocm(home, "validate", dir)
+    const output = `${result.stdout}\n${result.stderr}`
+    if (result.status !== 1) {
+      throw new Error(`validate ${label} exited ${result.status}, expected 1 — opencode would refuse to start with this entry:\n${output}`)
+    }
+    finding(output, "error", "mcp.json", "db", needle)
+  }
+  // the AP vocabulary is legal in an AP file: translation emits a valid
+  // server, so the predicate passes it — clean, exit 0, only the header
+  const ap = join(home, "ap")
+  writeTree(ap, { plugins: { p1: {
+    "plugin.json": CLEAN_PLUGIN_JSON,
+    "mcp.json": json({ $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json", mcpServers: { db: { type: "stdio", command: "npx", args: ["-y", "@acme/db-mcp"] } } }),
+    commands: { "work.md": COMMAND },
+  } } })
+  const ok = ocm(home, "validate", ap)
+  if (ok.status !== 0) {
+    throw new Error(`validate ap exited ${ok.status}, expected 0 — the AP shape translates to a valid server:\n${ok.stdout}\n${ok.stderr}`)
+  }
+  const header = `${ok.stdout}\n${ok.stderr}`.trim()
+  if (header !== `validate ${ap}` && header !== `validate ${realpathSync(ap)}`) {
+    throw new Error(`expected only the header "validate ${ap}", got:\n${header}`)
+  }
+})
 }

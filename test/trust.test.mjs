@@ -538,3 +538,84 @@ phase("10. two JS plugin files folding to one link are refused before any trust 
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
 }, 240_000)
 }
+
+// brief 34 §2: the trust listing renders every command form. A pre-1.18
+// native mcp.json — a string "command" plus "args" — passes through
+// readMcpServers verbatim, so it reaches both renderers as the one shape
+// that printed empty parentheses; it is also shape-invalid (missing
+// "type"), so its line carries the not-installed annotation beside the
+// full command line.
+{
+// the listing block every trust decision prints: the "ships code" header
+// through "review it at <dir>", all on stdout
+function listingBlock(stdout, where) {
+  const lines = stdout.split("\n")
+  const start = lines.findIndex((l) => l.includes("ships code that opencode will execute"))
+  const end = lines.findIndex((l) => l.startsWith("review it at "))
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error(`expected the trust listing block ${where}:\n${stdout}`)
+  }
+  return lines.slice(start, end + 1)
+}
+
+// §2's assertions for one rendered block: the full command line for a
+// string-form command, the shape annotation on the same line, and no
+// detail ending in empty parentheses
+function assertRenderedForm(block, plugin) {
+  const line = block.find((l) => l.includes(`${plugin}/everything`))
+  if (!line) throw new Error(`expected a ${plugin}/everything line in the listing:\n${block.join("\n")}`)
+  expect(line).toContain("local server: node /path/server.js --port 3000")
+  expect(line).toContain("— invalid shape, will not be installed")
+  expect(block.filter((l) => l.trimEnd().endsWith(": )"))).toEqual([])
+}
+
+const PRE_1_18_MCP = mcpJson({ everything: { command: "node", args: ["/path/server.js", "--port", "3000"] } })
+
+const pre118Tree = (plugin = "adw") => ({ plugins: { [plugin]: { "plugin.json": PLUGIN_JSON, "mcp.json": PRE_1_18_MCP } } })
+
+phase("1. a string-form command with args renders in full in the trust listing, annotated as shape-invalid, never as empty parentheses", async (home) => {
+  const [, result] = addAt(home, "mp", pre118Tree()) // non-TTY add: the listing prints, the decision stays open
+  assertRenderedForm(listingBlock(result.stdout, "from the non-TTY add"), "adw")
+})
+
+phase("2. ocm add --trust and ocm trust --yes print the same full listing before granting", async (home) => {
+  // the trust --yes path first: a blind grant must show what it grants
+  const mp = join(home, "mp-b")
+  writeTree(mp, pre118Tree("beta"))
+  expect(ocm(home, "add", mp).status).toBe(0) // non-TTY: undecided, executables blocked
+  const trusted = ocm(home, "trust", "mp-b", "--yes")
+  expect(trusted.status).toBe(0)
+  assertRenderedForm(listingBlock(trusted.stdout, "from ocm trust --yes"), "beta")
+  const [, added] = addAt(home, "mp-a", pre118Tree("adw"), "--trust")
+  assertRenderedForm(listingBlock(added.stdout, "from ocm add --trust"), "adw")
+})
+
+phase("3. a shape-invalid entry is annotated in the listing and stays in the recorded fingerprint after a grant", async (home) => {
+  // invariants: config safety and ownership — the user's keys and file
+  // predate the grant and survive it
+  writeTree(cfg(home), {
+    "opencode.json": json({ model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const [, added] = addAt(home, "mp", pre118Tree(), "--trust")
+  const line = listingBlock(added.stdout, "from ocm add --trust").find((l) => l.includes("adw/everything"))
+  if (!line) throw new Error(`expected an adw/everything line in the listing:\n${added.stdout}`)
+  expect(line).toContain("— invalid shape, will not be installed")
+  // the component stays in the fingerprint: the grant records its rel and hash
+  const trust = readRegistry(home).marketplaces.mp.trust
+  expect(trust.code).toBe("granted")
+  expect(trust.fingerprint).toMatch(/^[0-9a-f]{64}$/)
+  expect(Object.keys(trust.components)).toContain("plugins/adw/mcp.json:everything")
+  // the guarded server is never written; the user's own config and file survive
+  const config = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
+  expect(config.mcp["ocm--adw--everything"]).toBeUndefined()
+  expect(config.mcp["user-server"]).toEqual({ type: "local", command: ["echo"] })
+  expect(config.model).toBe("claude-sonnet-4-6")
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+  // invariant: idempotence — a second trust --yes writes nothing
+  const bytes = readFileSync(registryFile(home), "utf8")
+  expect(ocm(home, "trust", "mp", "--yes").status).toBe(0)
+  expect(readFileSync(registryFile(home), "utf8")).toBe(bytes)
+  // invariant: no plugin-load errors attributable to ocm-installed files
+})
+}
