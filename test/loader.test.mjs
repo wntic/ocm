@@ -1,7 +1,8 @@
 // The loader bootstrap: what `ocm init` installs, what opencode
 // loads at startup, and uninstall hygiene.
 
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { expect, mock, test } from "bun:test"
@@ -42,6 +43,45 @@ function assertDirContains(dir, names) {
   if (found.join("\n") !== expected.join("\n")) {
     throw new Error(`expected exactly [${expected.join(", ")}] in ${dir}, found [${found.join(", ")}]`)
   }
+}
+
+// round-4 F166: an upgraded CLI left the installed loader behind, so opencode
+// kept running the previous version's modules at every start until the user
+// happened to run a mutating command — with a red doctor and nothing said
+{
+const OCM_BIN = fileURLToPath(new URL("../bin/ocm.ts", import.meta.url))
+const cli = (home, ...args) =>
+  spawnSync(process.execPath, [OCM_BIN, ...args], { env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 120_000 })
+
+test("a stale installed loader is refreshed by any command, naming the version; a home without one is left alone", async () => {
+  await withFakeHome(async (home, ocm) => {
+    expectOk(await ocm.installLoader())
+    const core = join(cfg(home), "ocm", "core.js")
+    const lock = join(cfg(home), "ocm", "lock.js")
+    // the shape an upgrade leaves: old stamps, and this version's modules absent
+    writeFileSync(core, readFileSync(core, "utf8").replace(/\/\/ ocm-version: [^\n]*/, "// ocm-version: 0.0.1 deadbeef"))
+    rmSync(lock, { force: true })
+
+    const listed = cli(home, "list")
+    expect(listed.status).toBe(0)
+    expect(listed.stdout).toContain("refreshed the auto-sync loader")
+    assertFileExists(lock)
+    expect(readFileSync(core, "utf8")).not.toContain("ocm-version: 0.0.1")
+
+    // idempotent: a current loader says nothing
+    expect(cli(home, "list").stdout).not.toContain("refreshed the auto-sync loader")
+  })
+}, 120_000)
+
+test("a home that never had ocm installed is not initialised as a side effect of a read-only command", async () => {
+  await withFakeHome(async (home) => {
+    const listed = cli(home, "list")
+    expect(listed.status).toBe(0)
+    expect(listed.stdout).not.toContain("refreshed the auto-sync loader")
+    assertAbsent(join(cfg(home), "plugins"))
+    assertAbsent(join(cfg(home), "ocm"))
+  })
+}, 120_000)
 }
 
 // the loader bootstrap — absorbed from test/phase01-loader.mjs
