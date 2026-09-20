@@ -3,7 +3,8 @@
 // dependency; the schema files exist for editors).
 import { existsSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
-import { marketplaceManifestFile, readRegistry } from "../loader/core.js"
+import { marketplaceManifestFile, pluginGateFindings, readRegistry } from "../loader/core.js"
+import type { CoreDiscoveredPlugin } from "../loader/core.js"
 import { error, warning, type Finding } from "./findings"
 
 export const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
@@ -26,15 +27,12 @@ function jsonPosition(err: unknown): string {
   return typeof line === "number" && typeof column === "number" ? `${line}:${column}` : "0"
 }
 
-// `required` marks a manifest ocm cannot route around (spec 19): a plugin.json
-// that does not parse gets the fix-or-remove next action, not just the position
-function parseJson(file: string, rel: string, findings: Finding[], required = false): Record<string, unknown> | undefined {
+function parseJson(file: string, rel: string, findings: Finding[]): Record<string, unknown> | undefined {
   let parsed: unknown
   try {
     parsed = JSON.parse(readFileSync(file, "utf8"))
   } catch (err) {
-    const fix = required ? " — fix it or remove it; ocm requires this file to be readable" : ""
-    findings.push(error(`${rel}: invalid JSON at position ${jsonPosition(err)}${fix}`))
+    findings.push(error(`${rel}: invalid JSON at position ${jsonPosition(err)}`))
     return undefined
   }
   if (!isRecord(parsed)) {
@@ -58,13 +56,12 @@ function lintFields(rel: string, record: Record<string, unknown>, findings: Find
   }
 }
 
-function lintName(rel: string, name: string, pluginName: string | undefined, findings: Finding[]): void {
+// the name-vs-directory mismatch is the gate's (brief 29), not a lint
+function lintName(rel: string, name: string, findings: Finding[]): void {
   if (!NAME_RE.test(name)) {
     findings.push(error(`${rel}: name "${name}" must match ${NAME_RE}`))
   } else if (name.length > 64) {
     findings.push(error(`${rel}: name "${name}" is longer than 64 characters`))
-  } else if (pluginName !== undefined && name !== pluginName) {
-    findings.push(error(`${rel}: name "${name}" disagrees with the directory name "${pluginName}"`))
   }
 }
 
@@ -119,7 +116,7 @@ function lintPlugins(
     if (typeof entry.name !== "string") {
       findings.push(error(`${rel}: plugins[] entry needs a "name"`))
     } else {
-      lintName(rel, entry.name, undefined, findings)
+      lintName(rel, entry.name, findings)
       // spec 18: a duplicate name silently clobbers the registry record at
       // add time — the first entry wins, matching this map's keep-first
       if (manifest.entries.has(entry.name)) {
@@ -190,30 +187,28 @@ export function lintMarketplaceJson(root: string, findings: Finding[]): Marketpl
 // returns the parsed record so the caller can compare versions across manifests
 export function lintPluginJson(
   root: string,
-  pluginDir: string,
-  pluginName: string,
+  plugin: CoreDiscoveredPlugin,
   findings: Finding[],
 ): Record<string, unknown> | undefined {
-  const file = join(pluginDir, "plugin.json")
-  if (!existsSync(file)) {
+  for (const gateFinding of pluginGateFindings(root, plugin)) {
     // spec 19: the copy-pasteable stub rides the first missing manifest only
-    const stub = findings.some((finding) => finding.message.includes("minimal content"))
-      ? ""
-      : `\n    minimal content: { "$schema": "${AP_PLUGIN_SCHEMA}", "description": "one line about the plugin" }`
-    findings.push(error(`${relative(root, pluginDir)}: plugin.json is required${stub}`))
-    return undefined
+    const stub = gateFinding.code === "manifest-missing" && !findings.some((finding) => finding.message.includes("minimal content"))
+      ? `\n    minimal content: { "$schema": "${AP_PLUGIN_SCHEMA}", "description": "one line about the plugin" }`
+      : ""
+    findings.push(error(`${gateFinding.message}${stub}`))
   }
-  const rel = relative(root, file)
-  const parsed = parseJson(file, rel, findings, true)
+  // the gate owns installability and has already reported an unparseable
+  // manifest; the author-only rules below need the parsed record, so they run
+  // only when plugin.json parses as an object
+  const file = join(plugin.dir, "plugin.json")
+  let parsed: Record<string, unknown> | undefined
+  try {
+    const value: unknown = JSON.parse(readFileSync(file, "utf8"))
+    if (isRecord(value)) parsed = value
+  } catch {}
   if (!parsed) return undefined
+  const rel = relative(root, file)
   lintFields(rel, parsed, findings)
-  // spec 19: description is the one required field — the minimum that keeps
-  // search and the TUI non-blind
-  if (typeof parsed.description !== "string" || !parsed.description) {
-    findings.push(error(`${rel}: "description" is required and must be a non-empty string`))
-  } else if (parsed.description.length > 200) {
-    findings.push(error(`${rel}: "description" is longer than 200 characters (${parsed.description.length})`))
-  }
   // spec 14 §7: only an unrecognised $schema is an error — a non-conformant
   // plugin still works perfectly well in opencode
   if (parsed.$schema === undefined) {
@@ -236,7 +231,7 @@ export function lintPluginJson(
   if (parsed.name !== undefined && typeof parsed.name !== "string") {
     findings.push(error(`${rel}: "name" must be a string`))
   }
-  if (typeof parsed.name === "string") lintName(rel, parsed.name, pluginName, findings)
+  if (typeof parsed.name === "string") lintName(rel, parsed.name, findings)
   return parsed
 }
 

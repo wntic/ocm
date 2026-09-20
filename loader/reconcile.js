@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs"
-import { basename, join } from "node:path"
+import { basename } from "node:path"
 import { discoverPlugins } from "./discovery.js"
 import { discoverMarketplace } from "./manifest.js"
+import { pluginGateFindings } from "./manifest-gate.js"
 import { foldedDirPairs, pluginLimitViolation } from "./limits.js"
 import { registerPlugins } from "./marketplace.js"
 
@@ -13,7 +14,8 @@ export function reconcilePluginRecords(registry, name, root, options = {}) {
   const entry = registry.marketplaces?.[name]
   const warnings = []
   const pruned = []
-  if (!entry || !existsSync(root)) return { warnings, pruned }
+  const dropped = []
+  if (!entry || !existsSync(root)) return { warnings, pruned, dropped }
   const plugins = [...(options.discovered ?? discoverMarketplace(root).plugins.values())]
   const shipped = new Set(plugins.map((plugin) => plugin.name))
   const resolved = options.resolved ?? {}
@@ -47,17 +49,41 @@ export function reconcilePluginRecords(registry, name, root, options = {}) {
     warnings.push(`plugins/${pair[0]} and plugins/${pair[1]} differ only in case — plugin "${candidate.name}" skipped; ask the author to rename one and update again`)
     return false
   })
-  // spec 19: a manifest-less plugin is refused — new upstream ones are not
-  // installed, and an installed one is grandfathered only until it changes
+  // spec 19 / brief 29 §3: a plugin failing the manifest gate is refused —
+  // new upstream ones are not installed, and an installed one is
+  // grandfathered only until it changes
   registrable = registrable.filter((candidate) => {
-    if (existsSync(join(candidate.dir, "plugin.json"))) return true
+    const findings = pluginGateFindings(root, candidate)
+    if (!findings.length) return true
     if (candidate.name in entry.plugins && !(options.changed ?? new Set()).has(candidate.name)) return true
-    warnings.push(
-      `plugin "${candidate.name}": plugins/${candidate.name}/plugin.json is missing — not installed; ` +
-        'add one ({ "description": "…" }) and update again',
-    )
+    const finding = findings[0]
+    if (entry.plugins[candidate.name]?.installedAt == null) {
+      warnings.push(
+        finding.code === "manifest-missing"
+          ? `plugin "${candidate.name}": plugins/${candidate.name}/plugin.json is missing — not installed; ` +
+              'add one ({ "description": "…" }) and update again'
+          : `plugin "${candidate.name}": ${finding.message} — not installed; fix it and update again`,
+      )
+      return false
+    }
+    delete entry.plugins[candidate.name]
+    if (finding.code === "manifest-missing") {
+      warnings.push(
+        `plugin "${candidate.name}": changed upstream and still has no plugin.json — uninstalled\n` +
+          "  it predates the plugin.json requirement and kept working until it changed\n" +
+          `  add plugins/${candidate.name}/plugin.json ({ "description": "…" }) and run ocm update to reinstall it`,
+      )
+      dropped.push({ name: candidate.name, reason: "plugin.json required now that it changed" })
+    } else {
+      warnings.push(
+        `plugin "${candidate.name}": changed upstream and no longer passes the manifest gate — uninstalled\n` +
+          `  ${finding.message}\n` +
+          "  fix it and run ocm update to reinstall it",
+      )
+      dropped.push({ name: candidate.name, reason: finding.message })
+    }
     return false
   })
   registerPlugins(registry, name, registrable)
-  return { warnings, pruned }
+  return { warnings, pruned, dropped }
 }

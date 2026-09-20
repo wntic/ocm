@@ -2,11 +2,11 @@
 // writing nothing when nothing changed.
 
 import { spawnSync } from "node:child_process"
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, withFakeHome } from "./harness.mjs"
+import { assertAbsent, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -782,4 +782,240 @@ phase("5. the README's auto-sync section documents the fire-and-forget sync (F40
     )
   }
 })
+}
+
+// brief 29 §3: the grandfather's end is an event, not a warning — a plugin
+// installed before the manifest requirement is uninstalled and reported when
+// it changes upstream and fails the gate; unchanged, it keeps working
+{
+// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
+function assertResolves(dest, source) {
+  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
+  expect(realpathSync(dest)).toBe(realpathSync(source))
+}
+
+// the gate's description-empty finding, pinned verbatim (manifest-gate.js)
+const emptyDescFinding = (plugin) =>
+  `plugins/${plugin}/plugin.json: "description" is required and must be non-empty — add one line about the plugin and re-run ocm add`
+
+// a home from before the gate, git-flavoured: the registry was written while
+// plugin.json was optional, so legacy-tool is legitimately installed without
+// one, and the cache clone's origin is the remote the update pulls from —
+// only a git-backed marketplace can end the grandfather (the changed set is
+// the diff between revisions)
+function preGateGitHome(home) {
+  const remote = join(home, "remote")
+  gitRepo(remote, {
+    plugins: {
+      "legacy-tool": { commands: { "tool.md": COMMAND } },
+      "fresh-tool": { "plugin.json": PLUGIN_JSON, commands: { "fresh.md": COMMAND } },
+    },
+  })
+  const dir = cloneDir(home)
+  mkdirSync(join(home, ".cache", "ocm", "marketplaces"), { recursive: true })
+  git(home, ["clone", `file://${remote}`, dir])
+  const at = "2026-01-01T00:00:00.000Z"
+  mkdirSync(join(cfg(home), "ocm"), { recursive: true })
+  writeFileSync(registryFile(home), json({
+    version: 2,
+    marketplaces: {
+      mp: {
+        url: `file://${remote}`, dir, local: false, addedAt: at, mode: "auto", ref: null,
+        subdir: null, revision: git(dir, ["rev-parse", "HEAD"]), syncIntervalMs: null,
+        trust: { code: "none" }, lastSync: null,
+        plugins: {
+          "legacy-tool": { source: "plugins/legacy-tool", components: { command: ["tool.md"] }, enabled: true, installedAt: at, version: null, manifest: {} },
+          "fresh-tool": { source: "plugins/fresh-tool", components: { command: ["fresh.md"] }, enabled: true, installedAt: at, version: null, manifest: { description: "demo plugin" } },
+        },
+      },
+    },
+  }))
+  // the links a real install would have left behind
+  mkdirSync(join(cfg(home), "commands"), { recursive: true })
+  symlinkSync(join(dir, "plugins", "legacy-tool", "commands", "tool.md"), commandLink(home, "legacy-tool", "tool.md"))
+  symlinkSync(join(dir, "plugins", "fresh-tool", "commands", "fresh.md"), commandLink(home, "fresh-tool", "fresh.md"))
+  return remote
+}
+
+// doctor probes opencode; the fake on test/fixtures answers in milliseconds
+function doctorRun(home) {
+  const result = spawnSync(process.execPath, [OCM_BIN, "doctor"], {
+    env: withFakeOpencode({ ...process.env, HOME: home }), encoding: "utf8", timeout: 300_000,
+  })
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
+}
+
+phase("1. never-installed plugins whose plugin.json fails the gate are refused at update with one warning each and no record, while the good sibling updates", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { good: { "plugin.json": PLUGIN_JSON, commands: { "base.md": COMMAND } } } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" }) // ownership probe file
+  const refused = [
+    ["empty-kit", json({ description: "" }), emptyDescFinding("empty-kit")],
+    ["blank-kit", json({ description: "   " }), emptyDescFinding("blank-kit")],
+    ["long-kit", json({ description: "d".repeat(201) }), 'plugins/long-kit/plugin.json: "description" is longer than 200 characters (201) — shorten it'],
+  ]
+  const broken = {}
+  for (const [name, manifest] of refused) broken[name] = { "plugin.json": manifest, commands: { "work.md": COMMAND } }
+  writeTree(join(remote, "plugins"), broken)
+  writeFileSync(join(remote, "plugins", "good", "commands", "extra.md"), COMMAND)
+  commitAll(remote, "add broken kits upstream")
+
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status} — the refusals must not fail the update:\n${result.stderr}`)
+  for (const [name, , message] of refused) {
+    const lines = result.stderr.split("\n").filter((l) => l.includes(`plugin "${name}"`))
+    if (lines.length !== 1) {
+      throw new Error(`expected exactly one stderr warning for ${name}, got ${lines.length}:\n${result.stdout}\n--- stderr ---\n${result.stderr}`)
+    }
+    for (const needle of [message, "not installed"]) {
+      if (!lines[0].includes(needle)) throw new Error(`the ${name} warning must contain ${JSON.stringify(needle)}:\n${lines[0]}`)
+    }
+  }
+  expect(result.stdout).not.toContain("uninstalled") // never installed: no report line
+  const plugins = readRegistry(home).marketplaces.mp.plugins
+  for (const [name] of refused) {
+    if (plugins[name]) throw new Error(`expected no record for ${name} in ${registryFile(home)} — a gate-refused plugin is not registered`)
+  }
+  if (!plugins.good) throw new Error(`expected the good plugin to keep its record in ${registryFile(home)}`)
+  assertResolves(commandLink(home, "good", "extra.md"), join(cloneDir(home), "plugins", "good", "commands", "extra.md"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+
+  // invariant: idempotence — a second update records nothing further and uninstalls nothing
+  const pluginsBefore = readRegistry(home).marketplaces.mp.plugins
+  const again = ocm(home, "update", "mp")
+  if (again.status !== 0) throw new Error(`second ocm update mp exited ${again.status}: ${again.stderr}`)
+  expect(readRegistry(home).marketplaces.mp.plugins).toEqual(pluginsBefore)
+  expect(again.stdout).not.toContain("uninstalled")
+}, 240_000)
+
+phase("2. an installed plugin whose manifest breaks the gate on an upstream change is uninstalled and reported; --quiet does not swallow the report line", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  expect(ocm(home, "add", `file://${remote}`, "--name", "mp").status).toBe(0)
+  const quietRemote = join(home, "remote-quiet")
+  gitRepo(quietRemote, { plugins: { "quiet-tool": { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  expect(ocm(home, "add", `file://${quietRemote}`, "--name", "quiet").status).toBe(0)
+  // invariants: config safety and ownership — the user's config and command
+  // predate the uninstall and survive it outside ocm's owned keys
+  const userConfig = {
+    model: "claude-sonnet-4-6",
+    permission: { edit: "allow" },
+    skills: { paths: ["/users/me/my-skills"] },
+    mcp: { "user-server": { type: "local", command: ["echo"] } },
+  }
+  writeTree(cfg(home), { "opencode.json": json(userConfig), commands: { "mine.md": "# my own command\n" } })
+
+  writeFileSync(join(remote, "plugins", "tool", "plugin.json"), json({ description: "" }))
+  commitAll(remote, "break the manifest")
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  for (const needle of [
+    'plugin "tool": changed upstream and no longer passes the manifest gate — uninstalled',
+    emptyDescFinding("tool"),
+    "fix it and run ocm update to reinstall it",
+  ]) {
+    if (!result.stderr.includes(needle)) {
+      throw new Error(`stderr must contain ${JSON.stringify(needle)}:\n${result.stdout}\n--- stderr ---\n${result.stderr}`)
+    }
+  }
+  const uninstalled = result.stdout.split("\n").filter((l) => l.includes("uninstalled"))
+  if (uninstalled.length !== 1) throw new Error(`expected exactly one uninstalled report line on stdout, got ${uninstalled.length}:\n${result.stdout}`)
+  if (!uninstalled[0].includes(`tool   uninstalled — ${emptyDescFinding("tool")}`)) {
+    throw new Error(`the report line must read "tool   uninstalled — ${emptyDescFinding("tool")}":\n${uninstalled[0]}`)
+  }
+  if (readRegistry(home).marketplaces.mp.plugins.tool) {
+    throw new Error(`expected tool's record gone from ${registryFile(home)} — a plugin the gate dropped leaves the registry`)
+  }
+  assertAbsent(commandLink(home, "tool", "work.md"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+  expect(JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))).toEqual(userConfig) // invariant: config safety
+
+  // invariant: idempotence — the uninstall cannot happen twice
+  const pluginsBefore = readRegistry(home).marketplaces.mp.plugins
+  const again = ocm(home, "update", "mp")
+  if (again.status !== 0) throw new Error(`second ocm update mp exited ${again.status}: ${again.stderr}`)
+  expect(readRegistry(home).marketplaces.mp.plugins).toEqual(pluginsBefore)
+  expect(again.stdout).not.toContain("uninstalled")
+
+  // the dropped plugin counts into report.changed, so --quiet shows it too
+  writeFileSync(join(quietRemote, "plugins", "quiet-tool", "plugin.json"), json({ description: "" }))
+  commitAll(quietRemote, "break the quiet one")
+  const quiet = ocm(home, "update", "quiet", "--quiet")
+  if (quiet.status !== 0) throw new Error(`ocm update quiet --quiet exited ${quiet.status}: ${quiet.stderr}`)
+  if (!quiet.stdout.includes(`quiet-tool   uninstalled — ${emptyDescFinding("quiet-tool")}`)) {
+    throw new Error(`--quiet must not swallow the uninstalled report line:\n${quiet.stdout}\n${quiet.stderr}`)
+  }
+}, 300_000)
+
+phase("3. the grandfather ends: a changed upstream plugin with no plugin.json is uninstalled with the three-line warning and one report line; its sibling updates", async (home) => {
+  const remote = preGateGitHome(home)
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" }) // ownership probe file
+  writeFileSync(join(remote, "plugins", "legacy-tool", "commands", "tool.md"), `${COMMAND}<!-- v2 -->\n`)
+  writeFileSync(join(remote, "plugins", "fresh-tool", "commands", "new.md"), COMMAND)
+  commitAll(remote, "advance")
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  for (const needle of [
+    'plugin "legacy-tool": changed upstream and still has no plugin.json — uninstalled',
+    "it predates the plugin.json requirement and kept working until it changed",
+    'add plugins/legacy-tool/plugin.json ({ "description": "…" }) and run ocm update to reinstall it',
+  ]) {
+    if (!result.stderr.includes(needle)) throw new Error(`stderr must contain the grandfather-end line ${JSON.stringify(needle)}:\n${result.stderr}`)
+  }
+  const uninstalled = result.stdout.split("\n").filter((l) => l.includes("uninstalled"))
+  if (uninstalled.length !== 1) throw new Error(`expected exactly one uninstalled report line on stdout, got ${uninstalled.length}:\n${result.stdout}`)
+  if (!uninstalled[0].includes("legacy-tool   uninstalled — plugin.json required now that it changed")) {
+    throw new Error(`the report line must read "legacy-tool   uninstalled — plugin.json required now that it changed":\n${uninstalled[0]}`)
+  }
+  const plugins = readRegistry(home).marketplaces.mp.plugins
+  if (plugins["legacy-tool"]) throw new Error(`expected legacy-tool's record gone from ${registryFile(home)}`)
+  assertAbsent(commandLink(home, "legacy-tool", "tool.md"))
+  // failure isolation: the manifest-bearing sibling updates normally
+  if (!plugins["fresh-tool"] || plugins["fresh-tool"].enabled !== true) {
+    throw new Error(`expected fresh-tool to stay enabled in ${registryFile(home)}, got ${JSON.stringify(plugins["fresh-tool"])}`)
+  }
+  assertResolves(commandLink(home, "fresh-tool", "new.md"), join(cloneDir(home), "plugins", "fresh-tool", "commands", "new.md"))
+  assertResolves(commandLink(home, "fresh-tool", "fresh.md"), join(cloneDir(home), "plugins", "fresh-tool", "commands", "fresh.md"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+
+  // invariant: idempotence — the grandfather ends exactly once
+  const pluginsBefore = readRegistry(home).marketplaces.mp.plugins
+  const again = ocm(home, "update", "mp")
+  if (again.status !== 0) throw new Error(`second ocm update mp exited ${again.status}: ${again.stderr}`)
+  expect(readRegistry(home).marketplaces.mp.plugins).toEqual(pluginsBefore)
+  expect(again.stdout).not.toContain("uninstalled")
+}, 240_000)
+
+phase("4. the grandfather holds without an upstream change: still enabled, still listed, no uninstalled line, and doctor's legacy warning stays exactly once", async (home) => {
+  preGateGitHome(home)
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  if (`${result.stdout}\n${result.stderr}`.includes("uninstalled")) {
+    throw new Error(`an unchanged grandfathered plugin must not be uninstalled:\n${result.stdout}\n${result.stderr}`)
+  }
+  const record = readRegistry(home).marketplaces.mp.plugins["legacy-tool"]
+  if (!record || record.enabled !== true) {
+    throw new Error(`expected legacy-tool to stay enabled across the update in ${registryFile(home)}, got ${JSON.stringify(record)}`)
+  }
+  const listed = ocm(home, "list")
+  if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}: ${listed.stderr}`)
+  if (!listed.stdout.includes("legacy-tool")) throw new Error(`expected legacy-tool in ocm list output:\n${listed.stdout}`)
+  assertResolves(commandLink(home, "legacy-tool", "tool.md"), join(cloneDir(home), "plugins", "legacy-tool", "commands", "tool.md"))
+
+  // invariant: idempotence — a second unchanged update writes nothing and uninstalls nothing
+  const pluginsBefore = readRegistry(home).marketplaces.mp.plugins
+  const again = ocm(home, "update", "mp")
+  if (again.status !== 0) throw new Error(`second ocm update mp exited ${again.status}: ${again.stderr}`)
+  expect(readRegistry(home).marketplaces.mp.plugins).toEqual(pluginsBefore)
+  assertResolves(commandLink(home, "legacy-tool", "tool.md"), join(cloneDir(home), "plugins", "legacy-tool", "commands", "tool.md"))
+
+  const diagnosed = doctorRun(home)
+  if (diagnosed.status !== 0) throw new Error(`the legacy warning is exit-code-neutral, but doctor exited ${diagnosed.status}:\n${diagnosed.stdout}\n${diagnosed.stderr}`)
+  const warnings = `${diagnosed.stdout}\n${diagnosed.stderr}`.split("\n").filter((l) => l.includes("legacy-tool") && l.includes("plugin.json"))
+  if (warnings.length !== 1) {
+    throw new Error(`expected exactly one legacy warning for legacy-tool from ocm doctor, got ${warnings.length}:\n${diagnosed.stdout}\n${diagnosed.stderr}`)
+  }
+}, 420_000)
 }

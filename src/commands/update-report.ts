@@ -28,6 +28,7 @@ export interface MarketplaceReport {
   renamed: { from: string; to: string }[]
   removed: string[]
   pruned: string[]
+  dropped: { name: string; reason: string }[]
   refused: { from: string; to: string; incumbent: string }[]
   plugins: PluginReport[]
   warnings: string[]
@@ -122,6 +123,7 @@ export function renderMarketplace(report: MarketplaceReport, quiet: boolean, hea
   for (const rename of report.renamed) console.log(`  renamed ${rename.from} → ${rename.to}`)
   for (const name of report.removed) console.log(`  removed ${name}`)
   for (const name of report.pruned) console.log(`  ${name} removed (no longer in the marketplace)`)
+  for (const drop of report.dropped) console.log(`  ${drop.name}   uninstalled — ${drop.reason}`)
   for (const refusal of report.refused) {
     console.log(`  refused rename ${refusal.from} → ${refusal.to}: "${refusal.to}" is already provided by marketplace "${refusal.incumbent}"`)
   }

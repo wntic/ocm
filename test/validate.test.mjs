@@ -94,7 +94,7 @@ const CLEAN_PLUGIN_JSON = json({ description: "demo plugin", $schema: "https://a
 
 // one fixture per error class in the spec's list: [label, tree, needles]
 const ERROR_CASES = [
-  ["plugin-json", { plugins: { bad: { "plugin.json": "{ not json\n", commands: { "work.md": COMMAND } } } }, ["plugin.json", "invalid JSON at position"]],
+  ["plugin-json", { plugins: { bad: { "plugin.json": "{ not json\n", commands: { "work.md": COMMAND } } } }, ["plugin.json", "not valid JSON"]],
   ["marketplace-json", { "marketplace.json": "{ not json\n", plugins: { tool: { commands: { "work.md": COMMAND } } } }, ["marketplace.json", "invalid JSON"]],
   ["plugin-schema", { plugins: { bad: { "plugin.json": json({ tags: "nope" }), commands: { "work.md": COMMAND } } } }, ["plugin.json", "tags"]],
   ["marketplace-schema", { "marketplace.json": json({ plugins: "nope" }), plugins: { tool: { commands: { "work.md": COMMAND } } } }, ["marketplace.json", "plugins"]],
@@ -360,23 +360,24 @@ phase("3. mcpServers escaping the plugin is refused naming the containment rule,
 }, 600_000)
 
 phase("4. malformed plugin.json gets the fix-or-remove error; malformed marketplace.json the not-applied warning", async (home) => {
-  // (a) malformed plugin.json: reported, not routed around — the plugin still installs
+  // (a) malformed plugin.json: refused at add (brief 29 — the manifest gate),
+  // naming the file and the fix, registering nothing
   const mp = join(home, "mp")
   writeTree(mp, { plugins: { p1: { "plugin.json": "{ not json\n", commands: { "commit.md": COMMAND } } } })
   const added = ocm(home, ["add", mp])
-  if (added.status !== 0) {
-    throw new Error(`ocm add ${mp} exited ${added.status} — a malformed plugin.json is reported, not routed around:\n${added.stdout}\n${added.stderr}`)
+  if (added.status !== 1) {
+    throw new Error(`ocm add ${mp} exited ${added.status} — a malformed plugin.json must refuse the add:\n${added.stdout}\n${added.stderr}`)
   }
   const addOutput = `${added.stdout}\n${added.stderr}`
-  const warningLine = addOutput.split("\n").find((l) => l.includes("warning") && l.includes("plugin.json"))
-  if (!warningLine) throw new Error(`expected a warning naming the malformed plugins/p1/plugin.json:\n${addOutput}`)
-  for (const fragment of ["not valid JSON", "fix it or remove it", "requires this file to be readable"]) {
-    if (!warningLine.includes(fragment)) {
-      throw new Error(`the plugin.json warning must contain "${fragment}" (spec 24 §2):\n${warningLine}`)
-    }
+  if (!addOutput.includes("plugins/p1/plugin.json")) {
+    throw new Error(`the refusal must name the file plugins/p1/plugin.json:\n${addOutput}`)
   }
-  if (!warningLine.includes("plugins/p1/plugin.json")) {
-    throw new Error(`the plugin.json warning must name the file plugins/p1/plugin.json:\n${warningLine}`)
+  if (!addOutput.includes("fix it or remove it")) {
+    throw new Error(`the refusal must contain "fix it or remove it":\n${addOutput}`)
+  }
+  const registry = existsSync(registryFile(home)) ? readRegistry(home) : { marketplaces: {} }
+  if (registry.marketplaces.mp) {
+    throw new Error(`a refused add registers nothing, but "mp" is in ${registryFile(home)}`)
   }
   // validate reports it as an error naming fix-or-remove
   const validated = ocm(home, ["validate", mp])
@@ -477,5 +478,115 @@ phase("6. the README states every rule validate enforces (the documented contrac
         missing.map(([needle, rule]) => `  "${needle}" — ${rule}`).join("\n"),
     )
   }
+})
+}
+
+// brief 29: validate gets its installability answers from the manifest gate,
+// so it reports a superset of the gate, never a different set — the gate's
+// message text verbatim, the same sentences add refuses with
+{
+function ocm(home, ...args) {
+  const result = spawnSync(process.execPath, [OCM_BIN, ...args], {
+    env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 120_000,
+  })
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
+}
+
+// a finding line in the spec 12 format: "  error   plugins/foo/...: message"
+function finding(output, severity, ...needles) {
+  const line = output.split("\n").find((l) => new RegExp(`^\\s*${severity}\\b`).test(l) && needles.every((n) => l.includes(n)))
+  if (!line) throw new Error(`expected a ${severity} finding containing ${JSON.stringify(needles)}:\n${output}`)
+  return line
+}
+
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = json({ description: "demo plugin" })
+
+// the gate's sentences for plugin p1, which validate must reuse verbatim —
+// the add halves in manifests.test.mjs refuse with exactly these
+const NOT_VALID_JSON = "plugins/p1/plugin.json: not valid JSON — fix it or remove it; ocm requires this file to be readable"
+const NON_EMPTY = 'plugins/p1/plugin.json: "description" is required and must be non-empty — add one line about the plugin and re-run ocm add'
+const TOO_LONG = 'plugins/p1/plugin.json: "description" is longer than 200 characters (201) — shorten it'
+
+phase("1. a malformed plugin.json gets the gate's not-valid-JSON sentence at validate, verbatim and at severity error", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { p1: { "plugin.json": "{ not json\n", commands: { "commit.md": COMMAND } } } })
+  const result = ocm(home, "validate", mp)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 1) throw new Error(`validate ${mp} exited ${result.status}, expected 1:\n${output}`)
+  finding(output, "error", NOT_VALID_JSON)
+})
+
+phase("2. an empty, a whitespace-only and a 201-character description are three distinct validate errors, each naming plugins/p1/plugin.json", async (home) => {
+  const variants = [
+    ["empty", json({ description: "" }), NON_EMPTY],
+    ["blank", json({ description: "   " }), NON_EMPTY],
+    ["long", json({ description: "d".repeat(201) }), TOO_LONG],
+  ]
+  for (const [label, manifest, sentence] of variants) {
+    const dir = join(home, label)
+    writeTree(dir, { plugins: { p1: { "plugin.json": manifest, commands: { "commit.md": COMMAND } } } })
+    const result = ocm(home, "validate", dir)
+    const output = `${result.stdout}\n${result.stderr}`
+    if (result.status !== 1) throw new Error(`validate ${dir} exited ${result.status}, expected 1 — a ${label} description must be a validate error:\n${output}`)
+    finding(output, "error", sentence)
+    // the author-only $schema nudge still renders alongside the gate's error
+    finding(output, "warning", "plugin.json", "$schema")
+  }
+})
+
+phase("3. degenerate component names are validate errors naming every file, with the gate's messages", async (home) => {
+  const mp = join(home, "degen-mp")
+  writeTree(mp, { plugins: { linter: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { ".md": COMMAND },
+    plugin: { ".js": JS_PLUGIN },
+    skills: { ".hidden": { "SKILL.md": SKILL("hidden") } },
+  } } })
+  const result = ocm(home, "validate", mp)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 1) throw new Error(`validate ${mp} exited ${result.status}, expected 1:\n${output}`)
+  for (const message of [
+    'plugins/linter/commands/.md: component name is empty — it would install as "/linter:"\n  rename it to <name>.md, or delete it',
+    'plugins/linter/plugin/.js: component name is empty — it would install as "ocm--linter--.js"\n  rename it to <name>.js, or delete it',
+    'plugins/linter/skills/.hidden: component name ".hidden" begins with "." — it would install as "linter--.hidden"\n  rename it, or delete it',
+  ]) {
+    if (!output.includes(message)) throw new Error(`validate must carry the gate's component-degenerate message verbatim (${message.split("\n")[0]}):\n${output}`)
+  }
+  finding(output, "error", "plugins/linter/commands/.md")
+})
+
+phase("4. the superset invariant: every gate message appears verbatim in validate output, and the stub rides the first manifest-missing finding only", async (home) => {
+  // lazy: loader modules are imported inside the body, never at module scope
+  const gate = await import("../loader/manifest-gate.js")
+  const { discoverPlugins } = await import("../loader/discovery.js")
+  const mp = join(home, "gate-mp")
+  writeTree(mp, { plugins: {
+    x: { commands: { "work.md": COMMAND } },                                                                  // manifest-missing
+    "broken-json": { "plugin.json": "{\n", commands: { "work.md": COMMAND } },                                // manifest-unreadable (parse)
+    "array-json": { "plugin.json": "[]\n", commands: { "work.md": COMMAND } },                                // manifest-unreadable (shape)
+    "no-desc": { "plugin.json": json({}), commands: { "work.md": COMMAND } },                                 // description-missing
+    "empty-desc": { "plugin.json": json({ description: "" }), commands: { "work.md": COMMAND } },             // description-empty
+    "long-desc": { "plugin.json": json({ description: "d".repeat(201) }), commands: { "work.md": COMMAND } }, // description-long
+    mismatch: { "plugin.json": json({ name: "other", description: "descriptive" }), commands: { "work.md": COMMAND } }, // name-mismatch
+    linter: { "plugin.json": PLUGIN_JSON, commands: { ".md": COMMAND } },                                     // component-degenerate
+  } })
+  const findings = gate.marketplaceGateFindings(mp, discoverPlugins(mp))
+  // the fixture must carry every code, or the verbatim loop below is vacuous
+  const codes = new Set(findings.map((f) => f.code))
+  for (const code of ["manifest-missing", "manifest-unreadable", "description-missing", "description-empty", "description-long", "name-mismatch", "component-degenerate"]) {
+    if (!codes.has(code)) throw new Error(`the fixture must carry a "${code}" instance; discovered codes: ${[...codes].join(", ")}`)
+  }
+  const result = ocm(home, "validate", mp)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 1) throw new Error(`validate ${mp} exited ${result.status}, expected 1:\n${output}`)
+  for (const f of findings) {
+    if (!output.includes(f.message)) throw new Error(`validate must report the gate's ${f.code} message verbatim (${f.message.split("\n")[0]}):\n${output}`)
+  }
+  // the copy-pasteable stub rides the first manifest-missing finding only
+  const stub = 'plugins/x/plugin.json — missing\n    minimal content: { "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "description": "one line about the plugin" }'
+  if (!output.includes(stub)) throw new Error(`the stub must ride the first manifest-missing finding:\n${output}`)
+  const stubs = output.split("\n").filter((l) => l.includes("minimal content"))
+  if (stubs.length !== 1) throw new Error(`expected the stub printed once, got ${stubs.length}:\n${output}`)
 })
 }

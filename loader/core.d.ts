@@ -12,6 +12,13 @@ export interface CoreDiscoveredPlugin {
   components: CorePluginComponents
 }
 
+export interface CoreGateFinding {
+  plugin: string
+  path: string
+  code: string
+  message: string
+}
+
 export interface CorePullResult {
   ok: boolean
   changed: boolean
@@ -142,6 +149,9 @@ export interface CoreReconcileOptions {
 export interface CoreReconcileResult {
   warnings: string[]
   pruned: string[]
+  // installed plugins the manifest gate dropped: uninstalled, one report
+  // line each (brief 29 §3)
+  dropped: { name: string; reason: string }[]
 }
 
 export interface CoreAddOptions {
@@ -243,6 +253,8 @@ export declare function writeJsonAtomic(path: string, content: string): void
 export declare function withRegistryLock<T>(command: string, fn: () => T | Promise<T>): Promise<T>
 export declare function tryRegistryLock<T>(fn: () => T | Promise<T>): Promise<T | { skipped: true }>
 export declare function discoverPlugins(marketplaceDir: string): CoreDiscoveredPlugin[]
+export declare function pluginGateFindings(marketplaceDir: string, plugin: CoreDiscoveredPlugin): CoreGateFinding[]
+export declare function marketplaceGateFindings(marketplaceDir: string, plugins: CoreDiscoveredPlugin[]): CoreGateFinding[]
 export declare function dirClashes(pluginDir: string): string[]
 export declare function displacedRecords(): CoreDisplacementRecord[]
 export declare function restoreDisplaced(scope: { marketplace?: string; plugin?: string }): { lines: string[]; resolved: CoreDisplacementRecord[] | null }
@@ -287,6 +299,7 @@ export declare function manifestName(name: string | undefined): string | undefin
 export declare function normaliseMarketplaceName(name: string): string
 export declare function marketplaceNameFromUrl(url: string): string
 export declare function parseSource(source: string): CoreParsedSource
+export declare function duplicateRefusal(registry: CoreRegistry, parsed: CoreParsedSource, wanted: string): string | null
 export declare function discoverMarketplace(marketplaceDir: string): CoreDiscoveredMarketplace
 export declare function discoveryError(plugins: CoreManifestPlugin[]): string | null
 export declare function nameDisagreement(pluginDir: string, pluginName: string): string | null
@@ -302,6 +315,14 @@ export declare function reconcilePluginRecords(
   options?: CoreReconcileOptions,
 ): CoreReconcileResult
 export declare function addMarketplace(source: string, options?: CoreAddOptions): Promise<CoreAddResult>
+export declare function addRefusalChain(
+  name: string,
+  parsed: CoreParsedSource,
+  dir: string,
+  head: string,
+  plugins: CoreManifestPlugin[],
+  registry: CoreRegistry,
+): Promise<string | null>
 export declare function removeMarketplace(name: string): CoreRemoveResult
 export declare function pinMarketplace(name: string, ref?: string | null): Promise<CorePinResult>
 export declare function resolvePlugin(registry: CoreRegistry, arg: string): CoreResolvedPlugin

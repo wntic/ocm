@@ -1,12 +1,12 @@
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { isGitUrl, parseSource, resolvePlugin, setEnabled } from "../../loader/core.js"
+import { addRefusalChain, isGitUrl, manifestName, parseSource, readManifest, readRegistry, resolvePlugin, setEnabled } from "../../loader/core.js"
 import type { CorePluginComponents } from "../../loader/core.js"
 import { OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
 import { discoverMarketplace } from "../discovery"
-import { clone } from "../git"
+import { clone, git } from "../git"
 import { reportMutationWarnings, reportRestart, reportUpgrade, reportWarnings } from "../report"
 
 function componentSummary(components: CorePluginComponents): string {
@@ -63,7 +63,7 @@ function isPluginArg(source: string): boolean {
   return /^[a-z0-9]+(-[a-z0-9]+)*(@[a-z0-9]+(-[a-z0-9]+)*)?$/.test(source)
 }
 
-export function scan(source: string): void {
+export async function scan(source: string): Promise<void> {
   if (isPluginArg(source) && !existsSync(source)) {
     scanPlugin(source)
     return
@@ -93,6 +93,15 @@ export function scan(source: string): void {
       console.log(`  expected plugins/<name>/{commands,agents,skills}/ at the repository root`)
       console.log(`  see ocm validate and the README's marketplace format`)
       return
+    }
+    // brief 29 §2 (F77): scan is a dry run of add — it runs add's refusal
+    // chain, so its exit code predicts the real run's
+    const name = manifestName(readManifest(dir).name) ?? parsed.name
+    const head = temp ? git(["rev-parse", "HEAD"], temp).stdout : ""
+    const refusal = await addRefusalChain(name, parsed, temp ?? dir, head, plugins, readRegistry())
+    if (refusal) {
+      const block = refusal.split("\n").map((line) => `  ${line}`).join("\n")
+      throw new Error(`ocm add ${source} would be refused:\n${block}`)
     }
     console.log(`${plugins.length} plugin(s) would be installed from ${parsed.url}:`)
     for (const plugin of plugins) {
