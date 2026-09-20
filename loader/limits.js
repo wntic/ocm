@@ -1,8 +1,7 @@
 // spec 17: name and length limits, checked before any write so an over-long
 // name is an ocm error naming the limit rather than a raw ENAMETOOLONG from
 // the filesystem after a half-registered marketplace
-import { existsSync } from "node:fs"
-import { basename, join } from "node:path"
+import { basename } from "node:path"
 
 const NAME_CHARS = 64
 const COMPONENT_BYTES = 200
@@ -157,18 +156,4 @@ export function treeFoldRefusal(name, revision, files) {
     }
   }
   return blocks.length ? blocks.join("\n") : null
-}
-
-// spec 19: a plugin without plugin.json is not a plugin — add refuses the
-// marketplace whole before any write, listing every missing manifest
-export function manifestRefusal(name, plugins) {
-  const missing = plugins.filter((plugin) => !existsSync(join(plugin.dir, "plugin.json")))
-  if (!missing.length) return null
-  const lines = missing.slice(0, 10).map((plugin) => `  plugins/${plugin.name}/plugin.json — missing`)
-  if (missing.length > 10) lines.push(`  … and ${missing.length - 10} more`)
-  return (
-    `marketplace "${name}" is not installable — ${missing.length} ${missing.length === 1 ? "plugin has" : "plugins have"} no plugin.json\n` +
-    `${lines.join("\n")}\n` +
-    '  each needs at least { "description": "…" }; see ocm validate and the README'
-  )
 }

@@ -6,13 +6,14 @@ import { collisionError, incumbentMarketplace } from "./collisions.js"
 import { discoverPlugins } from "./discovery.js"
 import { restoreDisplaced } from "./displaced.js"
 import { git, treePluginFiles } from "./git.js"
+import { marketplaceGateFindings } from "./manifest-gate.js"
 import { discoverMarketplace, discoveryError, readManifest } from "./manifest.js"
 import { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
-import { caseFoldRefusal, limitRefusal, manifestRefusal, treeFoldRefusal } from "./limits.js"
+import { caseFoldRefusal, limitRefusal, treeFoldRefusal } from "./limits.js"
 import { removeMcpKeys } from "./mcp.js"
 import { DISPLACED_RECORD_FILE, LINKS_DIR } from "./paths.js"
 import { loadRegistryForWrite, saveRegistry } from "./registry.js"
-import { manifestName, normaliseMarketplaceName, parseSource, placeClone } from "./source.js"
+import { duplicateRefusal, manifestName, normaliseMarketplaceName, parseSource, placeClone } from "./source.js"
 import { denyEntry, executableComponents, grantEntry } from "./trust.js"
 
 // discovery roots at the subdir when the source was a tree url; git
@@ -65,6 +66,29 @@ function addRefusal(message, warnings, parsed, dir) {
   throw error
 }
 
+// brief 29: the gate's findings as add's refusal — one indented line per
+// finding, capped at 10, then the fix
+function gateRefusal(name, findings) {
+  if (!findings.length) return null
+  const lines = findings.slice(0, 10).map((finding) => `  ${finding.message}`)
+  if (findings.length > 10) lines.push(`  … and ${findings.length - 10} more`)
+  return `marketplace "${name}" is not installable — ${findings.length} manifest finding${findings.length === 1 ? "" : "s"}\n${lines.join("\n")}\n  each needs at least { "description": "…" }; see ocm validate and the README`
+}
+
+// brief 29 §2: add's refusal chain as one function, so ocm scan runs exactly
+// what add runs and its exit code predicts the real run's — first refusal
+// wins, in add's order. `dir` is the clone root; discovery roots at the
+// subdir when the source was a tree url
+export async function addRefusalChain(name, parsed, dir, head, plugins, registry) {
+  const root = parsed.subdir ? join(dir, parsed.subdir) : dir
+  // brief 28 §3: the local check fires where both directories really exist;
+  // the tree check catches a pair a case-insensitive checkout has collapsed
+  return discoveryError(plugins) ?? caseFoldRefusal(name, discoverPlugins(root)) ??
+    (parsed.isGit ? treeFoldRefusal(name, head, (await treePluginFiles(dir, head, parsed.subdir)) ?? []) : null) ??
+    limitRefusal(plugins) ?? gateRefusal(name, marketplaceGateFindings(root, plugins)) ??
+    collisionError(registry, name, plugins)
+}
+
 // spec 05 add, minus the dialog: register, decide trust from the flag, save,
 // materialize. With no flag the trust stays "none" and the executable
 // components ship blocked, named in trustComponents for the prompt to render.
@@ -75,9 +99,8 @@ export async function addMarketplace(source, options = {}) {
   const ref = options.ref ?? parsed.ref
   const fallback = parsed.isGit ? parsed.name : manifestName(readManifest(parsed.url).name) ?? parsed.name
   const wanted = options.name ? normaliseMarketplaceName(options.name) : fallback
-  if (registry.marketplaces[wanted]) {
-    throw new Error(`marketplace "${wanted}" already added (use "ocm update ${wanted}")`)
-  }
+  const duplicate = duplicateRefusal(registry, parsed, wanted)
+  if (duplicate) throw new Error(duplicate)
   const { name, dir, head } = parsed.isGit ? await placeClone(parsed, wanted, ref, registry, options.name !== undefined)
     : { name: wanted, dir: parsed.url, head: "" }
   const root = parsed.subdir ? join(dir, parsed.subdir) : dir
@@ -91,14 +114,8 @@ export async function addMarketplace(source, options = {}) {
       discovered.warnings, parsed, dir,
     )
   }
-  // brief 28 §3: the local check fires where both directories really exist;
-  // the tree check catches a pair a case-insensitive checkout has collapsed
-  const refusal = discoveryError(plugins) ?? caseFoldRefusal(name, discoverPlugins(root)) ??
-    (parsed.isGit ? treeFoldRefusal(name, head, (await treePluginFiles(dir, head, parsed.subdir)) ?? []) : null) ??
-    limitRefusal(plugins) ?? manifestRefusal(name, plugins)
+  const refusal = await addRefusalChain(name, parsed, dir, head, plugins, registry)
   if (refusal) addRefusal(refusal, discovered.warnings, parsed, dir)
-  const collision = collisionError(registry, name, plugins)
-  if (collision) addRefusal(collision, discovered.warnings, parsed, dir)
   const entry = {
     url: parsed.url,
     dir,

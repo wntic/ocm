@@ -2,7 +2,8 @@
 // rules, and the components inventory.
 
 import { spawnSync } from "node:child_process"
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync, renameSync, readdirSync, readlinkSync } from "node:fs"
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, renameSync, readdirSync, readlinkSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
@@ -828,7 +829,9 @@ phase("9. config safety and idempotence across an add/update cycle for a .openco
   gitRepo(remote, {
     ".opencode-plugin": { "marketplace.json": json({ plugins: [{ name: "adw", source: "./plugins/adw", description: "cycle fixture", version: "1.0.0" }] }) },
     plugins: { adw: {
-      "plugin.json": json({ version: "1.0.0" }),
+      // brief 29: the gate reads plugin.json's own description — the one in
+      // the marketplace entry no longer satisfies the installability rule
+      "plugin.json": json({ version: "1.0.0", description: "cycle fixture" }),
       commands: { "commit.md": COMMAND },
       plugin: { "notify.js": JS_PLUGIN },
       "mcp.json": json(MCP),
@@ -1075,4 +1078,362 @@ phase("8. a pre-spec home keeps working end to end: list, update and opencode re
   assertResolves(commandLink(home, "legacy-kit", "work.md"), join(home, "mp", "plugins", "legacy-kit", "commands", "work.md"))
   // invariant: no plugin-load errors attributable to ocm-installed files
 }, 420_000)
+}
+
+// the manifest gate (brief 29): one installability answer shared by add,
+// update, scan, validate and the loader's auto-install
+{
+// bun's transpiler cache writes $HOME/Library/Caches/bun/@t@/*.pile on the
+// first spawn into a fresh fake home, which a zero-writes snapshot would
+// count as ocm's writes — redirect it to a throwaway scratch dir
+// (XDG_CACHE_HOME works; BUN_INSTALL_CACHE_DIR does not)
+function ocm(home, ...args) {
+  const cache = mkdtempSync(join(tmpdir(), "ocm-cache-"))
+  try {
+    const result = spawnSync(process.execPath, [OCM_BIN, ...args], {
+      env: { ...process.env, HOME: home, XDG_CACHE_HOME: cache }, encoding: "utf8", timeout: 120_000,
+    })
+    return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
+  } finally {
+    rmSync(cache, { recursive: true, force: true })
+  }
+}
+
+// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
+function assertResolves(dest, source) {
+  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
+  expect(realpathSync(dest)).toBe(realpathSync(source))
+}
+
+// every byte of the home — file contents, symlink targets, sorted for a
+// stable comparison — the zero-writes proof for a refused add
+function snapHome(dir) {
+  let out = ""
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const path = join(dir, entry.name)
+    if (entry.isSymbolicLink()) out += `${path} -> ${readlinkSync(path)}\n`
+    else if (entry.isDirectory()) out += snapHome(path)
+    else out += `${path}\0${readFileSync(path, "utf8")}\n`
+  }
+  return out
+}
+
+phase("1. the gate returns one finding per broken rule with the exact code, path and message; [] means installable", async (home) => {
+  // lazy: the module does not exist until the implementer's pass, and a
+  // top-level import would kill the whole file during discovery
+  const gate = await import("../loader/manifest-gate.js")
+  const { discoverPlugins } = await import("../loader/discovery.js")
+  const mp = join(home, "gate-mp")
+  const valid = json({ description: "demo plugin" })
+  writeTree(mp, { plugins: {
+    x: { commands: { "work.md": COMMAND } },
+    "broken-json": { "plugin.json": "{\n", commands: { "work.md": COMMAND } },
+    "array-json": { "plugin.json": "[]\n", commands: { "work.md": COMMAND } },
+    "string-json": { "plugin.json": '"hi"\n', commands: { "work.md": COMMAND } },
+    "null-json": { "plugin.json": "null\n", commands: { "work.md": COMMAND } },
+    "locked-json": { "plugin.json": valid, commands: { "work.md": COMMAND } },
+    "no-desc": { "plugin.json": json({}), commands: { "work.md": COMMAND } },
+    "empty-desc": { "plugin.json": json({ description: "" }), commands: { "work.md": COMMAND } },
+    "blank-desc": { "plugin.json": json({ description: "   " }), commands: { "work.md": COMMAND } },
+    "long-desc": { "plugin.json": json({ description: "d".repeat(201) }), commands: { "work.md": COMMAND } },
+    "edge-desc": { "plugin.json": json({ description: "d".repeat(200) }), commands: { "work.md": COMMAND } },
+    mismatch: { "plugin.json": json({ name: "other", description: "descriptive" }), commands: { "work.md": COMMAND } },
+    linter: { "plugin.json": valid, commands: { ".md": COMMAND } },
+    dotdot: { "plugin.json": valid, commands: { "..md": COMMAND } },
+    "js-empty": { "plugin.json": valid, plugin: { ".js": JS_PLUGIN } },
+    "hidden-skill": { "plugin.json": valid, skills: { ".hidden": { "SKILL.md": SKILL } } },
+    "empty-key": { "plugin.json": valid, commands: { "work.md": COMMAND }, "mcp.json": json({ "": { type: "local", command: ["echo"] } }) },
+  } })
+  const byName = Object.fromEntries(discoverPlugins(mp).map((p) => [p.name, p]))
+  const cases = {
+    x: [{ plugin: "x", path: "plugins/x/plugin.json", code: "manifest-missing", message: "plugins/x/plugin.json — missing" }],
+    "broken-json": [{ plugin: "broken-json", path: "plugins/broken-json/plugin.json", code: "manifest-unreadable", message: "plugins/broken-json/plugin.json: not valid JSON — fix it or remove it; ocm requires this file to be readable" }],
+    "array-json": [{ plugin: "array-json", path: "plugins/array-json/plugin.json", code: "manifest-unreadable", message: "plugins/array-json/plugin.json: must be a JSON object — fix it or remove it; ocm requires this file to be readable" }],
+    "string-json": [{ plugin: "string-json", path: "plugins/string-json/plugin.json", code: "manifest-unreadable", message: "plugins/string-json/plugin.json: must be a JSON object — fix it or remove it; ocm requires this file to be readable" }],
+    "null-json": [{ plugin: "null-json", path: "plugins/null-json/plugin.json", code: "manifest-unreadable", message: "plugins/null-json/plugin.json: must be a JSON object — fix it or remove it; ocm requires this file to be readable" }],
+    "locked-json": [{ plugin: "locked-json", path: "plugins/locked-json/plugin.json", code: "manifest-unreadable", message: "plugins/locked-json/plugin.json: not valid JSON — fix it or remove it; ocm requires this file to be readable" }],
+    "no-desc": [{ plugin: "no-desc", path: "plugins/no-desc/plugin.json", code: "description-missing", message: 'plugins/no-desc/plugin.json: "description" is required — add one line about the plugin' }],
+    "empty-desc": [{ plugin: "empty-desc", path: "plugins/empty-desc/plugin.json", code: "description-empty", message: 'plugins/empty-desc/plugin.json: "description" is required and must be non-empty — add one line about the plugin and re-run ocm add' }],
+    "blank-desc": [{ plugin: "blank-desc", path: "plugins/blank-desc/plugin.json", code: "description-empty", message: 'plugins/blank-desc/plugin.json: "description" is required and must be non-empty — add one line about the plugin and re-run ocm add' }],
+    "long-desc": [{ plugin: "long-desc", path: "plugins/long-desc/plugin.json", code: "description-long", message: 'plugins/long-desc/plugin.json: "description" is longer than 200 characters (201) — shorten it' }],
+    "edge-desc": [],
+    mismatch: [{ plugin: "mismatch", path: "plugins/mismatch/plugin.json", code: "name-mismatch", message: 'plugins/mismatch/plugin.json: name "other" disagrees with the directory name "mismatch" — rename the directory or fix plugin.json' }],
+    linter: [{ plugin: "linter", path: "plugins/linter/commands/.md", code: "component-degenerate", message: 'plugins/linter/commands/.md: component name is empty — it would install as "/linter:"\n  rename it to <name>.md, or delete it' }],
+    dotdot: [{ plugin: "dotdot", path: "plugins/dotdot/commands/..md", code: "component-degenerate", message: 'plugins/dotdot/commands/..md: component name "." begins with "." — it would install as "/dotdot:."\n  rename it to <name>.md, or delete it' }],
+    "js-empty": [{ plugin: "js-empty", path: "plugins/js-empty/plugin/.js", code: "component-degenerate", message: 'plugins/js-empty/plugin/.js: component name is empty — it would install as "ocm--js-empty--.js"\n  rename it to <name>.js, or delete it' }],
+    "hidden-skill": [{ plugin: "hidden-skill", path: "plugins/hidden-skill/skills/.hidden", code: "component-degenerate", message: 'plugins/hidden-skill/skills/.hidden: component name ".hidden" begins with "." — it would install as "hidden-skill--.hidden"\n  rename it, or delete it' }],
+    "empty-key": [{ plugin: "empty-key", path: "plugins/empty-key/mcp.json", code: "component-degenerate", message: 'plugins/empty-key/mcp.json: component name is empty — it would install as "ocm--empty-key--"\n  rename it, or delete it' }],
+  }
+  // EACCES is a read failure, not a missing file: the gate must say unreadable
+  const locked = join(mp, "plugins", "locked-json", "plugin.json")
+  chmodSync(locked, 0o000)
+  try {
+    for (const [name, want] of Object.entries(cases)) {
+      const plugin = byName[name]
+      if (!plugin) throw new Error(`discovery did not find plugin "${name}" under ${mp}`)
+      expect(gate.pluginGateFindings(mp, plugin)).toEqual(want)
+    }
+    // the marketplace-level call returns one flat array: every finding for
+    // plugin 1, then plugin 2, ... — concatenated in input plugin order
+    expect(gate.marketplaceGateFindings(mp, [])).toEqual([])
+    expect(gate.marketplaceGateFindings(mp, [byName.x, byName["no-desc"]])).toEqual([...cases.x, ...cases["no-desc"]])
+  } finally {
+    chmodSync(locked, 0o644)
+  }
+})
+
+phase("2. malformed plugin.json at add: exit 1, the refusal names the file and the fix, and nothing is written", async (home) => {
+  // the user's config and files predate the refused add (invariants: config safety, ownership)
+  writeTree(cfg(home), {
+    "opencode.json": json({ model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const bad = join(home, "bad")
+  writeTree(bad, { plugins: { p1: { "plugin.json": "{\n", commands: { "commit.md": COMMAND } } } })
+  const before = snapHome(home)
+  const result = ocm(home, "add", bad)
+  if (result.status !== 1) throw new Error(`ocm add ${bad} exited ${result.status}, expected 1 — a malformed plugin.json must refuse the add:\n${result.stdout}\n${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  for (const needle of [
+    'marketplace "bad" is not installable — 1 manifest finding',
+    "plugins/p1/plugin.json: not valid JSON — fix it or remove it; ocm requires this file to be readable",
+    'each needs at least { "description": "…" }; see ocm validate and the README',
+  ]) {
+    if (!output.includes(needle)) throw new Error(`the refusal must contain ${JSON.stringify(needle)}:\n${output}`)
+  }
+  expect(snapHome(home)).toBe(before) // zero writes: registry, links and config untouched
+})
+
+phase("3. an empty, a whitespace-only and a 201-character description are three distinct add refusals", async (home) => {
+  const variants = [
+    ["empty", json({ description: "" }), "must be non-empty"],
+    ["blank", json({ description: "   " }), "must be non-empty"],
+    ["long", json({ description: "d".repeat(201) }), "(201)"],
+  ]
+  for (const [label, manifest, needle] of variants) {
+    const dir = join(home, label)
+    writeTree(dir, { plugins: { p1: { "plugin.json": manifest, commands: { "commit.md": COMMAND } } } })
+    const result = ocm(home, "add", dir)
+    if (result.status !== 1) throw new Error(`ocm add ${dir} exited ${result.status}, expected 1 — a ${label} description must refuse the add:\n${result.stdout}\n${result.stderr}`)
+    const output = `${result.stdout}\n${result.stderr}`
+    if (!output.includes(`marketplace "${label}" is not installable — 1 manifest finding`)) {
+      throw new Error(`the ${label} refusal must name the marketplace and the count:\n${output}`)
+    }
+    if (!output.includes("plugins/p1/plugin.json")) throw new Error(`the ${label} refusal must name plugins/p1/plugin.json:\n${output}`)
+    if (!output.includes(needle)) throw new Error(`the ${label} refusal must contain its distinguishing fragment "${needle}":\n${output}`)
+  }
+})
+
+phase("4. degenerate component names refuse the add and leave no link anywhere under the config dir", async (home) => {
+  const bad = join(home, "degen-mp")
+  writeTree(bad, { plugins: { degen: {
+    "plugin.json": json({ description: "demo plugin" }),
+    commands: { ".md": COMMAND },
+    plugin: { ".js": JS_PLUGIN },
+    skills: { ".hidden": { "SKILL.md": SKILL } },
+  } } })
+  const result = ocm(home, "add", bad)
+  if (result.status !== 1) throw new Error(`ocm add ${bad} exited ${result.status}, expected 1 — degenerate component names must refuse the add:\n${result.stdout}\n${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  for (const needle of [
+    'marketplace "degen-mp" is not installable — 3 manifest findings',
+    "plugins/degen/commands/.md",
+    "plugins/degen/plugin/.js",
+    "plugins/degen/skills/.hidden",
+  ]) {
+    if (!output.includes(needle)) throw new Error(`the refusal must contain ${JSON.stringify(needle)}:\n${output}`)
+  }
+  // nothing materialized: no degen: link and no ocm--degen-- file anywhere ocm links
+  for (const [dir, prefix] of [
+    [join(cfg(home), "commands"), "degen:"],
+    [join(cfg(home), "agents"), "degen:"],
+    [join(cfg(home), "plugins"), "ocm--degen--"],
+  ]) {
+    if (!existsSync(dir)) continue
+    for (const entry of readdirSync(dir)) {
+      if (entry.startsWith(prefix)) throw new Error(`expected no entry starting with "${prefix}" in ${dir}, found ${entry}`)
+    }
+  }
+})
+
+phase("5. twelve findings list ten, then \"… and 2 more\"", async (home) => {
+  const cap = join(home, "cap")
+  const plugins = {}
+  for (let i = 1; i <= 12; i++) plugins[`p${String(i).padStart(2, "0")}`] = { commands: { "work.md": COMMAND } }
+  writeTree(cap, { plugins })
+  const result = ocm(home, "add", cap)
+  if (result.status !== 1) throw new Error(`ocm add ${cap} exited ${result.status}, expected 1:\n${result.stdout}\n${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  for (const needle of ['marketplace "cap" is not installable — 12 manifest findings', "plugins/p01/plugin.json", "plugins/p10/plugin.json", "… and 2 more"]) {
+    if (!output.includes(needle)) throw new Error(`the refusal must contain ${JSON.stringify(needle)}:\n${output}`)
+  }
+  for (const absent of ["plugins/p11/plugin.json", "plugins/p12/plugin.json"]) {
+    if (output.includes(absent)) throw new Error(`the cap must leave ${absent} unlisted:\n${output}`)
+  }
+})
+
+phase("6. a description of exactly 200 characters still installs", async (home) => {
+  // the user's config and files predate the add (invariants: config safety, ownership)
+  writeTree(cfg(home), { "opencode.json": json({ model: "claude-sonnet-4-6" }), commands: { "mine.md": "# my own command\n" } })
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { p1: { "plugin.json": json({ description: "d".repeat(200) }), commands: { "commit.md": COMMAND } } } })
+  const result = ocm(home, "add", mp)
+  if (result.status !== 0) throw new Error(`ocm add ${mp} exited ${result.status} — exactly 200 characters is installable:\n${result.stdout}\n${result.stderr}`)
+  assertResolves(commandLink(home, "p1", "commit.md"), join(mp, "plugins", "p1", "commands", "commit.md"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  expect(JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8")).model).toBe("claude-sonnet-4-6") // config safety
+  // invariant: no plugin-load errors attributable to ocm-installed files
+})
+
+phase("7. template/ still adds", async (home) => {
+  const result = ocm(home, "add", TEMPLATE)
+  if (result.status !== 0) throw new Error(`ocm add ${TEMPLATE} exited ${result.status}:\n${result.stdout}\n${result.stderr}`)
+  expect(result.stdout).toContain("added marketplace")
+})
+
+// F77: both defects in one tree — the clash is checked before the gate, so
+// the manifest-less plugin's finding is masked; scan must say what add says
+phase("8. scan refuses a local marketplace add refuses: exit 1, add's refusal verbatim on stderr, zero writes", async (home) => {
+  const f77 = join(home, "f77")
+  writeTree(f77, { plugins: {
+    bare: { commands: { "work.md": COMMAND } },
+    clashy: { commands: { "lint.md": COMMAND }, command: { "lint.md": COMMAND } },
+  } })
+  const before = snapHome(home)
+  const scanned = ocm(home, "scan", f77)
+  if (scanned.status !== 1) {
+    throw new Error(`ocm scan ${f77} exited ${scanned.status}, expected 1 — scan must refuse what add refuses:\n${scanned.stdout}\n${scanned.stderr}`)
+  }
+  const naming = `ocm add ${f77} would be refused:`
+  const lines = scanned.stderr.split("\n")
+  const at = lines.indexOf(naming)
+  if (at === -1) throw new Error(`scan's stderr must contain the naming line ${JSON.stringify(naming)}:\n${scanned.stderr}`)
+  const block = lines.slice(at + 1).map((line) => line.slice(2)).filter(Boolean)
+  const added = ocm(home, "add", f77)
+  if (added.status !== 1) throw new Error(`ocm add ${f77} exited ${added.status}, expected 1 — the fixture must be one add refuses:\n${added.stdout}\n${added.stderr}`)
+  const refusal = added.stderr.split("\n").filter((line) => line && !line.startsWith("  warning: "))
+  expect(block).toEqual(refusal)
+  expect(snapHome(home)).toBe(before) // zero writes: a refused scan touches nothing
+})
+
+phase("9. scan refuses a git source the gate rejects: clone, add's refusal verbatim, no temp clone left behind", async (home) => {
+  const remote = join(home, "remote", "mp")
+  gitRepo(remote, { plugins: { bare: { commands: { "work.md": COMMAND } } } })
+  const url = `file://${remote}`
+  const scanned = ocm(home, "scan", url)
+  if (scanned.status !== 1) {
+    throw new Error(`ocm scan ${url} exited ${scanned.status}, expected 1 — scan must refuse what add refuses:\n${scanned.stdout}\n${scanned.stderr}`)
+  }
+  if (!scanned.stdout.includes("cloning")) throw new Error(`scan's stdout must show the clone happened:\n${scanned.stdout}`)
+  const naming = `ocm add ${url} would be refused:`
+  const lines = scanned.stderr.split("\n")
+  const at = lines.indexOf(naming)
+  if (at === -1) throw new Error(`scan's stderr must contain the naming line ${JSON.stringify(naming)}:\n${scanned.stderr}`)
+  const block = lines.slice(at + 1).map((line) => line.slice(2)).filter(Boolean)
+  for (const needle of ["is not installable — 1 manifest finding", "plugins/bare/plugin.json — missing"]) {
+    if (!block.join("\n").includes(needle)) throw new Error(`the refusal block must contain ${JSON.stringify(needle)}:\n${block.join("\n")}`)
+  }
+  const added = ocm(home, "add", url)
+  if (added.status !== 1) throw new Error(`ocm add ${url} exited ${added.status}, expected 1 — the fixture must be one add refuses:\n${added.stdout}\n${added.stderr}`)
+  const refusal = added.stderr.split("\n").filter((line) => line && !line.startsWith("  warning: "))
+  expect(block).toEqual(refusal)
+  const leftover = readdirSync(tmpdir()).filter((entry) => entry.startsWith("ocm-scan-"))
+  if (leftover.length) throw new Error(`scan left temp clone(s) behind in ${tmpdir()}: ${leftover.join(", ")}`)
+})
+
+phase("10. warnings alone keep scan green: exit 0, the plugin listing on stdout, the warning on stderr", async (home) => {
+  const mp = join(home, "warn-mp")
+  writeTree(mp, {
+    "marketplace.json": json({ plugins: [{ name: "ghost", source: "./plugins/ghost" }] }),
+    plugins: { p1: { "plugin.json": json({ description: "demo plugin" }), commands: { "work.md": COMMAND } } },
+  })
+  const scanned = ocm(home, "scan", mp)
+  if (scanned.status !== 0) {
+    throw new Error(`ocm scan ${mp} exited ${scanned.status}, expected 0 — warnings alone must not refuse the scan:\n${scanned.stdout}\n${scanned.stderr}`)
+  }
+  if (!scanned.stdout.includes("1 plugin(s) would be installed")) {
+    throw new Error(`scan's stdout must still list the installable plugin:\n${scanned.stdout}`)
+  }
+  if (!scanned.stdout.includes("p1")) throw new Error(`scan's stdout must name p1:\n${scanned.stdout}`)
+  if (!scanned.stderr.includes('plugin "ghost"') || !scanned.stderr.includes("not found")) {
+    throw new Error(`scan's stderr must carry the ghost warning:\n${scanned.stderr}`)
+  }
+})
+
+// brief 29 §4 (F103): a repeat add is refused by url before any clone, the
+// residual different-url case says the fetch happened, and url comparison
+// ignores a trailing "/" and ".git" on either side
+phase("11. a repeat add of the same url is refused by url before any clone, even when marketplace.json registers it under another name", async (home) => {
+  const repo = join(home, "b2-big-src")
+  gitRepo(repo, {
+    "marketplace.json": json({ name: "ocm-e2e3-big", plugins: [{ name: "big-kit", source: "./plugins/big-kit" }] }),
+    plugins: { "big-kit": { "plugin.json": json({ description: "demo plugin" }), commands: { "work.md": COMMAND } } },
+  })
+  const url = `file://${repo}`
+  const first = ocm(home, "add", url)
+  if (first.status !== 0) throw new Error(`ocm add ${url} exited ${first.status} — the fixture must be installable:\n${first.stdout}\n${first.stderr}`)
+  if (!readRegistry(home).marketplaces["ocm-e2e3-big"]) {
+    throw new Error(`expected the first add to register "ocm-e2e3-big" in ${registryFile(home)}; got ${JSON.stringify(Object.keys(readRegistry(home).marketplaces))}`)
+  }
+  const repeat = ocm(home, "add", url)
+  if (repeat.status !== 1) throw new Error(`ocm add ${url} exited ${repeat.status}, expected 1 — a repeat add of the same url must be refused:\n${repeat.stdout}\n${repeat.stderr}`)
+  const refusal = `error: ${url} is already added as marketplace "ocm-e2e3-big"\n  use "ocm update ocm-e2e3-big", or "ocm remove ocm-e2e3-big" first`
+  if (!repeat.stderr.includes(refusal)) throw new Error(`the repeat add must be refused by url with exactly:\n${refusal}\ngot:\n${repeat.stderr}`)
+  if (repeat.stdout.includes("cloning")) throw new Error(`the url refusal must fire before any clone — no cloning line on stdout:\n${repeat.stdout}`)
+  expect(readdirSync(join(home, ".cache", "ocm", "marketplaces")).sort()).toEqual(["ocm-e2e3-big"])
+})
+
+phase("12. a different url declaring an added name clones, then refuses saying the fetched copy was discarded", async (home) => {
+  const bigRepo = join(home, "b2-big-src")
+  gitRepo(bigRepo, {
+    "marketplace.json": json({ name: "ocm-e2e3-big", plugins: [{ name: "big-kit", source: "./plugins/big-kit" }] }),
+    plugins: { "big-kit": { "plugin.json": json({ description: "demo plugin" }), commands: { "work.md": COMMAND } } },
+  })
+  const bigUrl = `file://${bigRepo}`
+  const first = ocm(home, "add", bigUrl)
+  if (first.status !== 0) throw new Error(`ocm add ${bigUrl} exited ${first.status} — the fixture must be installable:\n${first.stdout}\n${first.stderr}`)
+  const otherRepo = join(home, "b2-other-src")
+  gitRepo(otherRepo, {
+    "marketplace.json": json({ name: "ocm-e2e3-big", plugins: [{ name: "other-kit", source: "./plugins/other-kit" }] }),
+    plugins: { "other-kit": { "plugin.json": json({ description: "demo plugin" }), commands: { "work.md": COMMAND } } },
+  })
+  const otherUrl = `file://${otherRepo}`
+  const added = ocm(home, "add", otherUrl)
+  if (added.status !== 1) throw new Error(`ocm add ${otherUrl} exited ${added.status}, expected 1 — a different url declaring an added name must be refused:\n${added.stdout}\n${added.stderr}`)
+  if (!added.stdout.includes("cloning")) throw new Error(`the residual case cannot be known before fetching — stdout must show the clone happened:\n${added.stdout}`)
+  const refusal = `error: marketplace "ocm-e2e3-big" already added from ${bigUrl}\n  its marketplace.json declares that name; the copy just fetched was discarded\n  add this one under another name: ocm add ${otherUrl} --name <name>`
+  if (!added.stderr.includes(refusal)) throw new Error(`the refusal must state the residual case exactly:\n${refusal}\ngot:\n${added.stderr}`)
+  expect(readdirSync(join(home, ".cache", "ocm", "marketplaces")).sort()).toEqual(["ocm-e2e3-big"])
+})
+
+phase("13. url comparison ignores a trailing \"/\" and \".git\" on either side", async (home) => {
+  const kit = (plugin) => ({ plugins: { [plugin]: { "plugin.json": json({ description: "demo plugin" }), commands: { "work.md": COMMAND } } } })
+  gitRepo(join(home, "big-src.git"), kit("big-kit"))
+  gitRepo(join(home, "plain-src"), kit("plain-kit"))
+  gitRepo(join(home, "slash-src"), kit("slash-kit"))
+  // --name on every first add: the registered name then differs from every
+  // url-derived name, so only the url comparison can refuse the second add
+  for (const [repo, name] of [["big-src.git", "big-mp"], ["plain-src", "plain-mp"], ["slash-src/", "slash-mp"]]) {
+    const url = `file://${join(home, repo)}`
+    const added = ocm(home, "add", url, "--name", name)
+    if (added.status !== 0) throw new Error(`ocm add ${url} --name ${name} exited ${added.status} — the fixture must be installable:\n${added.stdout}\n${added.stderr}`)
+  }
+  const repeats = [
+    ["big-src", "the registered url carries .git"],
+    ["plain-src.git", "the added url carries .git"],
+    ["plain-src/", "the added url carries a trailing slash"],
+    ["slash-src", "the registered url carries a trailing slash"],
+  ]
+  for (const [repo, why] of repeats) {
+    const url = `file://${join(home, repo)}`
+    const repeat = ocm(home, "add", url)
+    if (repeat.status !== 1) throw new Error(`ocm add ${url} exited ${repeat.status}, expected 1 — ${why}, so this is the same url as one already added:\n${repeat.stdout}\n${repeat.stderr}`)
+    if (!repeat.stderr.includes("is already added as marketplace")) {
+      throw new Error(`ocm add ${url} must be refused by url — ${why} must not hide the duplicate:\n${repeat.stderr}`)
+    }
+    if (repo.endsWith("/") && repeat.stdout.includes("cloning")) {
+      throw new Error(`the url refusal must fire before any clone — no cloning line on stdout for ${url}:\n${repeat.stdout}`)
+    }
+  }
+}, 300_000)
 }

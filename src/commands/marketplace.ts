@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { addMarketplace, denyTrust, grantTrust, isGitUrl, normaliseMarketplaceName, parseSource, pinMarketplace, readRegistry, removeMarketplace, skipTrust } from "../../loader/core.js"
+import { addMarketplace, denyTrust, duplicateRefusal, grantTrust, isGitUrl, normaliseMarketplaceName, parseSource, pinMarketplace, readRegistry, removeMarketplace, skipTrust } from "../../loader/core.js"
 import type { CoreAddResult } from "../../loader/core.js"
 import { installLoader, reportTuiPlugin } from "../loader"
 import { git } from "../git"
@@ -18,12 +18,12 @@ export interface AddOptions {
 // spec 05 add, minus the dialog: the core registers, decides trust from the
 // flag, saves and materializes; the CLI renders and prompts (spec 10a)
 export async function add(source: string, options: AddOptions = {}): Promise<void> {
-  // the clone line must not state a false fact: the core refuses an
-  // already-added name before it clones
+  // the clone line must not state a false fact: the core refuses a duplicate
+  // url or name before it clones — the same predicate decides both
   if (isGitUrl(source)) {
     const parsed = parseSource(source)
     const wanted = options.name ? normaliseMarketplaceName(options.name) : parsed.name
-    if (!readRegistry().marketplaces[wanted]) console.log(`cloning ${parsed.url}...`)
+    if (!duplicateRefusal(readRegistry(), parsed, wanted)) console.log(`cloning ${parsed.url}...`)
   }
   let result: CoreAddResult
   try {

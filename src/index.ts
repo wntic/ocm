@@ -215,7 +215,7 @@ export async function main(argv: string[]): Promise<void> {
       break
     case "scan":
       requireArg(positional[0], "missing url, path or plugin")
-      scan(positional[0]!)
+      await scan(positional[0]!)
       break
     case "validate":
       validate(positional[0])

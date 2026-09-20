@@ -89,6 +89,23 @@ export function manifestName(name) {
   return name && NAME_RE.test(name) && name.length <= 64 ? name : undefined
 }
 
+// brief 29 §4: both pre-clone duplicate refusals as one predicate, so the
+// CLI's cloning line asks the core's question and the two cannot disagree.
+// Urls compare after stripping a trailing "/" and a trailing ".git" — the
+// spellings of one repository are one
+export function duplicateRefusal(registry, parsed, wanted) {
+  const bare = (url) => url.replace(/\/+$/, "").replace(/\.git$/, "")
+  for (const [name, entry] of Object.entries(registry.marketplaces ?? {})) {
+    if (bare(entry.url) === bare(parsed.url)) {
+      return `error: ${parsed.url} is already added as marketplace "${name}"\n  use "ocm update ${name}", or "ocm remove ${name}" first`
+    }
+  }
+  if (registry.marketplaces[wanted]) {
+    return `marketplace "${wanted}" already added (use "ocm update ${wanted}")`
+  }
+  return null
+}
+
 async function clone(url, dir, ref) {
   const args = ["clone", "--depth", "1"]
   if (ref) args.push("--branch", ref)
@@ -119,7 +136,7 @@ export async function placeClone(parsed, name, ref, registry, named) {
   if (!declared || declared === name) return { name, dir, head }
   if (registry.marketplaces[declared]) {
     rmSync(dir, { recursive: true, force: true })
-    throw new Error(`marketplace "${declared}" already added (use "ocm update ${declared}")`)
+    throw new Error(`error: marketplace "${declared}" already added from ${registry.marketplaces[declared].url}\n  its marketplace.json declares that name; the copy just fetched was discarded\n  add this one under another name: ocm add ${parsed.url} --name <name>`)
   }
   renameSync(dir, marketplaceDir(declared))
   return { name: declared, dir: marketplaceDir(declared), head }

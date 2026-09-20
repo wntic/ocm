@@ -5,6 +5,7 @@ import { setSkillsPath } from "./config.js"
 import { discoverPlugins, PLUGIN_NAME_RE } from "./discovery.js"
 import { gcTargets, isRenderedFile, link, mirror } from "./links.js"
 import { foldedComponentGroups } from "./limits.js"
+import { pluginGateFindings } from "./manifest-gate.js"
 import { syncMcp } from "./mcp.js"
 import { LINKS_DIR, DISPLACED_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "./paths.js"
 import { readRegistry, isRecord } from "./registry.js"
@@ -214,9 +215,9 @@ export function enabledPlugins(entry, dir) {
     }
     for (const plugin of discoverPlugins(dir)) {
       if (plugin.name in registered || taken.has(plugin.name)) continue
-      // spec 19: a manifest-less plugin is never auto-installed; registered
-      // ones are grandfathered via the registry branch above
-      if (!existsSync(join(plugin.dir, "plugin.json"))) continue
+      // brief 29: a plugin the manifest gate refuses is never auto-installed;
+      // registered ones are grandfathered via the registry branch above
+      if (pluginGateFindings(dir, plugin).length > 0) continue
       enabled.add(plugin.name)
     }
   }

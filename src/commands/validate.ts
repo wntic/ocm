@@ -122,7 +122,7 @@ function lintPlugin(
     findings.push(error(`${rel}: ${clash} — both produce the same materialized name`))
   }
   lintTypos(rel, plugin.dir, findings)
-  const record = lintPluginJson(root, plugin.dir, plugin.name, findings)
+  const record = lintPluginJson(root, plugin, findings)
   lintMcpJson(root, plugin.dir, findings)
   const entry = manifest.entries.get(plugin.name)
   lintMcpServersBase(root, plugin, entry, findings)

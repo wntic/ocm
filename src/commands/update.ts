@@ -109,7 +109,7 @@ async function updateOne(registry: Registry, name: string, trust?: boolean, plug
   const entry = registry.marketplaces[name]!
   const report: MarketplaceReport = {
     name, ok: true, error: null, note: null, before: null, after: null, changed: false,
-    renamed: [], removed: [], pruned: [], refused: [], plugins: [], warnings: [], materialized: null,
+    renamed: [], removed: [], pruned: [], dropped: [], refused: [], plugins: [], warnings: [], materialized: null,
   }
   try {
     await pullMarketplace(entry, name, report)
@@ -127,6 +127,7 @@ async function updateOne(registry: Registry, name: string, trust?: boolean, plug
         report.renamed.length > 0 ||
         report.removed.length > 0 ||
         report.pruned.length > 0 ||
+        report.dropped.length > 0 ||
         report.refused.length > 0 ||
         report.plugins.length > 0 ||
         links.created > 0
@@ -160,7 +161,7 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport, 
   const known = new Set(Object.keys(entry.plugins))
   const fileChanges = pluginFileChanges(entry, report.before, report.after, plugins)
   const changed = new Set([...fileChanges].filter(([, files]) => files.length > 0).map(([pluginName]) => pluginName))
-  const { warnings, pruned } = reconcilePluginRecords(registry, name, root, {
+  const { warnings, pruned, dropped } = reconcilePluginRecords(registry, name, root, {
     discovered: plugins, excluded: applied.excluded, plugin, resolved, changed,
   })
   const mcpWarning = removeMcpKeys([...applied.removed, ...applied.renamed.map((rename) => rename.from), ...pruned])
@@ -170,6 +171,7 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport, 
   report.renamed = applied.renamed
   report.removed = applied.removed
   report.pruned = pruned
+  report.dropped = dropped
   report.refused = applied.refused
   report.plugins = pluginReports(plugins, entry.plugins, versions, known, fileChanges, name, entry.mode)
   // spec 23 §8: a plugin-scoped update narrows its report to that plugin
