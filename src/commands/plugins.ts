@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { addRefusalChain, isGitUrl, manifestName, parseSource, readManifest, readRegistry, resolvePlugin, setEnabled } from "../../loader/core.js"
+import { addRefusalChain, displayPath, isGitUrl, manifestName, parseSource, readManifest, readRegistry, resolvePlugin, setEnabled } from "../../loader/core.js"
 import type { CorePluginComponents } from "../../loader/core.js"
 import { OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
@@ -19,28 +19,36 @@ function componentSummary(components: CorePluginComponents): string {
 
 // spec 05 install: the core flips the record, saves and materializes; the
 // CLI renders — disagreement first, then the upgrade, then the links report.
-// spec 18: a takeover is stated as such; a no-op is not "installed" again
+// spec 18: a takeover is stated as such; a no-op is not "installed" again.
+// Brief 31 §6: the headline is derived from this plugin's outcomes — a
+// displacement, a repair of hand-deleted links, or the plain summary
 export function install(arg: string, force = false): void {
   const result = setEnabled(arg, true, { force })
   if (result.disagreement) reportWarnings([result.disagreement])
   reportUpgrade(result.wasV1)
-  reportMutationWarnings(result.report.warnings, result.marketplace)
+  reportMutationWarnings(result.report, { marketplace: result.marketplace, plugin: result.plugin })
+  const created = result.report.outcomes.filter((o) => o.plugin === result.plugin && o.state === "created")
+  const displaced = created.find((o) => o.displaced !== undefined)
   if (result.takeover) console.log(`took over "${result.plugin}" from marketplace "${result.takeover}"`)
-  else if (result.already) console.log(`already installed ${result.plugin}@${result.marketplace}`)
+  else if (displaced) {
+    console.log(`installed ${result.plugin}@${result.marketplace}, displaced your ${displayPath(displaced.dest)} → ${displaced.displaced}`)
+  } else if (result.already && created.length > 0) {
+    console.log(`repaired ${created.length} link${created.length === 1 ? "" : "s"} for ${result.plugin}@${result.marketplace}`)
+  } else if (result.already) console.log(`already installed ${result.plugin}@${result.marketplace}`)
   else console.log(`installed ${result.plugin}@${result.marketplace} (${componentSummary(result.components)})`)
-  reportRestart(result.report.created)
+  reportRestart(result.report)
 }
 
 export function uninstall(arg: string): void {
   const result = setEnabled(arg, false)
   reportUpgrade(result.wasV1)
-  reportMutationWarnings(result.report.warnings, result.marketplace)
+  reportMutationWarnings(result.report, { marketplace: result.marketplace, plugin: result.plugin })
   // spec 23 §3: a no-op uninstall states it; §6: the headline precedes the
   // restart notice
   if (result.already) console.log(`${result.plugin}@${result.marketplace} not installed`)
   else console.log(`uninstalled ${result.plugin}@${result.marketplace}`)
   for (const line of result.restore) console.log(line)
-  reportRestart(result.report.removed)
+  reportRestart(result.report)
 }
 
 export function setMode(name: string, mode: string): void {

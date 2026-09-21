@@ -302,6 +302,49 @@ phase("list --all shows disabled plugins with a (disabled) marker; plain list om
   expect(plain.stdout).toContain("adw")
   expect(plain.stdout).not.toContain("beta")
 })
+
+phase("9. install over hand-deleted links reports the repair and restores them; a second run is already installed with no notice", async (home) => {
+  const [mp] = addMp(home, { adw: { "plugin.json": PLUGIN_JSON, commands: { "a.md": COMMAND, "b.md": COMMAND, "c.md": COMMAND } } }, "--explicit")
+  expect(ocm(home, "install", "adw").status).toBe(0)
+  for (const file of ["a.md", "b.md", "c.md"]) rmSync(join(cfg(home), "commands", `adw:${file}`))
+  const repaired = ocm(home, "install", "adw")
+  if (repaired.status !== 0) throw new Error(`ocm install adw over hand-deleted links exited ${repaired.status}: ${repaired.stderr}`)
+  // the links are back on disk before the wording is questioned
+  for (const file of ["a.md", "b.md", "c.md"]) assertResolves(join(cfg(home), "commands", `adw:${file}`), join(mp, "plugins", "adw", "commands", file))
+  const output = `${repaired.stdout}\n${repaired.stderr}`
+  if (!output.includes("repaired 3 links for adw@mp")) throw new Error(`expected "repaired 3 links for adw@mp" in the repair run:\n${output}`)
+  const notices = output.split("\n").filter((l) => l.trim() === "restart opencode to activate")
+  if (notices.length !== 1) throw new Error(`expected exactly one restart notice on the repair run:\n${output}`)
+  // the record is unchanged by the repair, so a second run is a true no-op
+  const again = ocm(home, "install", "adw")
+  expect(again.status).toBe(0)
+  const againOut = `${again.stdout}\n${again.stderr}`
+  expect(againOut).toContain("already installed")
+  expect(againOut).not.toContain("repaired")
+  expect(againOut.split("\n").filter((l) => l.trim() === "restart opencode to activate")).toEqual([])
+})
+
+phase("10. install --force over a user's file states the displacement in the headline and keeps the original recoverable", async (home) => {
+  // invariant: ownership — the user's file predates every ocm run
+  const dest = join(cfg(home), "commands", "adw:commit.md")
+  writeTree(cfg(home), { commands: { "adw:commit.md": GREET } })
+  const [mp] = addMp(home, { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } }, "--explicit")
+  const forced = ocm(home, "install", "adw", "--force")
+  if (forced.status !== 0) throw new Error(`ocm install adw --force exited ${forced.status}: ${forced.stderr}`)
+  assertResolves(dest, join(mp, "plugins", "adw", "commands", "commit.md")) // the takeover happened
+  // the displacement is the headline on stdout, not only a stderr warning aside;
+  // the file is named without pinning the path spelling (relative or absolute)
+  const headline = forced.stdout.split("\n").find((l) => l.includes("installed adw@mp"))
+  if (!headline) throw new Error(`expected an "installed adw@mp" headline on stdout:\n${forced.stdout}`)
+  for (const needle of ["displaced your", "adw:commit.md"]) {
+    if (!headline.includes(needle)) throw new Error(`the install headline lacks "${needle}":\n${headline}\nfull output:\n${forced.stdout}\n${forced.stderr}`)
+  }
+  // the displaced original is recoverable under ~/.cache/ocm/displaced/ (spec 21)
+  const copies = walkPaths(displacedRoot(home)).filter((p) => lstatSync(p).isFile() && readFileSync(p, "utf8") === GREET)
+  if (!copies.length) throw new Error(`expected the displaced original under ${displacedRoot(home)}`)
+  const notices = `${forced.stdout}\n${forced.stderr}`.split("\n").filter((l) => l.trim() === "restart opencode to activate")
+  if (notices.length !== 1) throw new Error(`expected exactly one restart notice on the displacing install:\n${forced.stdout}\n${forced.stderr}`)
+})
 }
 
 // add integrity: path spellings agree; a private repo fails cleanly — absorbed from test/phase17-add-integrity.mjs
@@ -1055,13 +1098,13 @@ phase("4. uninstalling just the plugin restores the displaced original like a ma
   expect(readFileSync(copies[0], "utf8")).toBe(GREET)
 })
 
-phase("5. a teardown with no displaced files prints nothing extra: remove and uninstall outputs byte-identical to today", async (home) => {
+phase("5. a teardown with no displaced files prints nothing extra: remove and uninstall both end with the restart notice", async (home) => {
   const mp = join(home, "alpha")
   writeTree(mp, { plugins: { "alpha-kit": { "plugin.json": PLUGIN_JSON, commands: { "greet.md": COMMAND } } } })
   expect(ocm(home, ["add", mp]).status).toBe(0)
   const removed = ocm(home, ["remove", "alpha"])
   expect(removed.status).toBe(0)
-  expect(removed.stdout).toBe('removed marketplace "alpha"\n  alpha-kit: 1 commands removed\n')
+  expect(removed.stdout).toBe('removed marketplace "alpha"\n  alpha-kit: 1 commands removed\nrestart opencode to activate\n')
   expect(removed.stderr).toBe("")
   expect(ocm(home, ["add", mp]).status).toBe(0)
   const un = ocm(home, ["uninstall", "alpha-kit"])
@@ -1426,4 +1469,29 @@ phase("6. a native mcp.json's top-level $schema is metadata, not a server entry:
   const info = ocm(home, ["info", "clock"])
   if (info.stdout.includes("$schema")) throw new Error(`$schema must not appear in ocm info:\n${info.stdout}`)
 })
+}
+
+// brief 31 §7: warning discipline — a pending-trust fact is run-level, not
+// per-mutation. F100: a mutation in marketplace A owes the user the one
+// blocked line for marketplace B, whether or not the command touched B.
+{
+phase("1. ocm install of marketplace A's plugin with marketplace B untrusted prints exactly one blocked line naming B", async (home) => {
+  // mp-a: explicit, stuff only — installing alpha touches nothing executable
+  const mpA = join(home, "mp-a")
+  writeTree(mpA, { plugins: { alpha: { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } } })
+  const addedA = ocm(home, ["add", mpA, "--explicit"])
+  if (addedA.status !== 0) throw new Error(`ocm add mp-a exited ${addedA.status}:\n${addedA.output}`)
+  // mp-b: executable components left undecided by the non-TTY add
+  const mpB = join(home, "mp-b")
+  writeTree(mpB, { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "go.md": COMMAND }, plugin: { "b.js": JS_PLUGIN }, "mcp.json": MCP } } })
+  const addedB = ocm(home, ["add", mpB])
+  if (addedB.status !== 0) throw new Error(`ocm add mp-b exited ${addedB.status}:\n${addedB.output}`)
+  expect(readRegistry(home).marketplaces["mp-b"].trust.code).toBe("none") // B's executables are pending
+  const result = ocm(home, ["install", "alpha"])
+  if (result.status !== 0) throw new Error(`ocm install alpha exited ${result.status}:\n${result.output}`)
+  expect(result.output).toContain("installed alpha@mp-a") // the mutation itself is reported
+  const blocked = result.output.split("\n").filter((line) => line.includes("mp-b") && /blocked/i.test(line))
+  if (blocked.length !== 1) throw new Error(`expected exactly one blocked line naming mp-b, got ${blocked.length}:\n${result.output}`)
+  expect(blocked[0]).toContain("ocm trust mp-b") // the line names the remedy
+}, 240_000)
 }

@@ -12,7 +12,7 @@ import { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
 import { caseFoldRefusal, limitRefusal, treeFoldRefusal } from "./limits.js"
 import { removeMcpKeys } from "./mcp.js"
 import { DISPLACED_RECORD_FILE, LINKS_DIR } from "./paths.js"
-import { loadRegistryForWrite, saveRegistry } from "./registry.js"
+import { loadRegistryForWrite, saveRegistry, saveRegistryIfChanged } from "./registry.js"
 import { duplicateRefusal, manifestName, normaliseMarketplaceName, parseSource, placeClone } from "./source.js"
 import { denyEntry, executableComponents, grantEntry } from "./trust.js"
 
@@ -55,6 +55,36 @@ export function registerPlugins(registry, name, plugins) {
     updated[plugin.name] = record
   }
   entry.plugins = updated
+}
+
+// brief 31 §3: the registry's component list is the outcome record filtered
+// to created|current|refreshed, per plugin — a component no outcome supports
+// is not stored. A plugin with no outcome this run keeps its stored
+// components: only a mutation rewrites records (brief 31 §8).
+export function deriveComponents(registry, name, outcomes) {
+  const entry = registry.marketplaces?.[name]
+  if (!entry) return
+  const byPlugin = new Map()
+  for (const outcome of outcomes ?? []) {
+    if (!byPlugin.has(outcome.plugin)) byPlugin.set(outcome.plugin, [])
+    byPlugin.get(outcome.plugin).push(outcome)
+  }
+  for (const [pluginName, pluginOutcomes] of byPlugin) {
+    const record = entry.plugins[pluginName]
+    if (!record) continue
+    const components = {}
+    for (const type of ["command", "agent", "skill", "plugin", "mcp"]) {
+      const names = [
+        ...new Set(
+          pluginOutcomes
+            .filter((o) => o.type === type && (o.state === "created" || o.state === "current" || o.state === "refreshed"))
+            .map((o) => o.component),
+        ),
+      ].sort()
+      if (names.length) components[type] = names
+    }
+    record.components = components
+  }
 }
 
 // a failed add leaves no clone behind (a local directory is the user's);
@@ -141,6 +171,10 @@ export async function addMarketplace(source, options = {}) {
   // must be saved before links are made (spec 07)
   saveRegistry(registry)
   const report = materialize(name, root, { enabled: enabledPlugins(entry, root) })
+  // brief 31 §3: the records are derived from what materialized, then saved
+  // again — a derivation that changed nothing writes nothing
+  deriveComponents(registry, name, report.outcomes)
+  saveRegistryIfChanged(registry)
   return {
     name,
     url: parsed.url,
@@ -164,7 +198,8 @@ export function removeMarketplace(name) {
     throw new Error(`marketplace "${name}" not found (ocm list)`)
   }
   const warnings = []
-  removeLinksFor(name, entry.dir)
+  const links = removeLinksFor(name, entry.dir)
+  warnings.push(...links.warnings)
   // spec 21: the restore pass runs after the links come down, so a displaced
   // original returns to its path only when nothing now holds it. Spec 27 §3:
   // a consumed record is pruned so a later teardown stops re-reporting it
@@ -176,8 +211,8 @@ export function removeMarketplace(name) {
   // drop; a disabled record's keys came down when it was disabled — after a
   // spec 18 takeover they belong to the name's new owner, not to us
   const owned = Object.entries(entry.plugins).filter(([, plugin]) => !plugin.collision)
-  const mcpWarning = removeMcpKeys(owned.filter(([, plugin]) => plugin.enabled !== false).map(([pluginName]) => pluginName))
-  if (mcpWarning) warnings.push(mcpWarning)
+  const mcp = removeMcpKeys(owned.filter(([, plugin]) => plugin.enabled !== false).map(([pluginName]) => pluginName))
+  if (mcp.warning) warnings.push(mcp.warning)
   // `local === false` rather than `!local`: an entry missing the field must
   // never be treated as ocm-managed and deleted
   if (entry.local === false) {
@@ -190,6 +225,7 @@ export function removeMarketplace(name) {
     owned: owned.map(([pluginName, plugin]) => ({ name: pluginName, components: plugin.components })),
     restore,
     warnings,
+    report: { marketplace: name, outcomes: [...links.outcomes, ...mcp.outcomes], warnings },
     wasV1,
   }
 }

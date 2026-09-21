@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, withFakeHome, withFakeOpencode } from "./harness.mjs"
+import { assertAbsent, opencodeProbe, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -1018,4 +1018,486 @@ phase("4. the grandfather holds without an upstream change: still enabled, still
     throw new Error(`expected exactly one legacy warning for legacy-tool from ocm doctor, got ${warnings.length}:\n${diagnosed.stdout}\n${diagnosed.stderr}`)
   }
 }, 420_000)
+}
+
+// brief 31 §1: `ocm update <plugin>@<marketplace>` is removed — the argument
+// is a marketplace, and a bare name that is not one is looked up as a plugin
+// across the registry so the error names where it lives (F88, F101, F110)
+{
+phase("1. ocm update tool@mp errors naming ocm update mp; nothing is pulled and nothing materialized", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  expect(ocm(home, "add", `file://${remote}`, "--name", "mp").status).toBe(0)
+  const before = shortSha(remote)
+  writeFileSync(join(remote, "plugins", "tool", "commands", "new.md"), COMMAND)
+  commitAll(remote, "advance")
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+
+  const result = ocm(home, "update", "tool@mp")
+  if (result.status === 0) {
+    throw new Error(`ocm update tool@mp must not exit 0 — the plugin@marketplace form is removed (brief 31 §1):\n${result.stdout}\n${result.stderr}`)
+  }
+  expect(result.stderr).toContain("ocm update takes a marketplace, not a plugin — run `ocm update mp`")
+  // nothing pulled: the clone predates the advance
+  assertAbsent(join(cloneDir(home), "plugins", "tool", "commands", "new.md"))
+  const revision = readRegistry(home).marketplaces.mp.revision
+  if (!revision?.includes(before)) {
+    throw new Error(`expected mp.revision to still contain ${before} in ${registryFile(home)}, got ${JSON.stringify(revision)}`)
+  }
+  // nothing materialized
+  assertAbsent(commandLink(home, "tool", "new.md"))
+  // invariant: idempotence — the refusal writes nothing
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
+
+  // the refusal fires before the marketplace part is even looked up
+  const unknown = ocm(home, "update", "tool@nosuch-mp")
+  if (unknown.status === 0) throw new Error(`ocm update tool@nosuch-mp must not exit 0:\n${unknown.stdout}\n${unknown.stderr}`)
+  expect(unknown.stderr).toContain("ocm update takes a marketplace, not a plugin — run `ocm update nosuch-mp`")
+}, 240_000)
+
+phase("2. a bare plugin name errors naming its marketplace and the exact command; an ambiguous name lists every provider; an unknown name keeps today's message", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { "tip-kit": { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  expect(ocm(home, "add", `file://${remote}`, "--name", "mp").status).toBe(0)
+  const before = shortSha(remote)
+  writeFileSync(join(remote, "plugins", "tip-kit", "commands", "new.md"), COMMAND)
+  commitAll(remote, "advance")
+
+  const single = ocm(home, "update", "tip-kit")
+  if (single.status === 0) {
+    throw new Error(`ocm update tip-kit must not exit 0 — a bare plugin name is not a marketplace:\n${single.stdout}\n${single.stderr}`)
+  }
+  expect(single.stderr).toContain('"tip-kit" is a plugin in marketplace "mp" — run `ocm update mp`')
+  // nothing pulled, nothing materialized for the bare form either
+  assertAbsent(join(cloneDir(home), "plugins", "tip-kit", "commands", "new.md"))
+  const revision = readRegistry(home).marketplaces.mp.revision
+  if (!revision?.includes(before)) {
+    throw new Error(`expected mp.revision to still contain ${before} in ${registryFile(home)}, got ${JSON.stringify(revision)}`)
+  }
+  assertAbsent(commandLink(home, "tip-kit", "new.md"))
+
+  // ambiguous: a rival marketplace ships the same plugin name — add refuses
+  // a duplicate outright, so the collision record lands via update
+  const rival = join(home, "rival")
+  writeTree(rival, { plugins: { filler: { "plugin.json": PLUGIN_JSON, commands: { "fill.md": COMMAND } } } })
+  expect(ocm(home, "add", rival).status).toBe(0)
+  writeTree(join(rival, "plugins"), { "tip-kit": { "plugin.json": PLUGIN_JSON, commands: { "rival.md": COMMAND } } })
+  expect(ocm(home, "update", "rival").status).toBe(0)
+  const ambiguous = ocm(home, "update", "tip-kit")
+  if (ambiguous.status === 0) throw new Error(`ocm update tip-kit must not exit 0 with two providers:\n${ambiguous.stdout}\n${ambiguous.stderr}`)
+  // the plural wording is not settled (brief 31 §1): assert the names, not the sentence
+  for (const needle of ['"tip-kit"', '"mp"', '"rival"', "`ocm update mp`", "`ocm update rival`"]) {
+    if (!ambiguous.stderr.includes(needle)) {
+      throw new Error(`the ambiguity error must name ${needle}:\n${ambiguous.stdout}\n--- stderr ---\n${ambiguous.stderr}`)
+    }
+  }
+
+  // unknown: today's not-found message, unchanged
+  const unknown = ocm(home, "update", "nosuch-thing")
+  if (unknown.status === 0) throw new Error(`ocm update nosuch-thing must not exit 0:\n${unknown.stdout}\n${unknown.stderr}`)
+  expect(unknown.stderr).toContain('marketplace "nosuch-thing" not found (ocm list)')
+}, 300_000)
+}
+
+// brief 31 §3: the registry record, the printed file list and the loader's
+// startup sync are derived from the materializer's outcome record, and from
+// nothing else — a component no outcome supports is not recorded and not
+// printed (F76, F104)
+{
+phase("6. after an update the registry's components are the materialized outcomes — a frontmatter-less skill is not recorded; update --json carries outcomes, not materialized", async (home) => {
+  const mp = join(home, "mp")
+  gitRepo(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "commit.md": COMMAND },
+    skills: {
+      good: { "SKILL.md": SKILL },
+      bad: { "SKILL.md": "# No frontmatter\n\nBody.\n" },
+    },
+  } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  const updated = ocm(home, "update", "mp")
+  if (updated.status !== 0) throw new Error(`ocm update mp exited ${updated.status}: ${updated.stderr}`)
+  const components = readRegistry(home).marketplaces.mp.plugins.adw.components
+  expect(components.command).toEqual(["commit.md"])
+  // "bad" never materialized (no frontmatter name): no outcome, no record
+  expect(components.skill).toEqual(["good"])
+
+  const asJson = ocm(home, "update", "mp", "--json")
+  if (asJson.status !== 0) throw new Error(`ocm update mp --json exited ${asJson.status}: ${asJson.stderr}`)
+  const mpReport = JSON.parse(asJson.stdout).marketplaces[0]
+  if (mpReport.materialized !== undefined) {
+    throw new Error(`marketplaces[0].materialized is replaced by outcomes (brief 31 §3), still present: ${JSON.stringify(mpReport.materialized)}`)
+  }
+  if (!Array.isArray(mpReport.outcomes) || !mpReport.outcomes.length) {
+    throw new Error(`expected marketplaces[0].outcomes to be a non-empty array, got ${JSON.stringify(mpReport.outcomes)}`)
+  }
+  const states = new Set(["created", "current", "refreshed", "removed", "skipped", "blocked", "refused"])
+  for (const outcome of mpReport.outcomes) {
+    for (const field of ["type", "plugin", "component", "state"]) {
+      if (typeof outcome[field] !== "string") throw new Error(`an outcome is missing its ${field}: ${JSON.stringify(outcome)}`)
+    }
+    if (!states.has(outcome.state)) throw new Error(`outcome state "${outcome.state}" is not a brief 31 §2 state: ${JSON.stringify(outcome)}`)
+  }
+}, 240_000)
+
+phase("7. the update file list is the git diff intersected with the outcomes — a blocked executable prints ! with its reason; a changed README.md and plugin.json do not print", async (home) => {
+  const remote = join(home, "remote")
+  const NOTIFY = 'export default { id: "adw-notify", server: async () => ({}) }\n'
+  gitRepo(remote, { plugins: { adw: {
+    "plugin.json": json({ version: "0.1.0", description: "demo plugin" }),
+    commands: { "commit.md": COMMAND },
+    "README.md": "# adw\n",
+    plugin: { "notify.js": NOTIFY },
+  } } })
+  // non-TTY add: the trust prompt hits EOF and stays undecided, so the
+  // executable is blocked for every later run
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  writeFileSync(join(remote, "plugins", "adw", "commands", "commit.md"), `${COMMAND}<!-- v2 -->\n`)
+  writeFileSync(join(remote, "plugins", "adw", "README.md"), "# adw v2\n")
+  writeFileSync(join(remote, "plugins", "adw", "plugin.json"), json({ version: "0.2.0", description: "demo plugin" }))
+  writeFileSync(join(remote, "plugins", "adw", "plugin", "notify.js"), `// v2\n${NOTIFY}`)
+  commitAll(remote, "advance")
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  // the file list: the 4-space-indented lines under the plugin line
+  const fileLines = output.split("\n").filter((line) => /^    [+~!-] /.test(line))
+  if (!fileLines.some((line) => /^    ~ commands\/commit\.md$/.test(line))) {
+    throw new Error(`expected a "~ commands/commit.md" file line in:\n${output}`)
+  }
+  if (!fileLines.some((line) => /^    ! plugin\/notify\.js — /.test(line))) {
+    throw new Error(`expected a "! plugin/notify.js — <reason>" file line (a blocked component carries its reason after an em dash) in:\n${output}`)
+  }
+  for (const path of ["README.md", "plugin.json"]) {
+    if (fileLines.some((line) => line.includes(path))) {
+      throw new Error(`a changed ${path} is not a component and must not print as a file line:\n${fileLines.join("\n")}`)
+    }
+  }
+}, 240_000)
+
+phase("8. ocm update and the loader's startup sync write a byte-identical plugins record for the same marketplace", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "commit.md": COMMAND },
+    skills: {
+      good: { "SKILL.md": SKILL },
+      bad: { "SKILL.md": "# No frontmatter\n\nBody.\n" },
+    },
+  } } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  const updated = ocm(home, "update", "mp")
+  if (updated.status !== 0) throw new Error(`ocm update mp exited ${updated.status}: ${updated.stderr}`)
+  const components = readRegistry(home).marketplaces.mp.plugins.adw.components
+  if (JSON.stringify(components.skill) !== JSON.stringify(["good"])) {
+    throw new Error(`expected components.skill ["good"] in ${registryFile(home)} — the frontmatter-less "bad" never materialized — got ${JSON.stringify(components.skill)}`)
+  }
+  const snapshot = JSON.stringify(readRegistry(home).marketplaces.mp.plugins)
+  const synced = loaderSync(home, { OCM_SYNC_INTERVAL_MS: "0" }) // interval 0: the sync is due now
+  if (synced.status !== 0) throw new Error(`loader sync exited ${synced.status}: ${synced.stderr}`)
+  const after = JSON.stringify(readRegistry(home).marketplaces.mp.plugins)
+  if (after !== snapshot) {
+    throw new Error(`the loader sync must write the same record as ocm update for the same disk:\nupdate:      ${snapshot}\nloader sync: ${after}`)
+  }
+  expect(readRegistry(home).marketplaces.mp.plugins.adw.components.skill).toEqual(["good"])
+}, 240_000)
+}
+
+// brief 31 §4: skip means skip — the gates that decide what is recorded
+// (the 64-char plugin-name limit, the manifest check) also decide what is
+// linked, and a skipped component is never silent: it leaves the registry,
+// ocm list and the report's file list in the same commit (F69, F76, F104)
+{
+// the restart notice is a standalone line; a substring count would also
+// match the TUI text that embeds the phrase (same shape as reports.test.mjs)
+const noticeCount = (output) => output.split("\n").filter((l) => l.trim() === "restart opencode to activate").length
+
+phase("9. an over-long plugin name is refused before linking: no command link, no record, one limit warning, no restart notice, and opencode serves no command of it", async (home) => {
+  const longName = "x".repeat(70)
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  writeTree(join(remote, "plugins"), { [longName]: { "plugin.json": PLUGIN_JSON, commands: { "nope.md": COMMAND } } })
+  commitAll(remote, "add an over-long-named plugin")
+
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  // F69: a plugin the registry refuses must be a plugin the materializer
+  // refuses — otherwise opencode serves what ocm would not record
+  assertAbsent(join(cfg(home), "commands", `${longName}:nope.md`))
+  if (readRegistry(home).marketplaces.mp.plugins[longName] !== undefined) {
+    throw new Error(`expected no record for the over-long plugin in ${registryFile(home)}`)
+  }
+  const limitLines = output.split("\n").filter((l) => l.includes(longName) && /exceeds 64 chars/.test(l))
+  if (limitLines.length !== 1) {
+    throw new Error(`expected exactly one limit warning naming the over-long plugin, got ${limitLines.length}:\n${output}`)
+  }
+  if (noticeCount(output) !== 0) {
+    throw new Error(`an entirely skipped plugin creates nothing — the restart notice must not fire for it:\n${output}`)
+  }
+  // invariant: no plugin-load errors — and opencode serves nothing of the refused plugin
+  const probe = opencodeProbe(cfg(home), home)
+  if (probe.available && !probe.unreliable && probe.commands.includes(`${longName}:nope`)) {
+    throw new Error(`opencode serves ${longName}:nope — a plugin the registry refuses must not be linked`)
+  }
+}, 420_000)
+
+phase("10. a skill that loses its frontmatter name between two updates is skipped everywhere: no record, no list entry, no materialized file line, mirror removed, .skills.paths untouched, one notice", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: {
+    adw: { "plugin.json": PLUGIN_JSON, skills: { notes: { "SKILL.md": SKILL } } },
+    skillkit: { "plugin.json": PLUGIN_JSON, skills: { style: { "SKILL.md": SKILL } } },
+  } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  const config = join(cfg(home), "opencode.json")
+  const skillsBefore = JSON.parse(readFileSync(config, "utf8")).skills
+  writeFileSync(join(remote, "plugins", "adw", "skills", "notes", "SKILL.md"), "# No frontmatter\n\nBody.\n")
+  commitAll(remote, "drop the frontmatter name")
+
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  const components = readRegistry(home).marketplaces.mp.plugins.adw.components
+  if (components.skill !== undefined) {
+    throw new Error(`expected no skill component for adw in ${registryFile(home)} — the nameless skill has no supporting outcome — got ${JSON.stringify(components.skill)}`)
+  }
+  const listed = ocm(home, "list")
+  if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}: ${listed.stderr}`)
+  if (listed.stdout.includes("notes")) throw new Error(`ocm list must not claim the skipped skill:\n${listed.stdout}`)
+  if (!listed.stdout.includes("style")) throw new Error(`ocm list must still show skillkit's good skill:\n${listed.stdout}`)
+  const materialized = output.split("\n").filter((l) => /^    [+~-] skills\/notes\/SKILL\.md$/.test(l))
+  if (materialized.length) {
+    throw new Error(`a skipped skill is not materialized — it must not print as + ~ -:\n${materialized.join("\n")}`)
+  }
+  const warnings = result.stderr.split("\n").filter((l) => l.includes("no name in frontmatter"))
+  if (warnings.length !== 1) {
+    throw new Error(`expected exactly one "no name in frontmatter" warning on stderr, got ${warnings.length}:\n${result.stderr}`)
+  }
+  // F76: the mirror's removal must not take the skills path with it —
+  // skillkit's good skill still renders there
+  const skillsAfter = JSON.parse(readFileSync(config, "utf8")).skills
+  if (JSON.stringify(skillsAfter) !== JSON.stringify(skillsBefore)) {
+    throw new Error(`the update must leave .skills.paths in ${config} untouched: before ${JSON.stringify(skillsBefore)}, after ${JSON.stringify(skillsAfter)}`)
+  }
+  assertAbsent(join(home, ".cache", "ocm", "links", "mp", "skills", "adw--notes"))
+  if (noticeCount(output) !== 1) {
+    throw new Error(`the mirror removal must fire the restart notice exactly once:\n${output}`)
+  }
+}, 240_000)
+
+phase("11. an auto-installed plugin's nameless skill is withheld, not installed: the file list prints ! with the reason rather than +, and stderr agrees", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  writeTree(join(remote, "plugins"), { skillkit: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "run.md": COMMAND },
+    skills: { notes: { "SKILL.md": "# No frontmatter\n\nBody.\n" } },
+  } })
+  commitAll(remote, "add skillkit with a nameless skill")
+
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  const runLink = commandLink(home, "skillkit", "run.md")
+  if (!existsSync(runLink) || !lstatSync(runLink).isSymbolicLink()) throw new Error(`expected a symlink at ${runLink}`)
+  expect(realpathSync(runLink)).toBe(realpathSync(join(cloneDir(home), "plugins", "skillkit", "commands", "run.md")))
+  const plus = output.split("\n").filter((l) => /^    \+ skills\/notes\/SKILL\.md$/.test(l))
+  if (plus.length) throw new Error(`a withheld skill must not print as +:\n${plus.join("\n")}`)
+  const bang = output.split("\n").filter((l) => /^    ! skills\/notes\/SKILL\.md — /.test(l))
+  if (bang.length !== 1) {
+    throw new Error(`expected one "! skills/notes/SKILL.md — <reason>" file line — a skipped outcome renders as !:\n${output}`)
+  }
+  if (!bang[0].includes("no name in frontmatter")) throw new Error(`the ! line must carry the skip reason:\n${bang[0]}`)
+  const warnings = result.stderr.split("\n").filter((l) => l.includes("no name in frontmatter"))
+  if (warnings.length !== 1) {
+    throw new Error(`expected exactly one "no name in frontmatter" warning on stderr, got ${warnings.length}:\n${result.stderr}`)
+  }
+  // agreement: the printed list and stderr name the same skill
+  if (!bang[0].includes("skills/notes") || !warnings[0].includes("skills/notes")) {
+    throw new Error(`the ! line and the stderr warning must both name skills/notes:\n${bang[0]}\n${warnings[0]}`)
+  }
+}, 240_000)
+}
+
+// brief 31 §5: a rename reports its net outcome — a refused rename is inert
+// (F74: the plugin keeps its old name and its materialization, and the
+// fallback removes and states it when no directory can hold the link), and a
+// rename the manifest gate drops is reported as removed, not renamed (F75)
+{
+// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
+function assertResolves(dest, source) {
+  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
+  expect(realpathSync(dest)).toBe(realpathSync(source))
+}
+
+// the F74 fixture: mp-a owns "stolen-name", mp-b ships "greet-kit", both
+// added — so mp-b's rename onto the incumbent's name meets an installed plugin
+function addRivalMarketplaces(home) {
+  writeTree(join(home, "mp-a"), { plugins: { "stolen-name": { "plugin.json": PLUGIN_JSON, commands: { "a.md": COMMAND } } } })
+  writeTree(join(home, "mp-b"), { plugins: { "greet-kit": { "plugin.json": PLUGIN_JSON, commands: { "hello.md": COMMAND } } } })
+  for (const mp of ["mp-a", "mp-b"]) {
+    const added = ocm(home, "add", join(home, mp))
+    if (added.status !== 0) throw new Error(`ocm add ${mp} exited ${added.status}: ${added.stderr}`)
+  }
+}
+
+phase("12. a refused rename is inert: the plugin keeps its old name, links and components under the renamed directory, the incumbent is untouched, and list, probe and doctor agree", async (home) => {
+  addRivalMarketplaces(home)
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" }) // ownership probe file
+  // upstream renames greet-kit onto the incumbent's name
+  renameSync(join(home, "mp-b", "plugins", "greet-kit"), join(home, "mp-b", "plugins", "stolen-name"))
+  writeFileSync(join(home, "mp-b", "marketplace.json"), renames({ "greet-kit": "stolen-name" }))
+
+  const result = ocm(home, "update", "mp-b")
+  if (result.status !== 0) throw new Error(`ocm update mp-b exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  // F74: the refusal states the kept state and the remedy, verbatim
+  expect(output).toContain('  refused rename greet-kit → stolen-name: "stolen-name" is already provided by marketplace "mp-a"')
+  expect(output).toContain("    greet-kit keeps its current name and components; resolve the collision upstream or run `ocm remove mp-a`")
+
+  const plugins = readRegistry(home).marketplaces["mp-b"].plugins
+  expect(plugins["greet-kit"]?.enabled).toBe(true)
+  expect(plugins["stolen-name"]).toBeUndefined()
+  // the record's source follows the disk, so doctor sees a real directory
+  expect(plugins["greet-kit"]?.source).toBe("plugins/stolen-name")
+  // the old name links into the renamed directory: the refusal is inert
+  assertResolves(commandLink(home, "greet-kit", "hello.md"), join(home, "mp-b", "plugins", "stolen-name", "commands", "hello.md"))
+  assertAbsent(commandLink(home, "stolen-name", "hello.md"))
+  // invariant: ownership — the incumbent's link is never displaced
+  assertResolves(commandLink(home, "stolen-name", "a.md"), join(home, "mp-a", "plugins", "stolen-name", "commands", "a.md"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+
+  const listed = ocm(home, "list")
+  if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}: ${listed.stderr}`)
+  const mpB = listed.stdout.slice(listed.stdout.indexOf("mp-b"))
+  if (!mpB.includes("greet-kit") || !mpB.includes("commands: hello.md")) {
+    throw new Error(`ocm list must still show greet-kit with its components under mp-b:\n${listed.stdout}`)
+  }
+  if (mpB.includes("stolen-name")) throw new Error(`ocm list must not attribute stolen-name to mp-b:\n${listed.stdout}`)
+
+  // invariant: no plugin-load errors — opencode keeps serving the command
+  const probe = opencodeProbe(cfg(home), home)
+  if (probe.available && !probe.unreliable && !probe.commands.includes("greet-kit:hello")) {
+    throw new Error(`opencode must keep serving greet-kit:hello under the refused rename, served: ${JSON.stringify(probe.commands)}`)
+  }
+
+  // doctor probes opencode; the fake on test/fixtures answers in milliseconds
+  const diagnosed = spawnSync(process.execPath, [OCM_BIN, "doctor"], {
+    env: withFakeOpencode({ ...process.env, HOME: home }), encoding: "utf8", timeout: 300_000,
+  })
+  if (diagnosed.status !== 0) {
+    throw new Error(`ocm doctor exited ${diagnosed.status} after the inert refusal:\n${diagnosed.stdout}\n${diagnosed.stderr}`)
+  }
+  const findings = `${diagnosed.stdout}\n${diagnosed.stderr}`.split("\n").filter((l) => l.includes("greet-kit"))
+  if (findings.length) {
+    throw new Error(`doctor must report nothing wrong for greet-kit after the inert refusal:\n${findings.join("\n")}`)
+  }
+}, 300_000)
+
+phase("13. a refused rename with no directory to link removes the plugin: the report states the removal with its components, the record is gone, the incumbent is untouched", async (home) => {
+  addRivalMarketplaces(home)
+  // the manifest declares the rename but the plugin directory is gone, so the
+  // inert path has nothing to link (manifest-declared renames are supported)
+  rmSync(join(home, "mp-b", "plugins", "greet-kit"), { recursive: true, force: true })
+  writeFileSync(join(home, "mp-b", "marketplace.json"), renames({ "greet-kit": "stolen-name" }))
+
+  const result = ocm(home, "update", "mp-b")
+  if (result.status !== 0) throw new Error(`ocm update mp-b exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  expect(output).toContain('  refused rename greet-kit → stolen-name: "stolen-name" is already provided by marketplace "mp-a"')
+  // the fallback states the removal in the same block, with the components
+  expect(output).toContain("    greet-kit removed: command greet-kit:hello.md")
+
+  // no record survives the removal
+  expect(readRegistry(home).marketplaces["mp-b"].plugins["greet-kit"]).toBeUndefined()
+  assertAbsent(commandLink(home, "greet-kit", "hello.md"))
+  // invariant: ownership — the incumbent's link is never touched
+  assertResolves(commandLink(home, "stolen-name", "a.md"), join(home, "mp-a", "plugins", "stolen-name", "commands", "a.md"))
+}, 180_000)
+
+phase("14. a renamed manifest-less plugin the gate drops is reported as removed, not renamed: no renamed line, no separate uninstalled line, no record, no link", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { "legacy-tool": { "plugin.json": PLUGIN_JSON, commands: { "hello.md": COMMAND } } } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  // one commit renames the plugin and drops its manifest: the rename lands in
+  // the git diff, so the grandfather clause no longer covers the plugin
+  renameSync(join(remote, "plugins", "legacy-tool"), join(remote, "plugins", "legacy-tool-2"))
+  rmSync(join(remote, "plugins", "legacy-tool-2", "plugin.json"))
+  writeFileSync(join(remote, "marketplace.json"), renames({ "legacy-tool": "legacy-tool-2" }))
+  commitAll(remote, "rename legacy-tool and drop its manifest")
+
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  // F75: the headline names the net outcome — the plugin was removed
+  expect(output).toContain("removed legacy-tool: plugin.json required now that it changed")
+  // one line per plugin: neither the renamed line nor the dropped line prints
+  // (the gate's multi-line stderr warning may still print — it is a warning)
+  expect(output).not.toMatch(/renamed[^\n]*legacy-tool/)
+  expect(output).not.toMatch(/legacy-tool-2\s+uninstalled/)
+
+  const plugins = readRegistry(home).marketplaces.mp.plugins
+  expect(plugins["legacy-tool"]).toBeUndefined()
+  expect(plugins["legacy-tool-2"]).toBeUndefined()
+  assertAbsent(commandLink(home, "legacy-tool", "hello.md"))
+  assertAbsent(commandLink(home, "legacy-tool-2", "hello.md"))
+}, 240_000)
+}
+
+// brief 31 §7: warning discipline — one fact, once, scoped to what was
+// touched. F107: one unparseable opencode.json is one fact however many
+// code paths trip over it. F94: a vanished manifest is its own fact, not a
+// version arrow with an unknown side.
+{
+phase("15. an unparseable opencode.json during an update produces exactly one warning naming it, and the file is left byte-identical", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { kit: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "work.md": COMMAND },
+    skills: { "python-style": { "SKILL.md": SKILL } },
+    "mcp.json": mcpJson(MCP),
+  } } })
+  const added = ocm(home, "add", mp, "--trust")
+  if (added.status !== 0) throw new Error(`ocm add --trust exited ${added.status}: ${added.stderr}`)
+  // invariant: config safety — a file ocm cannot parse is the user's, never
+  // rewritten; today three code paths warn about it in two phrasings
+  const corrupt = '{ "model": "claude-sonnet-4-6", }\n'
+  writeFileSync(join(cfg(home), "opencode.json"), corrupt)
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  const naming = output.split("\n").filter((line) => line.includes("opencode.json"))
+  if (naming.length !== 1) throw new Error(`expected exactly one warning naming opencode.json, got ${naming.length}:\n${output}`)
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(corrupt)
+}, 240_000)
+
+phase("16. a plugin whose manifest vanished between add and update prints no version arrow and reports the vanished manifest once", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { "legacy-tool": {
+    "plugin.json": json({ description: "demo plugin", version: "0.1.0" }),
+    commands: { "hello.md": COMMAND },
+  } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  expect(readRegistry(home).marketplaces.mp.plugins["legacy-tool"].version).toBe("0.1.0") // the record carries the version at add
+  rmSync(join(mp, "plugins", "legacy-tool", "plugin.json"))
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  expect(output).not.toContain("→ ?") // F94: an unknown side omits the transition entirely
+  const facts = output.split("\n").filter((line) => line.includes("legacy-tool") && /plugin\.json|manifest/i.test(line))
+  if (facts.length !== 1) throw new Error(`expected exactly one line reporting legacy-tool's vanished manifest, got ${facts.length}:\n${output}`)
+  // the grandfather holds: the command link survives the manifest-less update
+  const link = commandLink(home, "legacy-tool", "hello.md")
+  if (!existsSync(link)) throw new Error(`expected the grandfathered command link at ${link}`)
+}, 240_000)
 }

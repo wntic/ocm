@@ -3,6 +3,7 @@ import {
   normalizeRegistry as coreNormalizeRegistry,
   parseRegistryStrict,
   saveRegistry as coreSaveRegistry,
+  saveRegistryIfChanged as coreSaveRegistryIfChanged,
 } from "../loader/core.js"
 import type { Registry } from "./types"
 
@@ -25,4 +26,8 @@ export function normalizeRegistry(raw: unknown): Registry {
 
 export function saveRegistry(registry: Registry): void {
   coreSaveRegistry(registry)
+}
+
+export function saveRegistryIfChanged(registry: Registry): void {
+  coreSaveRegistryIfChanged(registry)
 }

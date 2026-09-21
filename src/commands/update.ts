@@ -1,17 +1,17 @@
 import { existsSync, mkdirSync } from "node:fs"
-import { dirname } from "node:path"
-import { pullRepo, reconcilePluginRecords } from "../../loader/core.js"
-import { componentRoot, materializeLinks, removeMcpKeys } from "../install"
+import { dirname, relative } from "node:path"
+import { pullRepo, reconcilePluginRecords, registerPlugins } from "../../loader/core.js"
+import { componentRoot, deriveComponents, materializeLinks, removeMcpKeys } from "../install"
 import { discoverMarketplace, readRenames } from "../discovery"
 import { applyRenames, resolveChains } from "../renames"
 import { clone, git } from "../git"
-import { loadRegistryForWrite, saveRegistry } from "../registry"
+import { loadRegistryForWrite, saveRegistry, saveRegistryIfChanged } from "../registry"
 import { installLoader, reportTuiPlugin } from "../loader"
 import { reportUpgrade } from "../report"
-import type { MarketplaceEntry, Registry } from "../types"
+import type { DiscoveredPlugin, MarketplaceEntry, Registry } from "../types"
 import { decideUpdateTrust } from "./trust"
 import { pluginFileChanges, pluginReports, renderMarketplace } from "./update-report"
-import type { MarketplaceReport } from "./update-report"
+import type { FileChange, MarketplaceReport } from "./update-report"
 
 export interface UpdateOptions {
   quiet?: boolean
@@ -19,27 +19,32 @@ export interface UpdateOptions {
   trust?: boolean
 }
 
-// `ocm update` takes a marketplace, a plugin@marketplace, or nothing
-function resolveTarget(registry: Registry, target?: string): { names: string[]; plugin?: string } {
+// `ocm update` takes a marketplace or nothing; a bare name that is not one
+// is looked up as a plugin so the error names where it lives
+function resolveTarget(registry: Registry, target?: string): { names: string[] } {
   if (!target) return { names: Object.keys(registry.marketplaces) }
-  const at = target.indexOf("@")
-  if (at === -1) {
-    if (!registry.marketplaces[target]) throw new Error(`marketplace "${target}" not found (ocm list)`)
-    return { names: [target] }
+  if (target.includes("@")) {
+    throw new Error(`ocm update takes a marketplace, not a plugin — run \`ocm update ${target.slice(target.indexOf("@") + 1)}\``)
   }
-  const plugin = target.slice(0, at)
-  const name = target.slice(at + 1)
-  const entry = registry.marketplaces[name]
-  if (!entry) throw new Error(`marketplace "${name}" not found (ocm list)`)
-  if (!entry.plugins[plugin]) {
-    throw new Error(`plugin "${plugin}" not found in marketplace "${name}" (ocm list --all)`)
+  if (registry.marketplaces[target]) return { names: [target] }
+  const providers = Object.keys(registry.marketplaces).filter((name) =>
+    Object.hasOwn(registry.marketplaces[name]!.plugins, target),
+  )
+  if (providers.length === 1) {
+    const mp = providers[0]!
+    throw new Error(`"${target}" is a plugin in marketplace "${mp}" — run \`ocm update ${mp}\``)
   }
-  return { names: [name], plugin }
+  if (providers.length > 1) {
+    const listed = providers.map((mp) => `"${mp}"`).join(" and ")
+    const commands = providers.map((mp) => `\`ocm update ${mp}\``).join(" or ")
+    throw new Error(`"${target}" is a plugin in marketplaces ${listed} — run ${commands}`)
+  }
+  throw new Error(`marketplace "${target}" not found (ocm list)`)
 }
 
 export async function update(target?: string, options: UpdateOptions = {}): Promise<void> {
   const { registry, wasV1 } = loadRegistryForWrite()
-  const { names, plugin } = resolveTarget(registry, target)
+  const { names } = resolveTarget(registry, target)
   if (!names.length) {
     if (options.json) console.log(JSON.stringify({ marketplaces: [] }, null, 2))
     else console.log("no marketplaces added yet (ocm add <url|path>)")
@@ -55,7 +60,7 @@ export async function update(target?: string, options: UpdateOptions = {}): Prom
     // spec 23 §6: the header opens the marketplace's section before any of
     // its output — the trust block included
     if (!options.json && !options.quiet) console.log(`updating ${name}...`)
-    const report = await updateOne(registry, name, options.trust, plugin)
+    const report = await updateOne(registry, name, options.trust)
     reports.push(report)
     if (!options.json) renderMarketplace(report, options.quiet === true, !options.quiet)
   }
@@ -105,23 +110,67 @@ async function pullMarketplace(entry: MarketplaceEntry, name: string, report: Ma
 
 // one marketplace, wrapped: a failure records lastSync.ok = false and moves
 // on, never touching this marketplace's links (spec 08)
-async function updateOne(registry: Registry, name: string, trust?: boolean, plugin?: string): Promise<MarketplaceReport> {
+async function updateOne(registry: Registry, name: string, trust?: boolean): Promise<MarketplaceReport> {
   const entry = registry.marketplaces[name]!
   const report: MarketplaceReport = {
     name, ok: true, error: null, note: null, before: null, after: null, changed: false,
-    renamed: [], removed: [], pruned: [], dropped: [], refused: [], plugins: [], warnings: [], materialized: null,
+    renamed: [], removed: [], pruned: [], dropped: [], refused: [], plugins: [], warnings: [], outcomes: null,
   }
   try {
     await pullMarketplace(entry, name, report)
     if (!report.note) {
-      reconcile(registry, name, report, plugin)
+      const views = reconcile(registry, name, report)
       await decideUpdateTrust(name, entry, componentRoot(entry), trust)
       if (report.after) entry.revision = report.after
       entry.lastSync = { at: new Date().toISOString(), ok: true, error: null }
       saveRegistry(registry)
-      const links = materializeLinks(name, entry, false, plugin)
+      const links = materializeLinks(name, entry, false, views.paths, views.aliases)
       report.warnings.push(...links.warnings)
-      report.materialized = { created: links.created, removed: links.removed, skipped: links.skipped }
+      // brief 31 §3: the records are derived from what materialized, then
+      // saved again — two writes, one lock (spec 27 §1)
+      deriveComponents(registry, name, links.outcomes)
+      // brief 31 §5: a kept record survives unless this run removed its
+      // components and the record is not disabled — a disabled record was
+      // already the user's decision, so it stays
+      for (const refusal of report.refused) {
+        const record = entry.plugins[refusal.from]
+        if (!record) continue
+        refusal.held =
+          record.enabled === false ||
+          links.outcomes.some((o) =>
+            o.plugin === refusal.from && (o.state === "created" || o.state === "current" || o.state === "refreshed")
+          )
+        if (!refusal.held) delete entry.plugins[refusal.from]
+      }
+      saveRegistryIfChanged(registry)
+      report.outcomes = links.outcomes
+      // brief 31 §5: one line per plugin naming its net outcome, derived
+      // from the outcomes plus the record transition
+      for (const refusal of report.refused) {
+        refusal.components = links.outcomes
+          .filter((o) => o.plugin === refusal.from && o.state === "removed")
+          .map((o) => `${o.type} ${o.plugin}:${o.component}`)
+      }
+      for (const rename of report.renamed) {
+        const record = entry.plugins[rename.to]
+        const materialized = links.outcomes.some((o) =>
+          o.plugin === rename.to && (o.state === "created" || o.state === "current" || o.state === "refreshed")
+        )
+        if (record && materialized) {
+          rename.net = "renamed"
+          rename.reason = null
+        } else if (record) {
+          rename.net = "not-installed"
+          const withheld = links.outcomes.find(
+            (o) => o.plugin === rename.to && (o.state === "skipped" || o.state === "blocked" || o.state === "refused"),
+          )
+          rename.reason = withheld?.reason ?? (record.enabled === false ? "disabled" : "not installed")
+        } else {
+          rename.net = "removed"
+          rename.reason = report.dropped.find((drop) => drop.name === rename.to)?.reason ?? "uninstalled"
+        }
+      }
+      report.plugins = pluginReports(views.plugins, entry.plugins, views.versions, views.known, views.changes, name, entry.mode, links.outcomes)
       report.changed =
         report.before !== report.after ||
         report.renamed.length > 0 ||
@@ -130,7 +179,7 @@ async function updateOne(registry: Registry, name: string, trust?: boolean, plug
         report.dropped.length > 0 ||
         report.refused.length > 0 ||
         report.plugins.length > 0 ||
-        links.created > 0
+        links.outcomes.some((o) => o.state === "created")
     }
   } catch (err) {
     report.ok = false
@@ -143,9 +192,21 @@ async function updateOne(registry: Registry, name: string, trust?: boolean, plug
   return report
 }
 
+// what reconcile computed for updateOne's report: the discovered plugins,
+// the pre-reconcile record snapshots, and the git-diff views (the per-plugin
+// file lists and the changed set the materializer turns into `refreshed`)
+interface ReconcileViews {
+  plugins: DiscoveredPlugin[]
+  versions: Map<string, string | null>
+  known: Set<string>
+  changes: Map<string, FileChange[]>
+  paths: Set<string> | null
+  aliases: Map<string, string>
+}
+
 // discover, apply renames, reconcile against the registry (spec 08 step 4);
 // the record reconciliation itself is the core's shared function (spec 20)
-function reconcile(registry: Registry, name: string, report: MarketplaceReport, plugin?: string): void {
+function reconcile(registry: Registry, name: string, report: MarketplaceReport): ReconcileViews {
   const entry = registry.marketplaces[name]!
   const root = componentRoot(entry)
   const discovered = discoverMarketplace(root)
@@ -159,21 +220,30 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport, 
   // so pluginReports never looks its entries up
   const versions = new Map(Object.entries(entry.plugins).map(([pluginName, plugin]) => [pluginName, plugin.version]))
   const known = new Set(Object.keys(entry.plugins))
-  const fileChanges = pluginFileChanges(entry, report.before, report.after, plugins)
-  const changed = new Set([...fileChanges].filter(([, files]) => files.length > 0).map(([pluginName]) => pluginName))
-  const { warnings, pruned, dropped } = reconcilePluginRecords(registry, name, root, {
-    discovered: plugins, excluded: applied.excluded, plugin, resolved, changed,
+  const fileViews = pluginFileChanges(entry, report.before, report.after, plugins)
+  const changed = new Set([...fileViews.changes].filter(([, files]) => files.length > 0).map(([pluginName]) => pluginName))
+  const { warnings, pruned, dropped, registrable } = reconcilePluginRecords(registry, name, root, {
+    discovered: plugins, excluded: applied.excluded, resolved, changed,
   })
-  const mcpWarning = removeMcpKeys([...applied.removed, ...applied.renamed.map((rename) => rename.from), ...pruned])
-  if (mcpWarning) report.warnings.push(mcpWarning)
+  registerPlugins(registry, name, registrable)
+  const mcp = removeMcpKeys([...applied.removed, ...applied.renamed.map((rename) => rename.from), ...pruned])
+  if (mcp.warning) report.warnings.push(mcp.warning)
   report.warnings.push(...warnings)
   Object.assign(entry.plugins, applied.kept)
-  report.renamed = applied.renamed
+  // brief 31 §5: a refused rename is inert — the renamed directory links
+  // under the kept name for this run, and the record's source follows the
+  // disk so doctor's legacy check sees a real directory
+  const aliases = new Map<string, string>()
+  for (const refusal of applied.refused) {
+    if (refusal.dir === null) continue
+    aliases.set(refusal.to, refusal.from)
+    const kept = entry.plugins[refusal.from]
+    if (kept) kept.source = relative(root, refusal.dir)
+  }
+  report.renamed = applied.renamed.map((rename) => ({ ...rename, net: "renamed" as const, reason: null }))
   report.removed = applied.removed
   report.pruned = pruned
   report.dropped = dropped
-  report.refused = applied.refused
-  report.plugins = pluginReports(plugins, entry.plugins, versions, known, fileChanges, name, entry.mode)
-  // spec 23 §8: a plugin-scoped update narrows its report to that plugin
-  if (plugin) report.plugins = report.plugins.filter((entry) => entry.name === plugin)
+  report.refused = applied.refused.map(({ from, to, incumbent }) => ({ from, to, incumbent, held: true, components: [] }))
+  return { plugins, versions, known, changes: fileViews.changes, paths: fileViews.paths, aliases }
 }

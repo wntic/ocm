@@ -801,4 +801,70 @@ phase("19. a shape-invalid ocm-- MCP key is a doctor error naming plugin and ser
   expect(JSON.stringify(after.mcp["user-server"])).toBe(userServer) // the user's own entry, byte-identical
   expect(after.model).toBe(userConfig.model) // config safety: outside ocm's keys, untouched
 }, 600_000)
+
+// brief 31 §8: a registry record naming a component with no materialization
+// and no blocked reason is a stale record — the pre-brief-31 discovery-
+// derived shape frozen in the file (F76), with ocm update as the remedy
+phase("20. a record naming a component with no materialization is a stale-record error naming the remedy; ocm update drops it and a follow-up doctor is clean", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp"]).status).toBe(0)
+  // the fixture is clean before the hand-edit, so any later finding is the ghost
+  const baseline = ocm(home, ["doctor"], 300_000)
+  if (baseline.status !== 0) throw new Error(`ocm doctor exited ${baseline.status} on the clean fixture:\n${baseline.output}`)
+  // the pre-brief-31 record: discovery-derived components naming a file that
+  // never materialized
+  const registry = readRegistry(home)
+  registry.marketplaces.mp.plugins.adw.components.command.push("ghost.md")
+  writeFileSync(registryFile(home), `${JSON.stringify(registry, null, 2)}\n`)
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a stale record:\n${diagnosed.output}`)
+  const line = diagnosed.output.split("\n").find((l) => /^\s*error\b/.test(l) && l.includes("ghost.md"))
+  if (!line) throw new Error(`expected an error finding naming ghost.md:\n${diagnosed.output}`)
+  for (const needle of ['marketplace "mp"', 'plugin "adw"', 'command "ghost.md"', "stale record", "ocm update mp"]) {
+    if (!line.includes(needle)) throw new Error(`the stale-record finding lacks "${needle}":\n${line}`)
+  }
+  // the remedy works: the update rewrites the record from its outcomes
+  const updated = ocm(home, ["update", "mp"], 300_000)
+  if (updated.status !== 0) throw new Error(`ocm update mp exited ${updated.status}:\n${updated.output}`)
+  expect(readRegistry(home).marketplaces.mp.plugins.adw.components.command).toEqual(["commit.md"])
+  const clean = ocm(home, ["doctor"], 300_000)
+  if (clean.status !== 0) throw new Error(`ocm doctor exited ${clean.status} after the update:\n${clean.output}`)
+}, 600_000)
+
+// brief 31 §8: a component withheld pending trust is blocked, not stale —
+// the stale-record check must not turn an undecided trust state into drift
+phase("21. an undecided marketplace's blocked plugin and mcp components are withheld, not stale: no stale-record line for them", async (home) => {
+  // config safety: the user's own config and mcp key predate the add
+  const userConfig = { model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }
+  writeTree(cfg(home), { "opencode.json": json(userConfig) })
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "commit.md": COMMAND },
+    plugin: { "notify.js": JS_PLUGIN },
+    "mcp.json": MCP,
+  } } })
+  // a piped add leaves trust undecided, so both executable components are blocked
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp"]).status).toBe(0)
+  const entry = readRegistry(home).marketplaces.mp
+  if (entry.trust.code !== "none") throw new Error(`expected the piped add to leave trust undecided, got "${entry.trust.code}"`)
+  assertAbsent(pluginLink(home, "adw", "notify.js"))
+  const parsed = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
+  expect(parsed.model).toBe(userConfig.model) // the user's keys survive the add
+  expect(JSON.stringify(parsed.mcp["user-server"])).toBe(JSON.stringify(userConfig.mcp["user-server"]))
+  expect(parsed.mcp["ocm--adw--db"]).toBeUndefined() // the blocked mcp component never materialized
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8") // doctor must not touch it further
+  // the pre-brief-31 record shape: the blocked components recorded although
+  // they never materialized
+  const registry = readRegistry(home)
+  const components = registry.marketplaces.mp.plugins.adw.components
+  components.plugin = ["notify.js"]
+  components.mcp = ["db"]
+  writeFileSync(registryFile(home), `${JSON.stringify(registry, null, 2)}\n`)
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  const stale = diagnosed.output.split("\n").filter((l) => l.includes("stale record"))
+  if (stale.length) throw new Error(`blocked components must not be reported as stale records:\n${stale.join("\n")}`)
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes) // doctor writes nothing
+}, 420_000)
 }

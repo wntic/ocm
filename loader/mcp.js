@@ -6,6 +6,8 @@ import { componentKey } from "./trust.js"
 
 // desired keys are ocm--<plugin>--<server>; every other key in the mcp object
 // is the user's and survives byte-identically outside the keys ocm owns.
+// Returns one outcome per key it touched — created, or removed when a stale
+// key went — and a warning instead when nothing could be written.
 function applyMcpKeys(desired, prefixes) {
   let raw
   try {
@@ -16,28 +18,31 @@ function applyMcpKeys(desired, prefixes) {
     try {
       config = JSON.parse(raw)
     } catch {
-      return `skipped ${OPENCODE_CONFIG_FILE}: not valid JSON, left untouched`
+      return { warning: `skipped ${OPENCODE_CONFIG_FILE}: not valid JSON, left untouched`, outcomes: [] }
     }
   }
-  if (!isRecord(config)) return `skipped ${OPENCODE_CONFIG_FILE}: not a JSON object`
+  if (!isRecord(config)) return { warning: `skipped ${OPENCODE_CONFIG_FILE}: not a JSON object`, outcomes: [] }
   if (config.mcp !== undefined && !isRecord(config.mcp)) {
-    return `skipped ${OPENCODE_CONFIG_FILE}: "mcp" is not an object`
+    return { warning: `skipped ${OPENCODE_CONFIG_FILE}: "mcp" is not an object`, outcomes: [] }
   }
   const mcp = isRecord(config.mcp) ? config.mcp : {}
   let changed = false
+  const outcomes = []
   for (const key of Object.keys(mcp)) {
     if (prefixes.some((prefix) => key.startsWith(prefix)) && !desired.has(key)) {
       delete mcp[key]
       changed = true
+      outcomes.push(mcpKeyOutcome(key, "removed"))
     }
   }
   for (const [key, value] of desired) {
     if (JSON.stringify(mcp[key]) !== JSON.stringify(value)) {
       mcp[key] = value
       changed = true
+      outcomes.push(mcpKeyOutcome(key, "created"))
     }
   }
-  if (!changed) return null
+  if (!changed) return { warning: null, outcomes }
   if (Object.keys(mcp).length) config.mcp = mcp
   else delete config.mcp
   try {
@@ -46,18 +51,26 @@ function applyMcpKeys(desired, prefixes) {
     writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`)
     renameSync(tmp, OPENCODE_CONFIG_FILE)
   } catch (err) {
-    return `failed ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}`
+    return { warning: `failed ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}`, outcomes: [] }
   }
-  return null
+  return { warning: null, outcomes }
+}
+
+// plugin names cannot contain "--" (PLUGIN_NAME_RE), so the first "--" after
+// the ocm-- prefix ends the plugin segment
+function mcpKeyOutcome(key, state) {
+  return { type: "mcp", plugin: key.slice(5).split("--")[0], component: key, source: null, dest: key, state, reason: null }
 }
 
 // one pass over every discovered plugin: enabled plugins contribute desired
 // keys for their approved servers, everything else only the prefix that
-// scopes the stale keys removed for it (specs 06, 07)
+// scopes the stale keys removed for it (specs 06, 07). Returns one outcome
+// per server; a config that could not be written yields none — the warning
+// explains, nothing was materialized.
 export function syncMcp(plugins, dir, entry, enabled, approved, warnings, name) {
   const desired = new Map()
   const prefixes = []
-  let count = 0
+  const outcomes = []
   for (const plugin of plugins) {
     if (!PLUGIN_NAME_RE.test(plugin.name)) continue
     prefixes.push(`ocm--${plugin.name}--`)
@@ -73,32 +86,47 @@ export function syncMcp(plugins, dir, entry, enabled, approved, warnings, name) 
       // $schema is metadata, not a server entry — lintMcpJson skips it too;
       // readMcpServers returns native files verbatim, $schema included
       if (server === "$schema") continue
+      const dest = `ocm--${plugin.name}--${server}`
       if (!approved.get(componentKey("mcp", plugin.name, server))) {
-        warnings.push(`blocked (untrusted): ${plugin.name}:mcp/${server} not installed — run \`ocm trust ${name}\` to approve`)
+        const reason = `blocked (untrusted): ${plugin.name}:mcp/${server} not installed — run \`ocm trust ${name}\` to approve`
+        warnings.push(reason)
+        outcomes.push({ type: "mcp", plugin: plugin.name, component: server, source: null, dest, state: "blocked", reason })
         continue
       }
       const shapeError = mcpShapeError(value)
       if (shapeError !== null) {
-        warnings.push(`${plugin.name}:mcp/${server} not installed — mcp.json entry "${server}" ${shapeError}\n  opencode would refuse to start with it; ask the author to fix it, or run \`ocm validate ${dir}\` against the marketplace`)
+        const reason = `${plugin.name}:mcp/${server} not installed — mcp.json entry "${server}" ${shapeError}\n  opencode would refuse to start with it; ask the author to fix it, or run \`ocm validate ${dir}\` against the marketplace`
+        warnings.push(reason)
+        outcomes.push({ type: "mcp", plugin: plugin.name, component: server, source: null, dest, state: "skipped", reason })
         continue
       }
-      count += 1
       // brief 34 §1.2: "enabled" is normalised here, at the write, never in
       // readMcpServers — that reader's output is what the trust fingerprint
       // hashes, so normalising there would force a spurious re-trust on upgrade
       const normalised = value.enabled === undefined ? { ...value, enabled: true } : value
-      desired.set(`ocm--${plugin.name}--${server}`, normalised)
+      desired.set(dest, normalised)
+      outcomes.push({ type: "mcp", plugin: plugin.name, component: server, source: null, dest, state: "current", reason: null })
     }
   }
-  const warning = applyMcpKeys(desired, prefixes)
-  if (warning) warnings.push(warning)
-  return count
+  const { warning, outcomes: applied } = applyMcpKeys(desired, prefixes)
+  if (warning) {
+    warnings.push(warning)
+    return []
+  }
+  for (const outcome of applied) {
+    if (outcome.state === "removed") outcomes.push(outcome)
+    else if (outcome.state === "created") {
+      const current = outcomes.find((o) => o.state === "current" && o.dest === outcome.dest)
+      if (current) current.state = "created"
+    }
+  }
+  return outcomes
 }
 
 // spec 05 ocm remove: every ocm--<plugin> and ocm--<plugin>--* mcp key of
 // these plugins goes, keeping the mcp object when the user has their own
-// servers left in it. Returns a warning instead of printing — the core
-// never prints.
+// servers left in it. Returns one removed outcome per key it took and a
+// warning instead of printing — the core never prints.
 export function removeMcpKeys(pluginNames) {
   return removeOwnedMcp((key) =>
     pluginNames.some((name) => key === `ocm--${name}` || key.startsWith(`ocm--${name}--`)),
@@ -119,18 +147,18 @@ function removeOwnedMcp(matches) {
   try {
     raw = readFileSync(OPENCODE_CONFIG_FILE, "utf8")
   } catch {
-    return null
+    return { outcomes: [], warning: null }
   }
   let config
   try {
     config = JSON.parse(raw)
   } catch {
-    return `${OPENCODE_CONFIG_FILE} is not valid JSON, left untouched`
+    return { outcomes: [], warning: `${OPENCODE_CONFIG_FILE} is not valid JSON, left untouched` }
   }
-  if (!isRecord(config) || !isRecord(config.mcp)) return null
+  if (!isRecord(config) || !isRecord(config.mcp)) return { outcomes: [], warning: null }
   const mcp = config.mcp
   const owned = Object.keys(mcp).filter((key) => key.startsWith("ocm--") && matches(key))
-  if (!owned.length) return null
+  if (!owned.length) return { outcomes: [], warning: null }
   for (const key of owned) delete mcp[key]
   if (!Object.keys(mcp).length) delete config.mcp
   try {
@@ -139,7 +167,7 @@ function removeOwnedMcp(matches) {
     writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`)
     renameSync(tmp, OPENCODE_CONFIG_FILE)
   } catch (err) {
-    return `cannot write ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}`
+    return { outcomes: [], warning: `cannot write ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}` }
   }
-  return null
+  return { outcomes: owned.map((key) => mcpKeyOutcome(key, "removed")), warning: null }
 }

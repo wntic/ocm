@@ -284,6 +284,30 @@ phase("7. ocm untrust removes the executable components and leaves stuff in plac
   expect(readFileSync(registryFile(home), "utf8")).toBe(bytes)
   assertAbsent(pluginLink(home))
 })
+
+phase("8. ocm untrust of a marketplace whose only executable component is an mcp server prints the restart notice; a second untrust prints none", async (home) => {
+  // invariants: config safety — the user's own server predates the untrust and survives it
+  const userConfig = { model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }
+  writeTree(cfg(home), { "opencode.json": `${JSON.stringify(userConfig, null, 2)}\n` })
+  const [mp] = addAt(home, "mp", { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "commit.md": COMMAND },
+    "mcp.json": mcpJson(MCP),
+  } } }, "--trust")
+  expect(mcpKeys(home)["ocm--adw--db"]).toEqual(MCP.db) // the grant materialized the key
+  const result = ocm(home, "untrust", "mp")
+  if (result.status !== 0) throw new Error(`ocm untrust mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  expect(mcpKeys(home)["ocm--adw--db"]).toBeUndefined() // the mcp key is gone
+  expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] }) // the user's key survives
+  assertResolves(commandLink(home), join(mp, "plugins", "adw", "commands", "commit.md")) // stuff stays
+  const notices = output.split("\n").filter((l) => l.trim() === "restart opencode to activate")
+  if (notices.length !== 1) throw new Error(`expected exactly one restart notice on the mcp-only untrust:\n${output}`)
+  // invariant: idempotence — a second untrust removes nothing, so no notice
+  const again = ocm(home, "untrust", "mp")
+  expect(again.status).toBe(0)
+  expect(`${again.stdout}\n${again.stderr}`.split("\n").filter((l) => l.trim() === "restart opencode to activate")).toEqual([])
+})
 }
 
 // the trust flow: add-time decisions, fingerprints, what stays blocked — absorbed from test/phase16-trust-flow.mjs
@@ -389,8 +413,11 @@ phase("4. an update with undecided trust and nothing new prints one reminder lin
   expect(result.status).toBe(0)
   expect(result.output).not.toContain("ships code") // no risk block
   expect(result.output).not.toContain("trust this marketplace to run code?") // no prompt
-  const reminders = result.output.split("\n").filter((line) => line.includes("trust pending"))
-  if (reminders.length !== 1) throw new Error(`expected exactly one trust-pending reminder line, got ${reminders.length}:\n${result.output}`)
+  // brief 31 §7 (F91): the fact prints once in whichever phrasing — today
+  // trust.ts prints "trust pending for ..." and report.ts "blocked pending
+  // trust" for the same components
+  const reminders = result.output.split("\n").filter((line) => /trust pending|pending trust/.test(line))
+  if (reminders.length !== 1) throw new Error(`expected exactly one pending-trust line in either phrasing, got ${reminders.length}:\n${result.output}`)
   expect(reminders[0]).toContain("ocm trust mp")
 })
 

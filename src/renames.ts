@@ -4,7 +4,9 @@ import type { DiscoveredPlugin, MarketplaceEntry, MarketplacePlugin, Registry } 
 export interface RenameResult {
   renamed: { from: string; to: string }[]
   removed: string[]
-  refused: { from: string; to: string; incumbent: string }[]
+  // dir: the directory the target now lives in — null when the target is
+  // not shipped, so the inert path has nothing to link
+  refused: { from: string; to: string; incumbent: string; dir: string | null }[]
   // rename targets refused for colliding with another marketplace's plugin
   // name: excluded from registration so the incumbent keeps the name
   excluded: Set<string>
@@ -68,7 +70,7 @@ export function applyRenames(
     }
     const incumbent = incumbentMarketplace(registry, name, to)
     if (incumbent) {
-      result.refused.push({ from, to, incumbent })
+      result.refused.push({ from, to, incumbent, dir: discovered.get(to)?.dir ?? null })
       result.excluded.add(to)
       result.kept[from] = record
       continue

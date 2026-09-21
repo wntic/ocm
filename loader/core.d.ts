@@ -30,11 +30,26 @@ export interface CorePullResult {
   output: string
 }
 
+export type CoreState = "created" | "current" | "refreshed" | "removed" | "skipped" | "blocked" | "refused"
+
+export interface CoreOutcome {
+  type: "command" | "agent" | "skill" | "plugin" | "mcp"
+  plugin: string
+  component: string
+  source: string | null
+  dest: string
+  state: CoreState
+  reason: string | null
+  // brief 31 §6: for a created outcome whose dest held a user's file, the
+  // displaced cache target that file moved to
+  displaced?: string
+}
+
+// brief 31 §2: the per-component outcome record every report is derived
+// from
 export interface CoreMaterializeReport {
-  counts: { command: number; agent: number; skill: number; plugin: number; mcp: number }
-  created: number
-  removed: number
-  skipped: number
+  marketplace: string
+  outcomes: CoreOutcome[]
   warnings: string[]
 }
 
@@ -137,8 +152,6 @@ export interface CoreReconcileOptions {
   discovered?: CoreManifestPlugin[]
   // rename targets refused for a cross-marketplace collision
   excluded?: Set<string>
-  // a plugin-scoped pass registers no newly shipped plugin
-  plugin?: string
   // resolved renames: a pruned name that is a rename source survives
   resolved?: Record<string, string | null>
   // plugins whose files changed in this pull; a changed manifest-less
@@ -152,6 +165,9 @@ export interface CoreReconcileResult {
   // installed plugins the manifest gate dropped: uninstalled, one report
   // line each (brief 29 §3)
   dropped: { name: string; reason: string }[]
+  // brief 31 §3: the plugins left for the caller to register after it
+  // materializes — registration from outcomes is the caller's job
+  registrable: CoreManifestPlugin[]
 }
 
 export interface CoreAddOptions {
@@ -186,6 +202,8 @@ export interface CoreRemoveResult {
   owned: { name: string; components: CorePluginComponents }[]
   restore: string[]
   warnings: string[]
+  // brief 31 §6: the teardown's outcomes — links and mcp keys removed
+  report: CoreMaterializeReport
   wasV1: boolean
 }
 
@@ -278,15 +296,30 @@ export declare function normalizeRegistry(raw: unknown): CoreRegistry
 export declare function parseRegistryStrict(): unknown
 export declare function loadRegistryForWrite(): { registry: CoreRegistry; wasV1: boolean }
 export declare function saveRegistry(registry: CoreRegistry): void
+export declare function saveRegistryIfChanged(registry: CoreRegistry): void
 export declare function materialize(
   name: string,
   dir: string,
-  options?: { enabled?: Set<string> | null; force?: boolean; plugin?: string },
+  options?: {
+    enabled?: Set<string> | null
+    force?: boolean
+    // internal: scope the pass to one plugin — setEnabled's --force
+    // takeover tears down only the incumbent's yielded plugin
+    plugin?: string
+    // source paths relative to the marketplace root that changed in this
+    // pass; a current outcome for one of them is reported as refreshed
+    changed?: Set<string>
+    // brief 31 §5: discovered name → kept name for a refused rename; the
+    // whole run links under the kept name
+    aliases?: Map<string, string>
+  },
 ): CoreMaterializeReport
 export declare function enabledPlugins(entry: unknown, dir: string): Set<string> | null
 export declare function setSkillsPath(skillsDir: string, present: boolean): string | null
-export declare function removeLinksFor(name: string, marketplaceDir: string): void
+export declare function removeLinksFor(name: string, marketplaceDir: string): CoreMaterializeReport
 export declare function executableComponents(dir: string, entry: unknown): CoreExecutableComponent[]
+export declare function approvedComponents(dir: string, entry: unknown): Map<string, boolean>
+export declare function componentKey(kind: string, plugin: string, name: string): string
 export declare function trustFingerprint(components: CoreExecutableComponent[]): string
 export declare function grantEntry(entry: CoreMarketplaceEntry, components: CoreExecutableComponent[]): void
 export declare function denyEntry(entry: CoreMarketplaceEntry): void
@@ -311,6 +344,7 @@ export declare function marketplaceManifestFile(marketplaceDir: string): string
 export declare function componentRoot(entry: CoreMarketplaceEntry): string
 export declare function incumbentMarketplace(registry: CoreRegistry, self: string, pluginName: string): string | undefined
 export declare function registerPlugins(registry: CoreRegistry, name: string, plugins: CoreManifestPlugin[]): void
+export declare function deriveComponents(registry: CoreRegistry, name: string, outcomes: CoreOutcome[]): void
 export declare function reconcilePluginRecords(
   registry: CoreRegistry,
   name: string,
@@ -334,6 +368,7 @@ export declare function grantTrust(name: string): CoreGrantResult
 export declare function skipTrust(name: string): void
 export declare function denyTrust(name: string): CoreDenyResult
 export declare function revokeTrust(name: string): CoreDenyResult
-export declare function removeMcpKeys(pluginNames: string[]): string | null
-export declare function removeMcpKeysExact(keys: string[]): string | null
+export declare function removeMcpKeys(pluginNames: string[]): { outcomes: CoreOutcome[]; warning: string | null }
+export declare function removeMcpKeysExact(keys: string[]): { outcomes: CoreOutcome[]; warning: string | null }
+export declare function displayPath(dest: string): string
 export declare function searchPlugins(query: string, options?: { enabledOnly?: boolean }): CoreSearchMatch[]

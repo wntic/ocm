@@ -299,7 +299,7 @@ ocm mode my-marketplace explicit                 # change how new plugins land
 ocm list [--all] [--json]                        # what is installed
 ocm search <query>                               # search cached metadata
 ocm info <plugin>[@<marketplace>]                # one plugin's record
-ocm update [name|plugin@mp]                      # pull + re-materialize
+ocm update [marketplace]                         # pull + re-materialize
 ocm pin <name> <ref>                             # follow a branch or tag
 ocm pin <name> --clear                           # back to the default branch
 ocm remove my-marketplace                        # full teardown

@@ -13,15 +13,17 @@ import { assertAbsent, opencodeProbe, withFakeHome } from "./harness.mjs"
 
 const CORE_MODULE = fileURLToPath(new URL("../loader/core.js", import.meta.url))
 
-// `enabled` is a Set in process but JSON on the wire; the runner rebuilds it.
-// null means "all discovered" (v1 behaviour).
+// `enabled` and `changed` are Sets in process but JSON on the wire; the
+// runner rebuilds them. enabled null means "all discovered" (v1 behaviour);
+// changed absent means no source is marked as changed in this pass.
 const RUNNER = `
 const [modulePath, calls] = process.argv.slice(2)
 const mod = await import(modulePath)
 const results = []
-for (const [marketplace, dir, enabled] of JSON.parse(calls)) {
+for (const [marketplace, dir, enabled, changed] of JSON.parse(calls)) {
   results.push(await mod.materialize(marketplace, dir, {
     enabled: Array.isArray(enabled) ? new Set(enabled) : null,
+    changed: Array.isArray(changed) ? new Set(changed) : undefined,
   }))
 }
 console.log(JSON.stringify(results))
@@ -93,6 +95,15 @@ const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8
 
 const cloneDir = (home, name) => join(home, ".cache", "ocm", "marketplaces", name)
 
+// failing with the whole report in the message beats failing on
+// "cannot read .map of undefined" when the outcome record is absent
+function outcomesOf(report) {
+  if (!Array.isArray(report.outcomes)) {
+    throw new Error(`expected materialize to return an outcomes array, got: ${JSON.stringify(report)}`)
+  }
+  return report.outcomes
+}
+
 // materialization: state flips create and remove exactly the owned links — absorbed from test/phase03-materializer.mjs
 {
 // realpath on both sides: macOS temp dirs sit behind /var -> /private/var, so
@@ -112,10 +123,9 @@ test("1. commands and agents link with <plugin>: names; targets resolve to the s
   await withFakeHome(async (home) => {
     const mp = marketplace(home, { adw: { commands: { "commit.md": COMMAND }, agents: { "reviewer.md": AGENT } } })
     const [report] = materialize(home, [["mp", mp, null]])
-    expect(Object.keys(report).sort()).toEqual(["counts", "created", "removed", "skipped", "warnings"])
-    expect(Object.keys(report.counts).sort()).toEqual(["agent", "command", "mcp", "plugin", "skill"])
-    expect(report.counts.command).toBe(1)
-    expect(report.counts.agent).toBe(1)
+    expect(Object.keys(report).sort()).toEqual(["marketplace", "outcomes", "warnings"])
+    expect(outcomesOf(report).filter((o) => o.type === "command").length).toBe(1)
+    expect(outcomesOf(report).filter((o) => o.type === "agent").length).toBe(1)
     assertResolves(join(cfg(home), "commands", "adw:commit.md"), join(mp, "plugins", "adw", "commands", "commit.md"))
     assertResolves(join(cfg(home), "agents", "adw:reviewer.md"), join(mp, "plugins", "adw", "agents", "reviewer.md"))
     expect(readdirSync(join(cfg(home), "commands")).sort()).toEqual(["adw:commit.md"])
@@ -163,8 +173,7 @@ test("3. re-running is a no-op: no rewrite of an unchanged SKILL.md, no link chu
     expect(lstatSync(sibling).ino).toBe(before.siblingIno)
     expect(readFileSync(configPath, "utf8")).toBe(before.config)
     // invariant: idempotence — no spurious "created" on a run that created nothing
-    const created = Array.isArray(report.created) ? report.created.length : report.created
-    expect(created).toBe(0)
+    expect(outcomesOf(report).filter((o) => o.state === "created").length).toBe(0)
   })
 })
 
@@ -189,7 +198,13 @@ test("5. a hand-written unowned file at a target path is never modified; the ope
     const [report] = materialize(home, [["mp", mp, null]])
     // invariant: ownership — no ownership proof, no touch
     expect(readFileSync(dest, "utf8")).toBe("# my own commit command\n")
-    expect(JSON.stringify([report.skipped, report.warnings])).toContain(dest)
+    expect(JSON.stringify(report.warnings)).toContain(dest)
+    const outcome = outcomesOf(report).find((o) => o.type === "command" && o.plugin === "adw")
+    if (!outcome) throw new Error(`expected an outcome for the unowned command at ${dest}`)
+    expect(outcome.state).toBe("skipped")
+    if (typeof outcome.reason !== "string" || outcome.reason === "") {
+      throw new Error(`expected a non-null reason on the skipped outcome for ${dest}`)
+    }
     assertResolves(join(cfg(home), "agents", "adw:reviewer.md"), join(mp, "plugins", "adw", "agents", "reviewer.md"))
   })
 })
@@ -534,5 +549,118 @@ test("10. a plugin shipping folded component names materializes at most one of e
         throw new Error(`expected a warning naming the folded command pair:\n${JSON.stringify(report.warnings)}`)
       }
     }
+  })
+})
+
+test("11. materialize returns one outcome per component; a second identical run reports every state current and writes nothing", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: ADW })
+    const [first] = materialize(home, [["mp", mp, null]])
+    expect(first.marketplace).toBe("mp")
+    expect(Array.isArray(first.warnings)).toBe(true)
+    const key = (o) => `${o.type}/${o.plugin}/${o.component}`
+    const run1 = new Map(outcomesOf(first).map((o) => [key(o), o]))
+    expect([...run1.keys()].sort()).toEqual(["agent/adw/reviewer.md", "command/adw/commit.md", "skill/adw/python-style"])
+    const expected = {
+      "command/adw/commit.md": [join(cfg(home), "commands", "adw:commit.md"), join(mp, "plugins", "adw", "commands", "commit.md")],
+      "agent/adw/reviewer.md": [join(cfg(home), "agents", "adw:reviewer.md"), join(mp, "plugins", "adw", "agents", "reviewer.md")],
+      "skill/adw/python-style": [join(skillsLinks(home), "adw--python-style"), join(mp, "plugins", "adw", "skills", "python-style")],
+    }
+    for (const [k, [dest, source]] of Object.entries(expected)) {
+      const o = run1.get(k)
+      if (!o) throw new Error(`expected an outcome for ${k}: ${JSON.stringify(first.outcomes)}`)
+      expect(o.dest).toBe(dest)
+      expect(o.source).toBe(source)
+      expect(o.state).toBe("created")
+      expect(o.reason).toBe(null)
+    }
+    const skillMd = join(skillsLinks(home), "adw--python-style", "SKILL.md")
+    const commandLink = join(cfg(home), "commands", "adw:commit.md")
+    const agentLink = join(cfg(home), "agents", "adw:reviewer.md")
+    const configPath = join(cfg(home), "opencode.json")
+    const before = {
+      skillMtime: statSync(skillMd).mtimeMs,
+      commandIno: lstatSync(commandLink).ino,
+      agentIno: lstatSync(agentLink).ino,
+      config: readFileSync(configPath, "utf8"),
+    }
+    const [second] = materialize(home, [["mp", mp, null]])
+    expect(outcomesOf(second).map(key).sort()).toEqual([...run1.keys()].sort())
+    for (const o of outcomesOf(second)) {
+      if (o.state !== "current") throw new Error(`expected state "current" for ${key(o)} on the second run, got "${o.state}"`)
+    }
+    // invariant: idempotence — the second run wrote nothing
+    expect(statSync(skillMd).mtimeMs).toBe(before.skillMtime)
+    expect(lstatSync(commandLink).ino).toBe(before.commandIno)
+    expect(lstatSync(agentLink).ino).toBe(before.agentIno)
+    expect(readFileSync(configPath, "utf8")).toBe(before.config)
+  })
+})
+
+test("12. a source in options.changed reports refreshed instead of current; without the set, current", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: { commands: { "commit.md": COMMAND } } })
+    materialize(home, [["mp", mp, null]])
+    writeFileSync(join(mp, "plugins", "adw", "commands", "commit.md"), "---\ndescription: commit helper\n---\n\nChanged body.\n")
+    const commandState = (report) => {
+      const outcome = outcomesOf(report).find((o) => o.type === "command")
+      if (!outcome) throw new Error(`expected a command outcome: ${JSON.stringify(report.outcomes)}`)
+      return outcome.state
+    }
+    const [withoutSet] = materialize(home, [["mp", mp, null]])
+    expect(commandState(withoutSet)).toBe("current")
+    const [withSet] = materialize(home, [["mp", mp, null, ["plugins/adw/commands/commit.md"]]])
+    expect(commandState(withSet)).toBe("refreshed")
+  })
+})
+
+// duplicates the precedence block's scope-local gitRepo; the two merge when
+// phases absorb
+function gitRepo(dir, tree) {
+  writeTree(dir, tree)
+  const run = (args) => spawnSync("git", args, { cwd: dir, encoding: "utf8" })
+  run(["init"])
+  run(["add", "-A"])
+  const commit = run(["-c", "user.email=ocm@test", "-c", "user.name=ocm", "commit", "-m", "fixture"])
+  if (commit.status !== 0) throw new Error(`git commit failed in ${dir}: ${commit.stderr}`)
+}
+
+test("13. a revision advance with an unchanged skill body reports current for the mirror and moves only the trailer", async () => {
+  await withFakeHome(async (home) => {
+    const mp = join(home, "mp")
+    gitRepo(mp, { plugins: { adw: ADW } })
+    const git = (args) => spawnSync("git", args, { cwd: mp, encoding: "utf8" })
+    const rev = () => git(["rev-parse", "HEAD"]).stdout.trim()
+    const rev1 = rev()
+    const [first] = materialize(home, [["mp", mp, null]])
+    const skillOf = (report) => {
+      const outcome = outcomesOf(report).find((o) => o.type === "skill")
+      if (!outcome) throw new Error(`expected a skill outcome: ${JSON.stringify(report.outcomes)}`)
+      return outcome
+    }
+    expect(skillOf(first).state).toBe("created")
+    const mirror = join(skillsLinks(home), "adw--python-style", "SKILL.md")
+    const read = () => {
+      const content = readFileSync(mirror, "utf8")
+      const at = content.lastIndexOf("<!-- ocm: rendered from ")
+      if (at === -1) throw new Error(`expected the ownership marker in ${mirror}`)
+      return { body: content.slice(0, at), trailer: content.slice(at) }
+    }
+    const run1 = read()
+    expect(run1.trailer).toBe(`<!-- ocm: rendered from plugins/adw/skills/python-style/SKILL.md @ ${rev1} -->\n`)
+    // a commit that does not touch the skill body advances only the revision
+    writeFileSync(join(mp, "plugins", "adw", "commands", "commit.md"), "---\ndescription: commit helper\n---\n\nChanged body.\n")
+    const commit = git(["-c", "user.email=ocm@test", "-c", "user.name=ocm", "commit", "-am", "edit command"])
+    if (commit.status !== 0) throw new Error(`git commit failed in ${mp}: ${commit.stderr}`)
+    const rev2 = rev()
+    const [second] = materialize(home, [["mp", mp, null]])
+    const outcome = skillOf(second)
+    if (outcome.state !== "current") {
+      throw new Error(`expected state "current" for the skill mirror at ${mirror} after a revision-only change, got "${outcome.state}"`)
+    }
+    const run2 = read()
+    expect(run2.trailer).toBe(`<!-- ocm: rendered from plugins/adw/skills/python-style/SKILL.md @ ${rev2} -->\n`)
+    expect(run2.body).toBe(run1.body)
+    expect(readFileSync(mirror, "utf8")).toMatch(/<!-- ocm: rendered from .+ @ .+ -->\s*$/)
   })
 })

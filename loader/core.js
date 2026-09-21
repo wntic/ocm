@@ -20,24 +20,25 @@ export {
   STAMP_FILE,
 } from "./paths.js"
 export { dirClashes, discoverPlugins, mcpShapeError, readMcpServers } from "./discovery.js"
-export { displacedRecords, restoreDisplaced } from "./displaced.js"
+export { displacedRecords, displayPath, restoreDisplaced } from "./displaced.js"
 export { git, isGitRepo } from "./git.js"
 export { foldedComponentGroups, foldedDirPairs, pluginLimitViolation } from "./limits.js"
 export { marketplaceGateFindings, pluginGateFindings } from "./manifest-gate.js"
 export { lintCrossTool } from "./lint.js"
 export { tryRegistryLock, withRegistryLock } from "./lock.js"
-export { loadRegistryForWrite, normalizeRegistry, parseRegistryStrict, pluginRootEnv, readRegistry, registryWriterVersion, saveRegistry, versionCompare } from "./registry.js"
+export { loadRegistryForWrite, normalizeRegistry, parseRegistryStrict, pluginRootEnv, readRegistry, registryWriterVersion, saveRegistry, saveRegistryIfChanged, versionCompare } from "./registry.js"
 export { reconcilePluginRecords } from "./reconcile.js"
 export { enabledPlugins, materialize, removeLinksFor } from "./materialize.js"
 export { setSkillsPath } from "./config.js"
 export { pullRepo, syncAll } from "./sync.js"
-export { denyComponentsEntry, denyEntry, executableComponents, grantEntry, pendingComponents, skipEntry, trustFingerprint } from "./trust.js"
+export { approvedComponents, componentKey, denyComponentsEntry, denyEntry, executableComponents, grantEntry, pendingComponents, skipEntry, trustFingerprint } from "./trust.js"
 export { duplicateRefusal, isGitUrl, manifestName, marketplaceNameFromUrl, normaliseMarketplaceName, parseSource } from "./source.js"
 export { discoveryError, discoverMarketplace, marketplaceManifestFile, nameDisagreement, readManifest } from "./manifest.js"
 export {
   addMarketplace,
   addRefusalChain,
   componentRoot,
+  deriveComponents,
   pinMarketplace,
   registerPlugins,
   removeMarketplace,

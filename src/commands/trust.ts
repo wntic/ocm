@@ -103,10 +103,7 @@ export async function decideUpdateTrust(
   if (!components.length || entry.trust.code === "denied") return false
   const pending = pendingComponents(entry, components)
   if (entry.trust.code === "granted" && !pending.length) return false
-  if (!pending.length && flag === undefined) {
-    console.error(`trust pending for "${name}" (${components.length} executable components blocked) — run \`ocm trust ${name}\``)
-    return false
-  }
+  if (!pending.length && flag === undefined) return false
   if (entry.trust.code === "granted") reportChanged(name, entry, components)
   return decideTrust(name, entry, root, flag, pending)
 }
@@ -116,8 +113,8 @@ export async function decideUpdateTrust(
 // line — this is a re-print of a known-untrusted state, not first sight
 function reportDecision(name: string, result: { report: CoreMaterializeReport | null; wasV1: boolean }): void {
   if (result.report) {
-    reportMutationWarnings(result.report.warnings, name)
-    reportRestart(result.report.created)
+    reportMutationWarnings(result.report, { marketplace: name })
+    reportRestart(result.report)
   }
   reportUpgrade(result.wasV1)
 }
@@ -165,8 +162,8 @@ export async function trust(name: string, yes = false): Promise<void> {
 
 export async function untrust(name: string): Promise<void> {
   const result = denyTrust(name)
-  reportMutationWarnings(result.report.warnings, name)
-  reportRestart(result.report.removed)
+  reportMutationWarnings(result.report, { marketplace: name })
+  reportRestart(result.report)
   console.log(`marketplace "${name}" no longer trusted; executable components removed`)
   reportUpgrade(result.wasV1)
 }

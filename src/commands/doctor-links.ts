@@ -3,10 +3,17 @@
 // removal proves ownership first; an unowned path is reported, never touched.
 import { existsSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
-import { componentRoot, discoverPlugins, enabledPlugins, foldedComponentGroups } from "../../loader/core.js"
+import {
+  approvedComponents,
+  componentKey,
+  componentRoot,
+  discoverPlugins,
+  enabledPlugins,
+  foldedComponentGroups,
+} from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { materializeLinks } from "../install"
-import { HOME, OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "../paths"
+import { HOME, OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { error, fixed, type Finding } from "../findings"
 
 function errText(err: unknown): string {
@@ -122,6 +129,59 @@ export function checkMaterialized(registry: CoreRegistry, findings: Finding[], f
     }
     materializeLinks(name, entry)
     findings.push(fixed(`marketplace "${name}": re-materialized ${missing} component(s) (restart opencode to activate)`))
+  }
+}
+
+// brief 31 §8: a record naming a component with no materialization and no
+// blocked reason is a stale record — the pre-brief-31 discovery-derived
+// shape frozen in the file. The first mutation rewrites the record from its
+// outcomes, so the remedy is ocm update; --fix has no separate action.
+export function checkStaleRecords(registry: CoreRegistry, findings: Finding[]): void {
+  // undefined: not read yet; null: unreadable — checkConfig reports that, and
+  // the mcp checks skip rather than guess
+  let mcpKeys: Set<string> | null | undefined
+  const mcpPresent = (key: string): boolean => {
+    if (mcpKeys === undefined) {
+      mcpKeys = null
+      try {
+        const parsed: unknown = JSON.parse(readFileSync(OPENCODE_GLOBAL_CONFIG, "utf8"))
+        const mcp = (parsed as { mcp?: unknown } | null)?.mcp
+        if (typeof mcp === "object" && mcp !== null && !Array.isArray(mcp)) {
+          mcpKeys = new Set(Object.keys(mcp as Record<string, unknown>))
+        }
+      } catch {}
+    }
+    return mcpKeys !== null && mcpKeys.has(key)
+  }
+  for (const [name, entry] of Object.entries(registry.marketplaces)) {
+    const root = componentRoot(entry)
+    if (!existsSync(root)) continue
+    const approved = approvedComponents(root, entry)
+    for (const [plugin, record] of Object.entries(entry.plugins ?? {})) {
+      // an uninstalled plugin keeps its discovery-derived components, and a
+      // collision never materializes by design
+      if (!record || record.enabled === false || record.collision) continue
+      for (const type of ["command", "agent", "skill", "plugin", "mcp"] as const) {
+        const components = record.components?.[type]
+        if (!Array.isArray(components)) continue
+        for (const component of components) {
+          const dest =
+            type === "command" ? join(OPENCODE_COMMANDS_DIR, `${plugin}:${component}`)
+            : type === "agent" ? join(OPENCODE_AGENTS_DIR, `${plugin}:${component}`)
+            : type === "skill" ? join(OCM_LINKS_DIR, name, "skills", `${plugin}--${component.split("/").join("-")}`, "SKILL.md")
+            : type === "plugin" ? join(OPENCODE_PLUGINS_DIR, `ocm--${plugin}--${component}`)
+            : `ocm--${plugin}--${component}`
+          if (type === "mcp" ? mcpPresent(dest) : existsSync(dest)) continue
+          // a withheld executable component has a blocked reason, not a stale one
+          if (approved.get(componentKey(type, plugin, component)) === false) continue
+          findings.push(
+            error(
+              `marketplace "${name}": plugin "${plugin}" records ${type} "${component}" with no materialization — stale record (ocm update ${name})`,
+            ),
+          )
+        }
+      }
+    }
   }
 }
 

@@ -246,4 +246,38 @@ phase("9. help leads with ocm add in usage and examples, and mentions --version"
   expect(firstExample.trim().startsWith("ocm add")).toBe(true)
   expect(result.stdout).toContain("--version") // a user reporting a bug can find the flag
 })
+
+phase("10. ocm remove prints the restart notice once, after its headline, when it removed components", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocm(home, ["add", mp]).status).toBe(0)
+  assertFileExists(commandLink(home, "adw", "commit.md")) // the marketplace had links to remove
+  const removed = ocm(home, ["remove", "mp"])
+  expect(removed.status).toBe(0)
+  assertAbsent(commandLink(home, "adw", "commit.md")) // the removal happened; only the notice is in question
+  if (noticeCount(removed.output) !== 1) throw new Error(`expected exactly one restart notice on ocm remove:\n${removed.output}`)
+  expect(removed.stdout.indexOf('removed marketplace "mp"')).toBeGreaterThanOrEqual(0)
+  expect(removed.stdout.indexOf('removed marketplace "mp"')).toBeLessThan(removed.stdout.indexOf("restart opencode to activate"))
+})
+
+// brief 31 §7 (F114): the loader still installs before the trust decision,
+// but its lines are queued and flushed after the headline; the TUI line
+// drops its own trailing notice, which prints once
+phase("11. ocm add on a fresh home: the headline precedes the loader and TUI lines, and the restart notice appears exactly once", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  const added = ocm(home, ["add", mp])
+  expect(added.status).toBe(0)
+  assertFileExists(commandLink(home, "adw", "commit.md")) // the add worked; only the reporting is in question
+  const lines = added.output.split("\n")
+  const headline = lines.findIndex((line) => line.includes('added marketplace "mp"'))
+  if (headline === -1) throw new Error(`expected the headline in the add output:\n${added.output}`)
+  const loaderOrTui = lines.findIndex((line) => /installed auto-sync loader|installed TUI plugin/.test(line))
+  if (loaderOrTui === -1) throw new Error(`expected a loader or TUI line in the add output:\n${added.output}`)
+  expect(headline).toBeLessThan(loaderOrTui)
+  // a substring count, not a standalone-line count: the TUI line embeds the
+  // phrase today, so noticeCount would pass and lie
+  const occurrences = added.output.split("restart opencode to activate").length - 1
+  if (occurrences !== 1) throw new Error(`expected exactly one "restart opencode to activate" in the add output, got ${occurrences}:\n${added.output}`)
+})
 }

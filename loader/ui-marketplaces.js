@@ -107,7 +107,7 @@ export async function updateFlow(api, name, back) {
       return { changed, links: materialize(name, root, { enabled: enabledPlugins(entry, root) }) }
     })
     if (links.warnings.length) toast(api, "warning", links.warnings.join("\n"))
-    const mutated = changed || links.created > 0
+    const mutated = changed || links.outcomes.some((o) => ["created", "removed", "refreshed"].includes(o.state))
     toast(api, "success", `${name}: ${changed ? "updated to a new revision" : "already up to date"}${mutated ? ` — ${NOTICE}` : ""}`)
   } catch (err) {
     toast(api, "error", `${name}: update failed: ${message(err)}`)

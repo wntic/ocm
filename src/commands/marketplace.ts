@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { addMarketplace, denyTrust, duplicateRefusal, grantTrust, isGitUrl, normaliseMarketplaceName, parseSource, pinMarketplace, readRegistry, removeMarketplace, skipTrust } from "../../loader/core.js"
-import type { CoreAddResult } from "../../loader/core.js"
+import type { CoreAddResult, CoreMaterializeReport } from "../../loader/core.js"
 import { installLoader, reportTuiPlugin } from "../loader"
 import { git } from "../git"
 import { OCM_LINKS_DIR, OPENCODE_GLOBAL_CONFIG } from "../paths"
-import { reportRestart, reportUpgrade, reportWarnings } from "../report"
+import { queueFact, reportRestart, reportUpgrade, reportWarnings } from "../report"
 import { printTrustListing, promptTrust } from "./trust-prompt"
 
 export interface AddOptions {
@@ -42,9 +42,9 @@ export async function add(source: string, options: AddOptions = {}): Promise<voi
   // notice and waits for the headline (spec 23 §6)
   const tuiInstalled = installLoader(false)
   // a prompted decision re-materializes: the two passes are reported as one —
-  // created links sum, warnings union. A grant makes pass 1's "blocked
+  // outcomes union, warnings union. A grant makes pass 1's "blocked
   // (untrusted)" lines false, so they do not carry over
-  let created = result.report.created
+  const reports: CoreMaterializeReport[] = [result.report]
   let warnings = result.report.warnings
   if (options.trust === true && result.trustComponents.length) {
     // a blind grant is a security decision made without seeing the question
@@ -59,7 +59,7 @@ export async function add(source: string, options: AddOptions = {}): Promise<voi
     if (decision === "granted" || decision === "denied") {
       const second = decision === "granted" ? await grantTrust(result.name) : await denyTrust(result.name)
       if (second.report) {
-        created += second.report.created
+        reports.push(second.report)
         const carry = decision === "granted"
           ? warnings.filter((warning) => !warning.startsWith("blocked (untrusted): "))
           : warnings
@@ -70,17 +70,23 @@ export async function add(source: string, options: AddOptions = {}): Promise<voi
     }
   }
   // spec 20 F28: a config that does not parse was never written — say so and
-  // show the exact edit instead of counting the skill as installed
-  const skillsNotWritten = result.report.counts.skill > 0 && configIsCorrupt()
-  reportWarnings([...new Set(warnings)])
+  // show the exact edit instead of counting the skill as installed. Brief 31
+  // §4: the check reads the outcomes, not the shim's counts
+  const skillsNotWritten =
+    result.report.outcomes.some((o) => o.type === "skill" && (o.state === "created" || o.state === "current")) && configIsCorrupt()
+  // brief 31 §7 (F107): queued first so the loader's phrasings of the same
+  // unparseable-config fact dedupe into this one, which names the remedy
   if (skillsNotWritten) {
-    console.error("skills.paths NOT written — opencode.json is not valid JSON")
-    console.error(`  add "${join(OCM_LINKS_DIR, result.name, "skills")}" to skills.paths by hand`)
+    queueFact("config-unparseable", OPENCODE_GLOBAL_CONFIG, () => {
+      console.error("warning: skills.paths NOT written — opencode.json is not valid JSON")
+      console.error(`  add "${join(OCM_LINKS_DIR, result.name, "skills")}" to skills.paths by hand`)
+    })
   }
+  reportWarnings([...new Set(warnings)])
   // spec 23 §6: the headline precedes the notices
   reportAdded(result, skillsNotWritten)
   if (tuiInstalled) reportTuiPlugin()
-  reportRestart(created)
+  reportRestart(reports)
   reportUpgrade(result.wasV1)
 }
 
@@ -137,6 +143,9 @@ export function remove(name: string): void {
     console.log(`  ${plugin.name}: ${parts.join(", ")} removed`)
   }
   for (const line of result.restore) console.log(line)
+  // brief 31 §6: the notice follows the teardown's outcomes, after the
+  // headline and the per-plugin lines
+  reportRestart(result.report)
 }
 
 // spec 08: pinning is branch- and tag-following, never commit-freezing; the
