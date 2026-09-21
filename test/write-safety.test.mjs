@@ -20,7 +20,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { withFakeHome, withFakeOpencode } from "./harness.mjs"
+import { assertAbsent, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
 const OCM_BIN = fileURLToPath(new URL("../bin/ocm.ts", import.meta.url))
 
@@ -688,3 +688,87 @@ phase("the loader's startup sync tolerates a corrupt registry: exit 0, silent, b
   expect(result.stderr).toBe("")
   expect(readFileSync(registryFile(home), "utf8")).toBe(corrupt)
 })
+
+// ---------------------------------------------------------------------------
+// brief 31 §8: the ownership invariants across an update that blocks an
+// executable change and an untrust — the same invariants update.test.mjs
+// phase 12 asserts for the refused rename, here for the blocked-trust path.
+// The record stays outcome-derived (a nameless skill is never recorded), the
+// user's config keys and hand-written files are untouched, nothing lands
+// under .claude or .agents, and the denied-but-recorded plugin component is
+// not a stale record.
+
+const SKILL = "---\nname: style\ndescription: style guidance\n---\n\n# Style\n\nBody.\n"
+
+const NAMELESS_SKILL = "---\ndescription: no name in this frontmatter\n---\n\nBody.\n"
+
+const JS_PLUGIN = 'export default { id: "adw-notify", server: async () => ({}) }\n'
+
+const USER_PLUGIN = 'export default { id: "mine", server: async () => ({}) }\n'
+
+const MCP_V1 = json({ db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } })
+
+const MCP_V2 = json({ db: { type: "local", command: ["npx", "-y", "@acme/db-mcp@2"], enabled: true } })
+
+phase("an update past a blocked mcp change and an untrust keep the user's config and files intact, the nameless skill unrecorded, and doctor clean", async (home) => {
+  // the user's own config and hand-written files predate everything ocm does
+  const userConfig = { model: "claude-sonnet-4-6", permission: { edit: "allow" }, mcp: { "user-server": { type: "local", command: ["echo"] } } }
+  writeTree(cfg(home), {
+    "opencode.json": json(userConfig),
+    commands: { "mine.md": GREET },
+    plugins: { "my-own.js": USER_PLUGIN },
+  })
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "commit.md": COMMAND },
+    skills: { style: { "SKILL.md": SKILL } },
+    plugin: { "notify.js": JS_PLUGIN },
+    "mcp.json": MCP_V1,
+  } } })
+  const run = (args, timeout = 300_000) => {
+    const r = spawnSync(process.execPath, [OCM_BIN, ...args], {
+      env: withFakeOpencode({ ...process.env, HOME: home }), encoding: "utf8", timeout,
+    })
+    return { status: r.status, output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }
+  }
+  const added = run(["add", `file://${remote}`, "--name", "mp", "--trust"])
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}:\n${added.output}`)
+  expect(existsSync(join(cfg(home), "plugins", "ocm--adw--notify.js"))).toBe(true) // trusted, so materialized
+  // upstream ships a nameless skill and changes the mcp command — a trust-surface change
+  writeTree(join(remote, "plugins", "adw", "skills", "broken"), { "SKILL.md": NAMELESS_SKILL })
+  writeFileSync(join(remote, "plugins", "adw", "mcp.json"), MCP_V2)
+  for (const args of [["add", "-A"], ["-c", "user.email=ocm@test", "-c", "user.name=ocm", "commit", "-m", "nameless skill + mcp change"]]) {
+    const r = spawnSync("git", args, { cwd: remote, encoding: "utf8" })
+    if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed in ${remote}: ${r.stderr}`)
+  }
+  const updated = run(["update", "mp"])
+  if (updated.status !== 0) throw new Error(`ocm update exited ${updated.status} — a blocked executable change must not fail the update:\n${updated.output}`)
+  const skillsLinks = join(home, ".cache", "ocm", "links", "mp", "skills")
+  assertAbsent(join(skillsLinks, "adw--broken")) // a nameless skill never materializes
+  expect(lstatSync(join(skillsLinks, "adw--style")).isDirectory()).toBe(true)
+  const record = JSON.parse(readFileSync(registryFile(home), "utf8")).marketplaces.mp.plugins.adw
+  expect(record.components.skill).toEqual(["style"]) // and never enters the record
+  expect(JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8")).mcp["ocm--adw--db"]).toBeUndefined() // the blocked change removes the old key
+  const untrusted = run(["untrust", "mp"])
+  if (untrusted.status !== 0) throw new Error(`ocm untrust exited ${untrusted.status}:\n${untrusted.output}`)
+  assertAbsent(join(cfg(home), "plugins", "ocm--adw--notify.js")) // the executable materialization is gone
+  const finalRecord = JSON.parse(readFileSync(registryFile(home), "utf8")).marketplaces.mp.plugins.adw
+  if (!(finalRecord.components.plugin ?? []).includes("notify.js")) {
+    throw new Error(`expected the record to still name the denied plugin after untrust, got ${JSON.stringify(finalRecord.components)} in ${registryFile(home)}`)
+  }
+  // config safety: the user's keys are intact and no ocm-owned mcp key remains
+  const after = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
+  expect(after.model).toBe(userConfig.model)
+  expect(JSON.stringify(after.permission)).toBe(JSON.stringify(userConfig.permission))
+  expect(JSON.stringify(after.mcp["user-server"])).toBe(JSON.stringify(userConfig.mcp["user-server"]))
+  expect(Object.keys(after.mcp).filter((key) => key.startsWith("ocm--"))).toEqual([])
+  // ownership: the user's hand-written files are byte-identical
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe(GREET)
+  expect(readFileSync(join(cfg(home), "plugins", "my-own.js"), "utf8")).toBe(USER_PLUGIN)
+  const foreign = walkPaths(home).filter((path) => path.includes("/.claude") || path.includes("/.agents"))
+  if (foreign.length) throw new Error(`ocm wrote outside its ownership:\n${foreign.join("\n")}`)
+  // the denied-but-recorded plugin component is blocked, not stale
+  const diagnosed = run(["doctor"])
+  if (diagnosed.status !== 0) throw new Error(`ocm doctor exited ${diagnosed.status} after update + untrust:\n${diagnosed.output}`)
+}, 600_000)

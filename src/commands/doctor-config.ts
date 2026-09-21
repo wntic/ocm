@@ -82,15 +82,15 @@ function checkMcpKeys(config: Record<string, unknown>, registry: CoreRegistry, f
     return
   }
   if (orphaned.length) {
-    const failure = removeMcpKeys([...new Set(orphaned.map(({ plugin }) => plugin))])
-    if (failure) findings.push(error(failure))
+    const removal = removeMcpKeys([...new Set(orphaned.map(({ plugin }) => plugin))])
+    if (removal.warning) findings.push(error(removal.warning))
     else for (const { key } of orphaned) findings.push(fixed(`${key}: removed from opencode.json`))
   }
   if (invalid.length) {
     // exactly the offending keys: a valid sibling like ocm--<plugin>--db
     // stays, and so does anything nested under the bad key's name
-    const failure = removeMcpKeysExact(invalid.map(({ key }) => key))
-    if (failure) findings.push(error(failure))
+    const removal = removeMcpKeysExact(invalid.map(({ key }) => key))
+    if (removal.warning) findings.push(error(removal.warning))
     else for (const { key } of invalid) findings.push(fixed(`${key}: removed from opencode.json`))
   }
 }

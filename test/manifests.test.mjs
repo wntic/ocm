@@ -181,7 +181,9 @@ phase("3. a JS plugin links as ocm--<p>--<file>.js when trusted, is reported blo
   const [mp, added] = addMp(home, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, plugin: { "notify.js": JS_PLUGIN } } } })
   expect(`${added.stdout}\n${added.stderr}`).toContain("blocked")
   expect(`${added.stdout}\n${added.stderr}`).toContain("untrusted")
-  expect(readRegistry(home).marketplaces.mp.plugins.adw.components.plugin).toEqual(["notify.js"]) // discovered and recorded
+  // blocked pending trust, so not recorded — components are outcome-derived (brief 31 §3)
+  expect(readRegistry(home).marketplaces.mp.plugins.adw.components.plugin).toBeUndefined()
+  expect(readRegistry(home).marketplaces.mp.plugins.adw.components.command).toEqual(["commit.md"])
   assertAbsent(dest)
   // untrusted install: the command materializes, the executable does not
   const untrusted = ocm(home, "install", "adw")

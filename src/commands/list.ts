@@ -1,6 +1,6 @@
 import { loadRegistry } from "../registry"
 import type { MarketplaceEntry } from "../types"
-import { age, pendingExecutables } from "./display"
+import { age, pendingExecutables, shippedExecutables } from "./display"
 import type { CoreExecutableComponent } from "../../loader/core.js"
 
 export interface ListOptions {
@@ -53,6 +53,9 @@ export function list(options: ListOptions = {}): void {
     for (const component of pending) {
       console.log(`  ${component.rel} — awaiting trust (ocm trust ${name})`)
     }
+    // a not-granted marketplace's executables never linked, so the record
+    // does not carry them; the blocked lines read the tree instead
+    const shipped = entry.trust.code !== "granted" ? shippedExecutables(entry) : null
     for (const [pluginName, plugin] of Object.entries(entry.plugins)) {
       if (!options.all && !plugin.enabled) continue
       const parts: string[] = []
@@ -61,8 +64,11 @@ export function list(options: ListOptions = {}): void {
       if (plugin.components.skill) parts.push(`skills: ${plugin.components.skill.join(", ")}`)
       // a not-granted marketplace's executables list as blocked with the remedy (spec 25 §1)
       const blocked = entry.trust.code !== "granted" ? ` (blocked — ocm trust ${name})` : ""
-      if (plugin.components.plugin) parts.push(`plugins: ${plugin.components.plugin.join(", ")}${blocked}`)
-      if (plugin.components.mcp) parts.push(`mcp: ${plugin.components.mcp.join(", ")}${blocked}`)
+      const exec = shipped?.get(pluginName)
+      const pluginFiles = plugin.components.plugin?.length ? plugin.components.plugin : exec?.plugin
+      const mcpServers = plugin.components.mcp?.length ? plugin.components.mcp : exec?.mcp
+      if (pluginFiles?.length) parts.push(`plugins: ${pluginFiles.join(", ")}${blocked}`)
+      if (mcpServers?.length) parts.push(`mcp: ${mcpServers.join(", ")}${blocked}`)
       // the marketplace revision is the implicit version of a versionless
       // plugin (spec 08)
       const version = plugin.version ?? (short ? `@${short}` : null)

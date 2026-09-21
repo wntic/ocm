@@ -4,11 +4,11 @@ import { writeJsonAtomic } from "./atomic.js"
 import { installRefusal, nameHolder } from "./collisions.js"
 import { restoreDisplaced } from "./displaced.js"
 import { nameDisagreement } from "./manifest.js"
-import { componentRoot } from "./marketplace.js"
+import { componentRoot, deriveComponents, registerPlugins } from "./marketplace.js"
 import { enabledPlugins, materialize } from "./materialize.js"
 import { DISPLACED_RECORD_FILE } from "./paths.js"
 import { reconcilePluginRecords } from "./reconcile.js"
-import { loadRegistryForWrite, saveRegistry } from "./registry.js"
+import { loadRegistryForWrite, saveRegistry, saveRegistryIfChanged } from "./registry.js"
 import { denyEntry, executableComponents, grantEntry, skipEntry } from "./trust.js"
 
 // spec 05 argument resolution, shared by every verb that takes a plugin
@@ -81,6 +81,7 @@ export function setEnabled(arg, enabled, options = {}) {
     saved = true
   }
   const warnings = []
+  let teardownOutcomes = []
   if (holder) {
     // the materializer reads the registry from disk, so the incumbent's
     // yielded state must be saved before its links come down
@@ -89,12 +90,21 @@ export function setEnabled(arg, enabled, options = {}) {
       plugin: resolved.plugin,
     })
     warnings.push(...teardown.warnings)
+    teardownOutcomes = teardown.outcomes
   }
   const report = materialize(resolved.marketplace, root, {
     enabled: enabledPlugins(entry, root),
     force: options.force === true,
   })
   report.warnings.push(...warnings)
+  // brief 31 §3/§8: the components a mutation records are its own
+  // materialization outcomes — install and uninstall, symmetrically. The
+  // returned list is the pre-derive snapshot: the headline states what the
+  // record held, the derivation rewrites it after
+  const components = record.components
+  deriveComponents(registry, resolved.marketplace, report.outcomes)
+  if (holder) deriveComponents(registry, holder, teardownOutcomes)
+  saveRegistryIfChanged(registry)
   // spec 21: an uninstall surfaces every displaced original it can restore.
   // The holder teardown above is a takeover, which displaces nothing.
   // Spec 27 §3: a consumed record is pruned (`resolved` is the resolvePlugin
@@ -106,7 +116,7 @@ export function setEnabled(arg, enabled, options = {}) {
   return {
     marketplace: resolved.marketplace,
     plugin: resolved.plugin,
-    components: record.components,
+    components,
     disagreement: nameDisagreement(join(root, record.source), resolved.plugin),
     already: Boolean(current),
     takeover: holder,
@@ -125,10 +135,15 @@ export function grantTrust(name) {
   if (!components.length) return { granted: false, report: null, wasV1: false }
   // spec 20: a grant materializes links, so the records behind those links
   // are refreshed first — otherwise doctor reads the new links as unowned
-  reconcilePluginRecords(registry, name, root)
+  const { registrable } = reconcilePluginRecords(registry, name, root)
+  registerPlugins(registry, name, registrable)
   grantEntry(entry, components)
   saveRegistry(registry)
   const report = materialize(name, root, { enabled: enabledPlugins(entry, root) })
+  // brief 31 §3: the records are derived from what materialized, then saved
+  // again — a derivation that changed nothing writes nothing
+  deriveComponents(registry, name, report.outcomes)
+  saveRegistryIfChanged(registry)
   return { granted: true, report, wasV1 }
 }
 

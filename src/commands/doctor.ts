@@ -12,7 +12,7 @@ import { error, fixed, reportFindings, warning, type Finding } from "../findings
 import { ocmPluginErrors } from "../probe"
 import { strandedMessage, strandedRoots } from "../stranded"
 import { checkConfig } from "./doctor-config"
-import { checkBrokenLinks, checkFoldedRecords, checkForbiddenPaths, checkMaterialized } from "./doctor-links"
+import { checkBrokenLinks, checkFoldedRecords, checkForbiddenPaths, checkMaterialized, checkStaleRecords } from "./doctor-links"
 import { checkDisplaced, checkOrphanMirrors, checkStrays } from "./doctor-orphans"
 import { recloneMarketplace } from "./update"
 
@@ -65,6 +65,7 @@ export function doctor(fix: boolean): void {
   checkOrphanMirrors(registry, findings, fix && registryUsable)
   checkDisplaced(registry, findings)
   checkMaterialized(registry, findings, fix)
+  checkStaleRecords(registry, findings)
   checkFoldedRecords(registry, findings)
   checkForbiddenPaths(registry, findings)
   for (const line of ocmPluginErrors()) findings.push(error(`${line} (ocm update)`))

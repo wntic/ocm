@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, rmSync, rmdirSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { dirname, join, relative } from "node:path"
 import { setSkillsPath } from "./config.js"
 import { discoverPlugins, PLUGIN_NAME_RE } from "./discovery.js"
 import { gcTargets, isRenderedFile, link, mirror } from "./links.js"
+import { pluginRefusal, refusalOutcomes } from "./gate.js"
 import { foldedComponentGroups } from "./limits.js"
 import { pluginGateFindings } from "./manifest-gate.js"
 import { syncMcp } from "./mcp.js"
@@ -61,16 +62,14 @@ function removeLegacyContainers(name) {
 
 export function materialize(name, dir, options = {}) {
   const warnings = []
-  const counts = { command: 0, agent: 0, skill: 0, plugin: 0, mcp: 0 }
-  let created = 0
-  let removed = 0
-  let skipped = 0
+  const outcomes = []
+  const report = () => ({ marketplace: name, outcomes, warnings })
 
   removeLegacyContainers(name)
 
   if (!existsSync(dir)) {
     warnings.push(`marketplace "${name}" directory missing (${dir}), links left untouched`)
-    return { counts, created, removed, skipped, warnings }
+    return report()
   }
 
   const registry = readRegistry()
@@ -85,27 +84,78 @@ export function materialize(name, dir, options = {}) {
     warnings,
     force: options.force === true,
     displacedDir: join(DISPLACED_DIR, new Date().toISOString().replace(/[:.]/g, "-")),
+    // brief 31 §6: dest → displaced cache target for every takeover this
+    // run, so an outcome can state where the user's file went
+    displacements: new Map(),
   }
   const enabled = options.enabled ?? null
-  // a plugin-scoped pass (ocm update <plugin>@<mp>) reconciles only the
-  // named plugin; every other plugin's links and mcp keys stay untouched
+  // an internal single-plugin scope: setEnabled's --force takeover tears
+  // down only the incumbent's yielded plugin; every other plugin's links
+  // and mcp keys stay untouched
   const only = options.plugin ?? null
+  // brief 31 §2: source paths that changed in this pass; a current outcome
+  // for one of them is reported as refreshed
+  const changed = options.changed ?? null
+  // brief 31 §5: discovered name → kept name for a refused rename; the
+  // whole run — dests, desired sets, outcomes — sees the kept name
+  const aliases = options.aliases ?? null
   const skillsDir = join(LINKS_DIR, name, "skills")
   const desiredCommands = new Set()
   const desiredAgents = new Set()
   const desiredMirrors = new Set()
   const desiredPluginLinks = new Set()
 
+  // one outcome per linked component; a skipped or refused link carries the
+  // warning link() pushed for it as its reason
+  const linkOutcome = (type, plugin, component, source, dest, status, warnStart) => {
+    let state = status === "ok" ? "current" : status
+    if (state === "current" && changed !== null && changed.has(relative(dir, source))) state = "refreshed"
+    let reason = null
+    if (state === "skipped" || state === "refused") {
+      reason = ctx.warnings.length > warnStart ? ctx.warnings[ctx.warnings.length - 1] : null
+    }
+    const outcome = { type, plugin, component, source, dest, state, reason }
+    if (ctx.displacements.has(dest)) outcome.displaced = ctx.displacements.get(dest)
+    outcomes.push(outcome)
+  }
+
+  const removedOutcome = (type, plugin, component, dest) => {
+    outcomes.push({ type, plugin, component, source: null, dest, state: "removed", reason: null })
+  }
+
   mkdirSync(OPENCODE_COMMANDS_DIR, { recursive: true })
   mkdirSync(OPENCODE_AGENTS_DIR, { recursive: true })
   mkdirSync(OPENCODE_PLUGINS_DIR, { recursive: true })
 
   const discovered = discoverPlugins(dir)
-  const active = only === null ? discovered : discovered.filter((plugin) => plugin.name === only)
+  // the `only` filter matches discovered names; the alias then renames the
+  // plugin to the name its record kept, so every dest and outcome below
+  // uses it
+  const active = (only === null ? discovered : discovered.filter((plugin) => plugin.name === only))
+    .map((plugin) => (aliases !== null && aliases.has(plugin.name) ? { ...plugin, name: aliases.get(plugin.name) } : plugin))
+  // the setSkillsPath decision keeps today's meaning: desired skills whose
+  // render succeeded, not the shim's derived counts.skill — a skill skipped
+  // by an unowned dest must still keep the skills path registered
+  let skillsRendered = 0
+  const refused = new Set()
   for (const plugin of active) {
     if (enabled !== null && !enabled.has(plugin.name)) continue
     if (!PLUGIN_NAME_RE.test(plugin.name)) {
       warnings.push(`skipped plugin "${plugin.name}": name must match ${PLUGIN_NAME_RE}`)
+      continue
+    }
+    // brief 31 §4: a plugin the registry refuses is a plugin the
+    // materializer refuses — one skipped outcome per component, no links.
+    // A registered plugin is exempt from the manifest check (brief 29), as
+    // is a direct call with no registry entry to grandfather against; the
+    // limit never grandfathers
+    const grandfathered = enabled === null || entry === undefined || plugin.name in (entry.plugins ?? {})
+    const refusal = pluginRefusal(dir, plugin, grandfathered)
+    if (refusal) {
+      refused.add(plugin.name)
+      const refusalSkips = refusalOutcomes(plugin, refusal.message, skillsDir)
+      outcomes.push(...refusalSkips)
+      for (const outcome of refusalSkips) warnings.push(refusal.message)
       continue
     }
     // brief 28 §4: two component names that fold to one link name cannot
@@ -122,23 +172,21 @@ export function materialize(name, dir, options = {}) {
       if (folded.has(`command/${file}`)) continue
       const source = resolveSource(plugin.dir, ["commands", "command"], file, ctx, plugin.name)
       if (!source) continue
-      counts.command += 1
-      const dest = `${plugin.name}:${file}`
-      desiredCommands.add(dest)
-      const status = link(source, join(OPENCODE_COMMANDS_DIR, dest), ctx, plugin.name, file)
-      if (status === "created") created += 1
-      else if (status !== "ok") skipped += 1
+      const dest = join(OPENCODE_COMMANDS_DIR, `${plugin.name}:${file}`)
+      desiredCommands.add(`${plugin.name}:${file}`)
+      const warnStart = ctx.warnings.length
+      const status = link(source, dest, ctx, plugin.name, file)
+      linkOutcome("command", plugin.name, file, source, dest, status, warnStart)
     }
     for (const file of plugin.components.agent ?? []) {
       if (folded.has(`agent/${file}`)) continue
       const source = resolveSource(plugin.dir, ["agents", "agent"], file, ctx, plugin.name)
       if (!source) continue
-      counts.agent += 1
-      const dest = `${plugin.name}:${file}`
-      desiredAgents.add(dest)
-      const status = link(source, join(OPENCODE_AGENTS_DIR, dest), ctx, plugin.name, file)
-      if (status === "created") created += 1
-      else if (status !== "ok") skipped += 1
+      const dest = join(OPENCODE_AGENTS_DIR, `${plugin.name}:${file}`)
+      desiredAgents.add(`${plugin.name}:${file}`)
+      const warnStart = ctx.warnings.length
+      const status = link(source, dest, ctx, plugin.name, file)
+      linkOutcome("agent", plugin.name, file, source, dest, status, warnStart)
     }
     for (const rel of plugin.components.skill ?? []) {
       if (folded.has(`skill/${rel}`)) continue
@@ -149,52 +197,98 @@ export function materialize(name, dir, options = {}) {
       try {
         transformed = renderSkillMd(readFileSync(skillMd, "utf8"), plugin.name)
       } catch {}
+      const mirrorName = `${plugin.name}--${rel.split("/").join("-")}`
+      const mirrorDir = join(skillsDir, mirrorName)
       if (transformed === null) {
-        warnings.push(`skipped ${skillMd}: no name in frontmatter`)
+        const reason = `skipped ${skillMd}: no name in frontmatter`
+        warnings.push(reason)
+        // brief 31 §4: the skip is an outcome, not only a warning — it
+        // leaves the registry and the report in the same commit
+        outcomes.push({ type: "skill", plugin: plugin.name, component: rel, source: sourceDir, dest: mirrorDir, state: "skipped", reason })
         continue
       }
-      counts.skill += 1
-      const mirrorName = `${plugin.name}--${rel.split("/").join("-")}`
+      skillsRendered += 1
       desiredMirrors.add(mirrorName)
-      const mirrored = mirror(sourceDir, join(skillsDir, mirrorName), { "SKILL.md": () => transformed }, ctx, plugin.name, rel)
-      created += mirrored.created
-      removed += mirrored.removed
+      const warnStart = ctx.warnings.length
+      const mirrored = mirror(sourceDir, mirrorDir, { "SKILL.md": () => transformed }, ctx, plugin.name, rel)
+      let state
+      let reason = null
+      if (mirrored.status === "skipped") {
+        state = "skipped"
+        reason = ctx.warnings.length > warnStart ? ctx.warnings[ctx.warnings.length - 1] : null
+      } else if (mirrored.created > 0) {
+        // a sibling link or the render wrote something: the restart notice
+        // fires exactly when today's mirror.created did
+        state = "created"
+      } else {
+        state = "current"
+      }
+      if (state === "current" && changed !== null && changed.has(relative(dir, sourceDir))) state = "refreshed"
+      const outcome = { type: "skill", plugin: plugin.name, component: rel, source: sourceDir, dest: mirrorDir, state, reason }
+      // a takeover inside the mirror records the mirror's child, not the
+      // mirror itself — any displacement under it belongs to this outcome
+      for (const [displacedDest, target] of ctx.displacements) {
+        if (displacedDest.startsWith(`${mirrorDir}/`)) outcome.displaced = target
+      }
+      outcomes.push(outcome)
+      for (const entry of mirrored.removed) {
+        removedOutcome("skill", plugin.name, `${rel}/${entry}`, join(mirrorDir, entry))
+      }
     }
     for (const file of plugin.components.plugin ?? []) {
       if (folded.has(`plugin/${file}`)) continue
       const source = resolveSource(plugin.dir, ["plugin", "plugins"], file, ctx, plugin.name)
       if (!source) continue
-      counts.plugin += 1
-      const dest = `ocm--${plugin.name}--${file}`
+      const dest = join(OPENCODE_PLUGINS_DIR, `ocm--${plugin.name}--${file}`)
       if (!approved.get(componentKey("plugin", plugin.name, file))) {
-        warnings.push(`blocked (untrusted): ${plugin.name}:${file} not linked — run \`ocm trust ${name}\` to approve`)
+        const reason = `blocked (untrusted): ${plugin.name}:${file} not linked — run \`ocm trust ${name}\` to approve`
+        warnings.push(reason)
+        outcomes.push({ type: "plugin", plugin: plugin.name, component: file, source, dest, state: "blocked", reason })
         continue
       }
-      desiredPluginLinks.add(dest)
-      const status = link(source, join(OPENCODE_PLUGINS_DIR, dest), ctx, plugin.name, file)
-      if (status === "created") created += 1
-      else if (status !== "ok") skipped += 1
+      desiredPluginLinks.add(`ocm--${plugin.name}--${file}`)
+      const warnStart = ctx.warnings.length
+      const status = link(source, dest, ctx, plugin.name, file)
+      linkOutcome("plugin", plugin.name, file, source, dest, status, warnStart)
     }
   }
 
   // plugin names cannot contain ":", "--" or uppercase (PLUGIN_NAME_RE),
   // so a name prefix never spans another plugin's entries
   const scope = only === null ? undefined : `${only}:`
-  removed += gcTargets(OPENCODE_COMMANDS_DIR, desiredCommands, ctx, undefined, scope)
-  removed += gcTargets(OPENCODE_AGENTS_DIR, desiredAgents, ctx, undefined, scope)
-  removed += gcTargets(skillsDir, desiredMirrors, ctx, (path) => isRenderedFile(join(path, "SKILL.md")), only === null ? undefined : `${only}--`)
-  removed += gcTargets(OPENCODE_PLUGINS_DIR, desiredPluginLinks, ctx, undefined, only === null ? undefined : `ocm--${only}--`)
+  for (const entry of gcTargets(OPENCODE_COMMANDS_DIR, desiredCommands, ctx, undefined, scope)) {
+    const split = entry.indexOf(":")
+    removedOutcome("command", entry.slice(0, split), entry.slice(split + 1), join(OPENCODE_COMMANDS_DIR, entry))
+  }
+  for (const entry of gcTargets(OPENCODE_AGENTS_DIR, desiredAgents, ctx, undefined, scope)) {
+    const split = entry.indexOf(":")
+    removedOutcome("agent", entry.slice(0, split), entry.slice(split + 1), join(OPENCODE_AGENTS_DIR, entry))
+  }
+  for (const entry of gcTargets(skillsDir, desiredMirrors, ctx, (path) => isRenderedFile(join(path, "SKILL.md")), only === null ? undefined : `${only}--`)) {
+    const split = entry.indexOf("--")
+    removedOutcome("skill", entry.slice(0, split), entry.slice(split + 2), join(skillsDir, entry))
+  }
+  for (const entry of gcTargets(OPENCODE_PLUGINS_DIR, desiredPluginLinks, ctx, undefined, only === null ? undefined : `ocm--${only}--`)) {
+    const stripped = entry.slice("ocm--".length)
+    const split = stripped.indexOf("--")
+    removedOutcome("plugin", stripped.slice(0, split), stripped.slice(split + 2), join(OPENCODE_PLUGINS_DIR, entry))
+  }
 
-  counts.mcp += syncMcp(active, dir, entry, enabled, approved, warnings, name)
+  // a refused plugin keeps its mcp prefix (stale keys are removed) but its
+  // keys are never written
+  const mcpEnabled = refused.size === 0
+    ? enabled
+    : new Set([...(enabled ?? active.map((plugin) => plugin.name))].filter((name) => !refused.has(name)))
+  outcomes.push(...syncMcp(active, dir, entry, mcpEnabled, approved, warnings, name))
 
   // a scoped pass never unregisters the skills path: other plugins'
   // rendered skills may still live there
-  if (only === null || counts.skill > 0) {
-    const warning = setSkillsPath(skillsDir, counts.skill > 0)
+  if (only === null || skillsRendered > 0) {
+    const warning = setSkillsPath(skillsDir, skillsRendered > 0)
     if (warning) warnings.push(warning)
   }
 
-  return { counts, created, removed, skipped, warnings }
+  return report()
 }
 
 // the enabled set a caller drives materialize with: registry plugins that
@@ -224,17 +318,38 @@ export function enabledPlugins(entry, dir) {
   return enabled
 }
 
+// spec 05 teardown: every owned link goes, and one removed outcome per entry
+// records what went — brief 31 §6 derives the restart notice from them
 export function removeLinksFor(name, marketplaceDir) {
   removeLegacyContainers(name)
-  const ctx = { name, dir: marketplaceDir, managed: [], revision: null, warnings: [] }
-  gcTargets(OPENCODE_COMMANDS_DIR, new Set(), ctx)
-  gcTargets(OPENCODE_AGENTS_DIR, new Set(), ctx)
-  gcTargets(OPENCODE_PLUGINS_DIR, new Set(), ctx)
+  const warnings = []
+  const outcomes = []
+  const ctx = { name, dir: marketplaceDir, managed: [], revision: null, warnings }
+  const removedOutcome = (type, plugin, component, dest) => {
+    outcomes.push({ type, plugin, component, source: null, dest, state: "removed", reason: null })
+  }
+  for (const entry of gcTargets(OPENCODE_COMMANDS_DIR, new Set(), ctx)) {
+    const split = entry.indexOf(":")
+    removedOutcome("command", entry.slice(0, split), entry.slice(split + 1), join(OPENCODE_COMMANDS_DIR, entry))
+  }
+  for (const entry of gcTargets(OPENCODE_AGENTS_DIR, new Set(), ctx)) {
+    const split = entry.indexOf(":")
+    removedOutcome("agent", entry.slice(0, split), entry.slice(split + 1), join(OPENCODE_AGENTS_DIR, entry))
+  }
+  for (const entry of gcTargets(OPENCODE_PLUGINS_DIR, new Set(), ctx)) {
+    const stripped = entry.slice("ocm--".length)
+    const split = stripped.indexOf("--")
+    removedOutcome("plugin", stripped.slice(0, split), stripped.slice(split + 2), join(OPENCODE_PLUGINS_DIR, entry))
+  }
   const skillsDir = join(LINKS_DIR, name, "skills")
-  gcTargets(skillsDir, new Set(), ctx, (path) => isRenderedFile(join(path, "SKILL.md")))
+  for (const entry of gcTargets(skillsDir, new Set(), ctx, (path) => isRenderedFile(join(path, "SKILL.md")))) {
+    const split = entry.indexOf("--")
+    removedOutcome("skill", entry.slice(0, split), entry.slice(split + 2), join(skillsDir, entry))
+  }
   // prune the cache dirs only when nothing unowned is left in them
   try {
     rmdirSync(skillsDir)
     rmdirSync(dirname(skillsDir))
   } catch {}
+  return { marketplace: name, outcomes, warnings }
 }

@@ -3,6 +3,7 @@ import { DEFAULT_SYNC_INTERVAL_MS, searchPlugins } from "../../loader/core.js"
 import type { CoreSearchMatch } from "../../loader/core.js"
 import { loadRegistry } from "../registry"
 import type { MarketplaceEntry, MarketplacePlugin } from "../types"
+import { shippedExecutables } from "./display"
 
 export interface SearchOptions {
   enabledOnly?: boolean
@@ -10,10 +11,12 @@ export interface SearchOptions {
 }
 
 // blocked is a trust state, not an enabled state: executable components of
-// an untrusted marketplace stay listed, just not linked (spec 07)
-function isBlocked(entry: MarketplaceEntry, record: MarketplacePlugin): boolean {
+// an untrusted marketplace stay listed, just not linked (spec 07). The
+// record drops executables that never linked, so the tree is the source
+function isBlocked(entry: MarketplaceEntry, plugin: string, record: MarketplacePlugin): boolean {
   if (entry.trust.code === "granted") return false
-  return Boolean(record.components.plugin?.length || record.components.mcp?.length)
+  if (record.components.plugin?.length || record.components.mcp?.length) return true
+  return shippedExecutables(entry).has(plugin)
 }
 
 // the names the summary line prints: commands and agents drop their .md
@@ -65,7 +68,7 @@ export function search(queryArg: string, options: SearchOptions = {}): void {
       category: match.record.manifest.category ?? null,
       description: match.record.manifest.description ?? null,
       enabled: match.record.enabled,
-      blocked: isBlocked(match.entry, match.record),
+      blocked: isBlocked(match.entry, match.plugin, match.record),
       matched: match.matched.length ? match.matched : null,
       components: bareComponents(match.record.components),
     })), null, 2))
@@ -78,7 +81,7 @@ export function search(queryArg: string, options: SearchOptions = {}): void {
       match.record.manifest.category,
       match.record.manifest.description,
     ].filter(Boolean).join("  ")
-    const markers = `${!match.record.enabled ? " (disabled)" : ""}${isBlocked(match.entry, match.record) ? " (blocked)" : ""}`
+    const markers = `${!match.record.enabled ? " (disabled)" : ""}${isBlocked(match.entry, match.plugin, match.record) ? " (blocked)" : ""}`
     console.log(`${head}${markers}`)
     if (match.matched.length) {
       for (const component of match.matched) console.log(`  matched: ${component}`)

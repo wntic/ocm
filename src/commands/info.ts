@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { componentRoot, discoverPlugins } from "../../loader/core.js"
+import type { CorePluginComponents } from "../../loader/core.js"
 import { OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { loadRegistry } from "../registry"
 import type { MarketplaceEntry, MarketplacePlugin, PluginManifest, Registry } from "../types"
@@ -44,11 +46,24 @@ interface ResultingComponent {
   target: string
 }
 
+// the components the plugin ships, read from its directory when the tree
+// exists: the record carries only what materialized, while info's rows
+// answer "what would run", linked or not (spec 25 §3)
+function shippedComponents(entry: MarketplaceEntry, record: MarketplacePlugin): CorePluginComponents {
+  const dir = join(componentRoot(entry), record.source)
+  if (existsSync(dir)) {
+    const found = discoverPlugins(dir)[0]?.components
+    if (found) return found
+  }
+  return record.components
+}
+
 // the resulting opencode names, not the source filenames: "what do I type to
 // use this" is the question info exists to answer (spec 09)
-function resultingComponents(marketplace: string, plugin: string, record: MarketplacePlugin): ResultingComponent[] {
+function resultingComponents(marketplace: string, plugin: string, entry: MarketplaceEntry, record: MarketplacePlugin): ResultingComponent[] {
   const out: ResultingComponent[] = []
-  for (const file of record.components.command ?? []) {
+  const components = shippedComponents(entry, record)
+  for (const file of components.command ?? []) {
     out.push({
       type: "command",
       name: `${plugin}:${file.replace(/\.md$/, "")}`,
@@ -56,7 +71,7 @@ function resultingComponents(marketplace: string, plugin: string, record: Market
       target: join(OPENCODE_COMMANDS_DIR, `${plugin}:${file}`),
     })
   }
-  for (const file of record.components.agent ?? []) {
+  for (const file of components.agent ?? []) {
     out.push({
       type: "agent",
       name: `${plugin}:${file.replace(/\.md$/, "")}`,
@@ -64,7 +79,7 @@ function resultingComponents(marketplace: string, plugin: string, record: Market
       target: join(OPENCODE_AGENTS_DIR, `${plugin}:${file}`),
     })
   }
-  for (const rel of record.components.skill ?? []) {
+  for (const rel of components.skill ?? []) {
     out.push({
       type: "skill",
       name: `${plugin}:${rel}`,
@@ -72,7 +87,7 @@ function resultingComponents(marketplace: string, plugin: string, record: Market
       target: join(OCM_LINKS_DIR, marketplace, "skills", `${plugin}--${rel.split("/").join("-")}`, "SKILL.md"),
     })
   }
-  for (const file of record.components.plugin ?? []) {
+  for (const file of components.plugin ?? []) {
     out.push({
       type: "plugin",
       name: `ocm--${plugin}--${file}`,
@@ -80,7 +95,7 @@ function resultingComponents(marketplace: string, plugin: string, record: Market
       target: join(OPENCODE_PLUGINS_DIR, `ocm--${plugin}--${file}`),
     })
   }
-  for (const server of record.components.mcp ?? []) {
+  for (const server of components.mcp ?? []) {
     out.push({
       type: "mcp",
       name: `ocm--${plugin}--${server}`,
@@ -148,7 +163,7 @@ export function info(arg: string, options: InfoOptions = {}): void {
       revision: entry.revision,
       trust: entry.trust.code,
       lastSync: entry.lastSync,
-      components: resultingComponents(marketplace, plugin, record),
+      components: resultingComponents(marketplace, plugin, entry, record),
     }, null, 2))
     return
   }
@@ -170,7 +185,7 @@ export function info(arg: string, options: InfoOptions = {}): void {
   for (const component of pendingExecutables(entry)) {
     console.log(`  ${component.rel} — awaiting trust (ocm trust ${marketplace})`)
   }
-  const components = resultingComponents(marketplace, plugin, record)
+  const components = resultingComponents(marketplace, plugin, entry, record)
   if (components.length) {
     console.log("  components")
     for (const component of components) {

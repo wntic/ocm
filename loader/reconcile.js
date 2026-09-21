@@ -4,18 +4,18 @@ import { discoverPlugins } from "./discovery.js"
 import { discoverMarketplace } from "./manifest.js"
 import { pluginGateFindings } from "./manifest-gate.js"
 import { foldedDirPairs, pluginLimitViolation } from "./limits.js"
-import { registerPlugins } from "./marketplace.js"
 
 // spec 20: one reconciliation of the per-plugin records after a pull or a
 // trust grant — the CLI update path and the loader's sync converge here
 // rather than keeping two half-copies. Warnings are returned, never printed:
-// the core never prints.
+// the core never prints. Brief 31 §3: registration is the caller's job — it
+// materializes first, then registers from the outcomes.
 export function reconcilePluginRecords(registry, name, root, options = {}) {
   const entry = registry.marketplaces?.[name]
   const warnings = []
   const pruned = []
   const dropped = []
-  if (!entry || !existsSync(root)) return { warnings, pruned, dropped }
+  if (!entry || !existsSync(root)) return { warnings, pruned, dropped, registrable: [] }
   const plugins = [...(options.discovered ?? discoverMarketplace(root).plugins.values())]
   const shipped = new Set(plugins.map((plugin) => plugin.name))
   const resolved = options.resolved ?? {}
@@ -26,16 +26,11 @@ export function reconcilePluginRecords(registry, name, root, options = {}) {
     }
   }
   let registrable = plugins.filter((candidate) => !(options.excluded ?? new Set()).has(candidate.name))
-  // a plugin-scoped update registers no newly shipped plugin: auto-install
-  // is the full pass's job, not this one's (spec 08)
-  if (options.plugin) registrable = registrable.filter((candidate) => candidate.name in entry.plugins)
-  // spec 17: an upstream name that breaks a length limit skips that plugin
-  // with the limit named; the rest of the update proceeds
-  registrable = registrable.filter((candidate) => {
-    const violation = pluginLimitViolation(candidate)
-    if (violation) warnings.push(`${violation}; rename it in the marketplace and update again`)
-    return !violation
-  })
+  // spec 17: an upstream name that breaks a length limit skips that plugin;
+  // the rest of the update proceeds. The warning is the materializer's — it
+  // emits one skipped outcome per component (brief 31 §4), and every caller
+  // materializes
+  registrable = registrable.filter((candidate) => !pluginLimitViolation(candidate))
   // brief 28 §3: a folded pair lowercases to one plugin name; the pair is
   // skipped with the warning and the rest of the update proceeds. The raw
   // discovery list is re-read because the passed-in one is the manifest
@@ -84,6 +79,5 @@ export function reconcilePluginRecords(registry, name, root, options = {}) {
     }
     return false
   })
-  registerPlugins(registry, name, registrable)
-  return { warnings, pruned, dropped }
+  return { warnings, pruned, dropped, registrable }
 }

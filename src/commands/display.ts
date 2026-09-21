@@ -29,3 +29,18 @@ export function driftedComponents(entry: MarketplaceEntry): CoreExecutableCompon
 export function pendingExecutables(entry: MarketplaceEntry): CoreExecutableComponent[] {
   return entry.trustPending ? driftedComponents(entry) ?? [] : []
 }
+
+// the executables a marketplace ships, read from the tree: the outcome
+// derivation leaves never-linked executables out of the record, so the
+// blocked markers render from the same list the trust prompt offers
+export function shippedExecutables(entry: MarketplaceEntry): Map<string, { plugin: string[]; mcp: string[] }> {
+  const shipped = new Map<string, { plugin: string[]; mcp: string[] }>()
+  try {
+    for (const component of executableComponents(componentRoot(entry), entry)) {
+      let list = shipped.get(component.plugin)
+      if (!list) shipped.set(component.plugin, (list = { plugin: [], mcp: [] }))
+      list[component.kind].push(component.name)
+    }
+  } catch {}
+  return shipped
+}

@@ -202,6 +202,18 @@ export function saveRegistry(registry) {
   recordConfigRoot()
 }
 
+// brief 31 §3: the second write of a mutation — derive, then save only when
+// the canonical content changed, so a repeat run leaves the file
+// byte-identical (idempotence)
+export function saveRegistryIfChanged(registry) {
+  let before
+  try {
+    before = readFileSync(REGISTRY_FILE, "utf8")
+  } catch {}
+  if (before !== undefined && serializeRegistry(registry) === before) return
+  saveRegistry(registry)
+}
+
 // spec 11: the variables the loader's shell.env hook exports. Every added
 // marketplace root is available under both families — OCM_PLUGIN_ROOT for
 // bodies authored for opencode, CLAUDE_PLUGIN_ROOT as an alias so a Claude

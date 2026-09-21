@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { writeJsonAtomic } from "../loader/core.js"
+import { queueNotice } from "./report"
 import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OPENCODE_PLUGINS_DIR, OPENCODE_TUI_CONFIG as TUI_CONFIG_FILE } from "./paths"
 
 const TUI_PLUGIN_ENTRY = "./ocm/ui.js"
@@ -181,13 +182,15 @@ export function migrateLegacyLayout(): void {
 export function installLoader(acknowledgeCurrent = true, announce = true): boolean {
   migrateLegacyLayout()
   const written = installFiles(loaderSourceDir())
-  if (written.loader && announce) console.log(`installed auto-sync loader (${join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME)})`)
-  else if (!written.loader && acknowledgeCurrent) console.log("auto-sync loader already current")
+  // brief 31 §7 (F114): the lines are notices in the sink — they print after
+  // the verb's headline, not mid-report
+  if (written.loader && announce) queueNotice(`installed auto-sync loader (${join(OPENCODE_PLUGINS_DIR, OCM_LOADER_NAME)})`)
+  else if (!written.loader && acknowledgeCurrent) queueNotice("auto-sync loader already current")
   return written.tui
 }
 
 export function reportTuiPlugin(): void {
-  console.log(`installed TUI plugin (/ocm in the opencode TUI, restart opencode to activate)`)
+  queueNotice("installed TUI plugin (/ocm in the opencode TUI)")
 }
 
 export function uninstallLoader(): void {

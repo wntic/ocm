@@ -48,6 +48,7 @@ function takeOver(dest, ctx, plugin) {
     return false
   }
   appendDisplacement({ marketplace: ctx.name, plugin, dest, dir: ctx.displacedDir })
+  ctx.displacements.set(dest, target)
   ctx.warnings.push(`displaced your ${displayPath(dest)} → ${target}`)
   return true
 }
@@ -102,16 +103,18 @@ export function link(source, dest, ctx, plugin, component) {
 
 // render: dest is owned iff it carries the rendered marker
 function render(source, dest, transform, ctx, plugin) {
+  let body
   let output
   try {
-    const body = transform(readFileSync(source, "utf8"))
-    if (body === null || body === undefined) return "skipped"
-    output = body.endsWith("\n") ? body : `${body}\n`
-    output += `<!-- ${RENDERED_MARKER}${relative(ctx.dir, source)} @ ${ctx.revision} -->\n`
+    const transformed = transform(readFileSync(source, "utf8"))
+    if (transformed === null || transformed === undefined) return "skipped"
+    body = transformed.endsWith("\n") ? transformed : `${transformed}\n`
+    output = body + `<!-- ${RENDERED_MARKER}${relative(ctx.dir, source)} @ ${ctx.revision} -->\n`
   } catch (err) {
     ctx.warnings.push(`failed ${source}: ${err instanceof Error ? err.message : String(err)}`)
     return "skipped"
   }
+  let silent = false
   let stat
   try {
     stat = lstatSync(dest)
@@ -132,14 +135,18 @@ function render(source, dest, transform, ctx, plugin) {
         current = readFileSync(dest, "utf8")
       } catch {}
       if (current === output) return "ok"
-      if (current === undefined || !current.includes(RENDERED_MARKER)) {
+      // brief 31 §2: a trailer-only difference (the revision moved, the
+      // body did not) is rewritten silently and still counts as current
+      const marker = current === undefined ? -1 : current.lastIndexOf(`<!-- ${RENDERED_MARKER}`)
+      if (marker !== -1 && current.slice(0, marker) === body) silent = true
+      else if (current === undefined || !current.includes(RENDERED_MARKER)) {
         if (!takeOver(dest, ctx, plugin)) return "skipped"
       }
     }
   }
   try {
     writeFileSync(dest, output)
-    return "created"
+    return silent ? "ok" : "created"
   } catch (err) {
     ctx.warnings.push(`failed ${dest}: ${err instanceof Error ? err.message : String(err)}`)
     return "skipped"
@@ -149,13 +156,14 @@ function render(source, dest, transform, ctx, plugin) {
 // remove owned entries not in the desired set; a symlink is ours iff it
 // points into the current marketplace, anything else iff `extra` proves it.
 // `scope` restricts the pass to one plugin's entries (plugin-scoped update).
+// Returns the names of the entries it removed.
 export function gcTargets(dir, desired, ctx, extra, scope) {
-  let removed = 0
+  const removed = []
   let entries
   try {
     entries = readdirSync(dir)
   } catch {
-    return 0
+    return removed
   }
   for (const entry of entries) {
     if (desired.has(entry)) continue
@@ -169,7 +177,7 @@ export function gcTargets(dir, desired, ctx, extra, scope) {
     if (!owned) continue
     try {
       rmSync(path, { force: true, recursive: true })
-      removed += 1
+      removed.push(entry)
     } catch {}
   }
   return removed
@@ -177,7 +185,9 @@ export function gcTargets(dir, desired, ctx, extra, scope) {
 
 // mirror: a real directory whose entries are link() or render(). The
 // created count rides along (spec 23 §5): a skill's first materialization
-// counts toward the report, so the restart notice follows actual changes
+// counts toward the report, so the restart notice follows actual changes.
+// `status` is the transform entry's render() result; `removed` names the
+// entries the mirror's own gc took down.
 export function mirror(sourceDir, destDir, plan, ctx, plugin, component) {
   mkdirSync(destDir, { recursive: true })
   let entries
@@ -188,14 +198,16 @@ export function mirror(sourceDir, destDir, plan, ctx, plugin, component) {
   }
   const desired = new Set()
   let created = 0
+  let status = "ok"
   for (const entry of entries) {
     if (containsSkillMd(join(sourceDir, entry))) continue
     desired.add(entry)
     const transform = plan[entry]
-    const status = transform
+    const result = transform
       ? render(join(sourceDir, entry), join(destDir, entry), transform, ctx, plugin)
       : link(join(sourceDir, entry), join(destDir, entry), ctx, plugin, component)
-    if (status === "created") created += 1
+    if (transform) status = result
+    if (result === "created") created += 1
   }
-  return { created, removed: gcTargets(destDir, desired, ctx, isRenderedFile) }
+  return { status, created, removed: gcTargets(destDir, desired, ctx, isRenderedFile) }
 }

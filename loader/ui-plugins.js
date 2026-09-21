@@ -1,16 +1,23 @@
 // The per-plugin flows of the /ocm TUI dialog (specs 10b, 22): the plugin
 // menu, install/uninstall, and the details view.
-import { readRegistry, setEnabled, withRegistryLock } from "./core.js"
+import { componentRoot, executableComponents, readRegistry, setEnabled, withRegistryLock } from "./core.js"
 import { NOTICE, backView, componentSummary, fit, message, pushView, select, toast } from "./ui-dialog.js"
 import { confirm } from "./ui-modals.js"
 import { updateFlow } from "./ui-marketplaces.js"
 import { trustFlow } from "./ui-trust.js"
 
 // executable components ship blocked until the marketplace is trusted (spec 07)
-export function blocked(record, entry) {
+export function blocked(name, record, entry) {
+  if (entry.trust?.code === "granted" && entry.trustPending !== true) return false
   const components = record.components ?? {}
-  if (!(components.plugin?.length || components.mcp?.length)) return false
-  return entry.trust?.code !== "granted" || entry.trustPending === true
+  if (components.plugin?.length || components.mcp?.length) return true
+  // the outcome-derived record drops executables that never linked, so the
+  // marker reads the tree — the same list the trust prompt offers
+  try {
+    return executableComponents(componentRoot(entry), entry).some((c) => c.plugin === name)
+  } catch {
+    return false
+  }
 }
 
 // spec 22 §4: the version sits next to the name, as `ocm info` prints it
@@ -51,7 +58,7 @@ export function openPlugin(api, marketplace, name) {
     { title: record.enabled ? "Uninstall" : "Install", value: "toggle", description: componentSummary(record) },
     { title: "Details", value: "details", description: "The ocm info record" },
   ]
-  if (blocked(record, entry)) {
+  if (blocked(name, record, entry)) {
     options.push({ title: "Trust marketplace", value: "trust", description: `Approve executable components from ${marketplace}` })
   }
   options.push(
@@ -94,7 +101,8 @@ async function togglePlugin(api, marketplace, name, back) {
     if (result.disagreement) toast(api, "warning", result.disagreement)
     if (result.report.warnings.length) toast(api, "warning", result.report.warnings.join("\n"))
     const restore = result.restore.length ? `${result.restore.join("\n")}\n` : ""
-    toast(api, "success", `${restore}${enabling ? "installed" : "uninstalled"} ${arg} — ${NOTICE}`)
+    const mutated = result.report.outcomes.some((o) => ["created", "removed", "refreshed"].includes(o.state))
+    toast(api, "success", `${restore}${enabling ? "installed" : "uninstalled"} ${arg}${mutated ? ` — ${NOTICE}` : ""}`)
   } catch (err) {
     toast(api, "error", message(err))
   }

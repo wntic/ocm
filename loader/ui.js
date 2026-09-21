@@ -43,7 +43,7 @@ export function openMainMenu(api) {
 function pluginOption(registry, marketplace, name, value) {
   const entry = registry.marketplaces[marketplace]
   const record = entry.plugins[name]
-  const suffix = !record.enabled ? " (disabled)" : blocked(record, entry) ? " (blocked)" : ""
+  const suffix = !record.enabled ? " (disabled)" : blocked(name, record, entry) ? " (blocked)" : ""
   return {
     title: `${name}@${marketplace}${suffix}`,
     value,
