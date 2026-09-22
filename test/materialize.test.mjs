@@ -3,11 +3,11 @@
 // path wins.
 
 import { spawnSync } from "node:child_process"
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync, rmSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, opencodeProbe, rootCacheDir, withFakeHome } from "./harness.mjs"
+import { assertAbsent, opencodeProbe, rootCacheDir, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -664,3 +664,370 @@ test("13. a revision advance with an unchanged skill body reports current for th
     expect(readFileSync(mirror, "utf8")).toMatch(/<!-- ocm: rendered from .+ @ .+ -->\s*$/)
   })
 })
+
+// brief 41: a body referencing a plugin-root variable renders with the
+// marketplace root substituted instead of symlinking. The token appears once
+// in a ! block and once in prose — one text substitution covers both
+const ROOTED_COMMAND = `---
+description: deploy helper
+---
+
+\`\`\`!
+python3 "\${OCM_PLUGIN_ROOT}/plugins/adw/scripts/deploy.sh" --all
+\`\`\`
+
+Relay the output; the script lives at \${OCM_PLUGIN_ROOT}/plugins/adw/scripts/deploy.sh.
+`
+
+test("14. a command or agent body referencing a plugin-root variable materializes as a rendered file naming the marketplace root; a body without one keeps its symlink", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: {
+      commands: { "deploy.md": ROOTED_COMMAND, "commit.md": COMMAND },
+      agents: {
+        "auditor.md": "---\ndescription: auditor\n---\n\nRead ${CLAUDE_PLUGIN_ROOT}/plugins/adw/notes/audit.md before reviewing.\n",
+        "reviewer.md": AGENT,
+      },
+    } })
+    const [report] = materialize(home, [["mp", mp, null]])
+    const stateOf = (type, component) => {
+      const outcome = outcomesOf(report).find((o) => o.type === type && o.component === component)
+      if (!outcome) throw new Error(`expected a ${type} outcome for ${component}: ${JSON.stringify(report.outcomes)}`)
+      return outcome.state
+    }
+    const dest = join(cfg(home), "commands", "adw:deploy.md")
+    const stat = lstatSync(dest)
+    if (stat.isSymbolicLink()) throw new Error(`expected a regular file at ${dest}, found a symlink`)
+    expect(stat.isFile()).toBe(true)
+    const content = readFileSync(dest, "utf8")
+    // both references — the ! block and the prose — landed on the root
+    expect(content.split(`${mp}/plugins/adw/scripts/deploy.sh`).length - 1).toBe(2)
+    expect(content).not.toContain("${OCM_PLUGIN_ROOT}")
+    // invariant: ownership — the marker is what proves a rendered file is ocm's
+    expect(content).toContain("ocm: rendered from ")
+    expect(stateOf("command", "deploy.md")).toBe("created")
+    const agentDest = join(cfg(home), "agents", "adw:auditor.md")
+    if (lstatSync(agentDest).isSymbolicLink()) throw new Error(`expected a regular file at ${agentDest}, found a symlink`)
+    const agentContent = readFileSync(agentDest, "utf8")
+    expect(agentContent).toContain(`${mp}/plugins/adw/notes/audit.md`)
+    expect(agentContent).not.toContain("${CLAUDE_PLUGIN_ROOT}")
+    expect(stateOf("agent", "auditor.md")).toBe("created")
+    const resolves = (d, source) => {
+      if (!lstatSync(d).isSymbolicLink()) throw new Error(`expected a symlink at ${d}`)
+      expect(realpathSync(d)).toBe(realpathSync(source))
+    }
+    resolves(join(cfg(home), "commands", "adw:commit.md"), join(mp, "plugins", "adw", "commands", "commit.md"))
+    resolves(join(cfg(home), "agents", "adw:reviewer.md"), join(mp, "plugins", "adw", "agents", "reviewer.md"))
+    expect(stateOf("command", "commit.md")).toBe("created")
+    expect(stateOf("agent", "reviewer.md")).toBe("created")
+  })
+})
+
+test("15. two marketplaces: each rendered body names its own root, and another marketplace's per-marketplace form is left alone", async () => {
+  await withFakeHome(async (home) => {
+    const mpA = join(home, "mp-a")
+    const mpB = join(home, "mp-b")
+    writeTree(mpA, { plugins: { alpha: { commands: { "work.md": "---\ndescription: work helper\n---\n\npython3 \"${OCM_PLUGIN_ROOT}/plugins/alpha/scripts/work.sh\"\n" } } } })
+    writeTree(mpB, { plugins: { beta: { commands: { "lint.md": "---\ndescription: lint helper\n---\n\npython3 \"${OCM_PLUGIN_ROOT_MP_B}/plugins/beta/scripts/lint.sh\"\n\nAlso see ${OCM_PLUGIN_ROOT_MP_A}/plugins/alpha/scripts/work.sh.\n" } } } })
+    materialize(home, [["mp-a", mpA, null], ["mp-b", mpB, null]])
+    const rendered = (plugin, file) => {
+      const dest = join(cfg(home), "commands", `${plugin}:${file}`)
+      const stat = lstatSync(dest)
+      if (stat.isSymbolicLink()) throw new Error(`expected a regular file at ${dest}, found a symlink`)
+      return readFileSync(dest, "utf8")
+    }
+    const a = rendered("alpha", "work.md")
+    expect(a).toContain(`${mpA}/plugins/alpha/scripts/work.sh`)
+    expect(a).not.toContain(mpB)
+    expect(a).not.toContain("${OCM_PLUGIN_ROOT}")
+    const b = rendered("beta", "lint.md")
+    expect(b).toContain(`${mpB}/plugins/beta/scripts/lint.sh`)
+    expect(b).not.toContain("${OCM_PLUGIN_ROOT_MP_B}")
+    // not this plugin's root to resolve: the other marketplace's form stays literal
+    expect(b).toContain("${OCM_PLUGIN_ROOT_MP_A}")
+    expect(b).not.toContain(mpA)
+  })
+})
+
+test("16. an upstream edit to a rendered command regenerates the dest on the next materialization: current without the changed set, refreshed with it, never created", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: { commands: { "deploy.md": ROOTED_COMMAND } } })
+    const dest = join(cfg(home), "commands", "adw:deploy.md")
+    const stateOf = (report) => {
+      const outcome = outcomesOf(report).find((o) => o.type === "command")
+      if (!outcome) throw new Error(`expected a command outcome: ${JSON.stringify(report.outcomes)}`)
+      return outcome.state
+    }
+    const [first] = materialize(home, [["mp", mp, null]])
+    expect(stateOf(first)).toBe("created")
+    const stat = lstatSync(dest)
+    if (stat.isSymbolicLink()) throw new Error(`expected a regular file at ${dest}, found a symlink`)
+    writeFileSync(join(mp, "plugins", "adw", "commands", "deploy.md"), `---
+description: deploy helper
+---
+
+\`\`\`!
+python3 "\${OCM_PLUGIN_ROOT}/plugins/adw/scripts/deploy.sh" --verbose
+\`\`\`
+
+Edited body: relay every line of output.
+`)
+    const [withoutSet] = materialize(home, [["mp", mp, null]])
+    expect(stateOf(withoutSet)).toBe("current")
+    expect(readFileSync(dest, "utf8")).toContain(`${mp}/plugins/adw/scripts/deploy.sh" --verbose`)
+    const [withSet] = materialize(home, [["mp", mp, null, ["plugins/adw/commands/deploy.md"]]])
+    expect(stateOf(withSet)).toBe("refreshed")
+    const regenerated = readFileSync(dest, "utf8")
+    expect(regenerated).toContain("Edited body: relay every line of output.")
+    expect(regenerated).not.toContain("${OCM_PLUGIN_ROOT}")
+  })
+})
+
+// brief 41 §3/§4: the rendered-file lifecycle — teardown collects rendered
+// commands and agents the way it collects symlinks, doctor sees no drift,
+// ownership and --force behave as for a symlinked command, a user edit
+// regenerates, and one marketplace's pass never touches another's rendered
+// file (the commands/agents dirs are shared between marketplaces)
+
+// spec 19: every installable plugin carries a plugin.json with a description
+const PLUGIN_JSON = `${JSON.stringify({ description: "demo plugin" }, null, 2)}\n`
+
+const ROOTED_AGENT = "---\ndescription: auditor\n---\n\nRead ${CLAUDE_PLUGIN_ROOT}/plugins/adw/notes/audit.md before reviewing.\n"
+
+test("17. uninstalling a plugin removes its rendered command and rendered agent; a hand-written file in the plugin's namespace survives", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: {
+      "plugin.json": PLUGIN_JSON,
+      commands: { "deploy.md": ROOTED_COMMAND },
+      agents: { "auditor.md": ROOTED_AGENT },
+    } })
+    expect(ocm(home, "add", mp).status).toBe(0)
+    const commandDest = join(cfg(home), "commands", "adw:deploy.md")
+    const agentDest = join(cfg(home), "agents", "adw:auditor.md")
+    for (const dest of [commandDest, agentDest]) {
+      if (lstatSync(dest).isSymbolicLink()) throw new Error(`expected a regular file at ${dest}, found a symlink`)
+      expect(readFileSync(dest, "utf8")).toContain("ocm: rendered from ")
+    }
+    // invariant: ownership — a hand-written file under the plugin's prefix is not ocm's to remove
+    writeFileSync(join(cfg(home), "commands", "adw:custom.md"), "# my own command\n")
+    expect(ocm(home, "uninstall", "adw").status).toBe(0)
+    assertAbsent(commandDest)
+    assertAbsent(agentDest)
+    expect(readFileSync(join(cfg(home), "commands", "adw:custom.md"), "utf8")).toBe("# my own command\n")
+  })
+}, 120_000)
+
+test("18. removing the marketplace removes its rendered command and rendered agent; a user's hand-written command survives", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: {
+      "plugin.json": PLUGIN_JSON,
+      commands: { "deploy.md": ROOTED_COMMAND },
+      agents: { "auditor.md": ROOTED_AGENT },
+    } })
+    expect(ocm(home, "add", mp).status).toBe(0)
+    const commandDest = join(cfg(home), "commands", "adw:deploy.md")
+    const agentDest = join(cfg(home), "agents", "adw:auditor.md")
+    for (const dest of [commandDest, agentDest]) {
+      if (lstatSync(dest).isSymbolicLink()) throw new Error(`expected a regular file at ${dest}, found a symlink`)
+    }
+    // invariant: ownership — the user's command survives every operation including remove
+    writeFileSync(join(cfg(home), "commands", "mine.md"), "# my own command\n")
+    expect(ocm(home, "remove", "mp").status).toBe(0)
+    assertAbsent(commandDest)
+    assertAbsent(agentDest)
+    expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+  })
+}, 120_000)
+
+test("19. doctor reports neither a rendered command and agent nor their plugin as drift, before and after uninstall", async () => {
+  await withFakeHome(async (home) => {
+    const userConfig = { model: "claude-sonnet-4-6" }
+    writeTree(cfg(home), { "opencode.json": `${JSON.stringify(userConfig, null, 2)}\n` })
+    const mp = marketplace(home, { adw: {
+      "plugin.json": PLUGIN_JSON,
+      commands: { "deploy.md": ROOTED_COMMAND },
+      agents: { "auditor.md": ROOTED_AGENT },
+    } })
+    expect(ocm(home, "add", mp).status).toBe(0)
+    const commandDest = join(cfg(home), "commands", "adw:deploy.md")
+    const agentDest = join(cfg(home), "agents", "adw:auditor.md")
+    // doctor's probe shells opencode; the fake stub on PATH keeps it fast
+    // (the file's local ocm() helper does not set it — see test/doctor.test.mjs)
+    const clean = (label) => {
+      const result = spawnSync(process.execPath, [OCM_BIN, "doctor"], {
+        env: withFakeOpencode({ ...process.env, HOME: home }),
+        encoding: "utf8",
+        timeout: 120_000,
+      })
+      const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`
+      if (result.status !== 0) throw new Error(`ocm doctor exited ${result.status} ${label}:\n${output}`)
+      for (const needle of [commandDest, agentDest, `plugin "adw"`]) {
+        if (output.includes(needle)) throw new Error(`the doctor report names ${needle} ${label}:\n${output}`)
+      }
+    }
+    clean("on an install with a rendered command and agent")
+    expect(ocm(home, "uninstall", "adw").status).toBe(0)
+    clean("after uninstall")
+    // invariant: config safety — outside ocm's keys, exactly the user's
+    expect(JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))).toEqual(userConfig)
+  })
+}, 300_000)
+
+test("20. a hand-written file at a rendered command's dest is refused; --force displaces it under the displaced cache and the rendered file takes its place", async () => {
+  await withFakeHome(async (home) => {
+    const commandDest = join(cfg(home), "commands", "adw:deploy.md")
+    mkdirSync(dirname(commandDest), { recursive: true })
+    writeFileSync(commandDest, "# my own deploy command\n")
+    const mp = marketplace(home, { adw: { "plugin.json": PLUGIN_JSON, commands: { "deploy.md": ROOTED_COMMAND } } })
+    expect(ocm(home, "add", mp, "--explicit").status).toBe(0)
+    // invariant: ownership — without --force, no ownership proof means no
+    // touch; a refusal is never fatal to the operation
+    const plain = ocm(home, "install", "adw")
+    expect(plain.status).toBe(0)
+    expect(readFileSync(commandDest, "utf8")).toBe("# my own deploy command\n")
+    expect(`${plain.stdout}\n${plain.stderr}`).toContain(commandDest)
+    const forced = ocm(home, "install", "adw", "--force")
+    expect(forced.status).toBe(0)
+    const stat = lstatSync(commandDest)
+    if (stat.isSymbolicLink()) throw new Error(`expected a regular file at ${commandDest}, found a symlink`)
+    const content = readFileSync(commandDest, "utf8")
+    // a local add stores its dir post-realpath (spec 17), so that is the root substituted
+    expect(content).toContain(`${realpathSync(mp)}/plugins/adw/scripts/deploy.sh`)
+    expect(content).not.toContain("${OCM_PLUGIN_ROOT}")
+    // the original was moved, not deleted, and the path is printed
+    const displacedRoot = join(rootCacheDir(home), "displaced")
+    if (!existsSync(displacedRoot)) throw new Error(`expected the displaced original under ${displacedRoot}`)
+    const copies = readdirSync(displacedRoot, { recursive: true })
+      .map((rel) => join(displacedRoot, rel))
+      .filter((path) => lstatSync(path).isFile())
+    expect(copies.map((path) => readFileSync(path, "utf8"))).toEqual(["# my own deploy command\n"])
+    expect(`${forced.stdout}\n${forced.stderr}`).toContain("displaced")
+  })
+}, 120_000)
+
+test("21. a user edit to a rendered command's body is overwritten by the next materialization; the trailer is kept", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: { commands: { "deploy.md": ROOTED_COMMAND } } })
+    materialize(home, [["mp", mp, null]])
+    const dest = join(cfg(home), "commands", "adw:deploy.md")
+    const rendered = readFileSync(dest, "utf8")
+    const at = rendered.lastIndexOf("<!-- ocm: rendered from ")
+    if (at === -1) throw new Error(`expected the ownership marker in ${dest}`)
+    // a user edit that keeps the trailer, as a normal edit would
+    writeFileSync(dest, `---\ndescription: deploy helper\n---\n\nMy local edit.\n\n${rendered.slice(at)}`)
+    materialize(home, [["mp", mp, null]])
+    expect(readFileSync(dest, "utf8")).toBe(rendered)
+  })
+})
+
+test("21b. dropping the variable from a body turns the rendered file back into a symlink, without displacing ocm's own artifact (review finding)", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: { commands: { "deploy.md": ROOTED_COMMAND } } })
+    materialize(home, [["mp", mp, null]])
+    const dest = join(cfg(home), "commands", "adw:deploy.md")
+    expect(lstatSync(dest).isSymbolicLink()).toBe(false)
+
+    // the author removes the variable: this body needs no substitution, so the
+    // dest goes back to being a symlink. link() proves ownership by "symlink
+    // into a managed dir", so without the transition it would call ocm's own
+    // rendered file unmanaged — skipping it forever, and under --force moving
+    // it into the displaced cache as though it were the user's file
+    const source = join(mp, "plugins", "adw", "commands", "deploy.md")
+    writeFileSync(source, COMMAND)
+    const [report] = materialize(home, [["mp", mp, null]])
+
+    expect(lstatSync(dest).isSymbolicLink()).toBe(true)
+    expect(realpathSync(dest)).toBe(realpathSync(source))
+    const unmanaged = report.warnings.filter((w) => w.includes("not managed by ocm"))
+    if (unmanaged.length) throw new Error(`ocm called its own rendered file unmanaged:\n${unmanaged.join("\n")}`)
+    assertAbsent(join(home, ".cache", "ocm", "displaced"))
+  })
+})
+
+test("22. re-materializing one marketplace leaves another marketplace's rendered command byte-identical: not removed, not re-created", async () => {
+  await withFakeHome(async (home) => {
+    const rooted = (plugin) => `---\ndescription: ${plugin} helper\n---\n\npython3 "\${OCM_PLUGIN_ROOT}/plugins/${plugin}/scripts/run.sh"\n`
+    const mpA = join(home, "mp-a")
+    const mpB = join(home, "mp-b")
+    writeTree(mpA, { plugins: { alpha: { commands: { "work.md": rooted("alpha") } } } })
+    writeTree(mpB, { plugins: { beta: { commands: { "lint.md": rooted("beta") } } } })
+    materialize(home, [["mp-a", mpA, null], ["mp-b", mpB, null]])
+    const dest = join(cfg(home), "commands", "beta:lint.md")
+    const before = { content: readFileSync(dest, "utf8"), ino: lstatSync(dest).ino }
+    expect(before.content).toContain(`${mpB}/plugins/beta/scripts/run.sh`)
+    // mp-a's pass alone — the loader's startup sync materializes each marketplace in turn
+    materialize(home, [["mp-a", mpA, null]])
+    expect(lstatSync(dest).isFile()).toBe(true)
+    expect(readFileSync(dest, "utf8")).toBe(before.content)
+    expect(lstatSync(dest).ino).toBe(before.ino)
+  })
+})
+
+// brief 41 §2/§4 test 5: the probe against the real binary. A rendered
+// command's body is the template opencode sends to the model — with the
+// substituted root AND the ownership trailer in it, so "a trailing HTML
+// comment is inert" is checked against opencode, not assumed. The ! block is
+// the inline backtick form (opencode's SHELL_REGEX = /!`([^`]+)`/g); it runs
+// server-side during template render, before model resolution, so the marker
+// is written even though the model call afterwards fails.
+const MARKER_COMMAND = `---
+description: marker probe
+---
+
+!\`sh "\${OCM_PLUGIN_ROOT}/plugins/adw/scripts/marker.sh"\`
+
+Relay the output.
+`
+
+test("23. a rendered command resolves in opencode and its ! block runs the script at the substituted path", async () => {
+  await withFakeHome(async (home) => {
+    // the provider points at a dead local endpoint so the run can never
+    // reach a real LLM: the model call fails fast and locally (observed:
+    // "Anthropic API key is missing"), after the ! block has already run
+    const userConfig = {
+      model: "anthropic/claude-sonnet-4-6",
+      provider: { anthropic: { options: { baseURL: "http://127.0.0.1:1" } } },
+    }
+    mkdirSync(cfg(home), { recursive: true })
+    writeFileSync(join(cfg(home), "opencode.json"), `${JSON.stringify(userConfig, null, 2)}\n`)
+    const mp = marketplace(home, { adw: {
+      "plugin.json": PLUGIN_JSON,
+      commands: { "marker.md": MARKER_COMMAND },
+      scripts: { "marker.sh": 'echo executed > "$OCM_MARKER"\n' },
+    } })
+    const added = ocm(home, "add", mp)
+    if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+    const dest = join(cfg(home), "commands", "adw:marker.md")
+    const content = readFileSync(dest, "utf8")
+    // what opencode is driven with below is the real rendered output
+    expect(content).toContain(`${realpathSync(mp)}/plugins/adw/scripts/marker.sh`)
+    expect(content).toContain("ocm: rendered from ")
+
+    const probe = opencodeProbe(cfg(home), home)
+    if (!probe.available) return console.log("skipped:", probe.optIn ? "OCM_PROBE not set" : "opencode is not on PATH")
+    if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
+    expect(probe.commands.join("\n")).toContain("adw:marker")
+    // invariant: no plugin-load errors attributable to ocm-installed files
+    expect(probe.pluginErrors).toEqual([])
+
+    const marker = join(home, "rendered-command-ran")
+    const project = join(home, "project")
+    mkdirSync(project, { recursive: true })
+    const run = spawnSync("opencode", ["run", "--command", "adw:marker", "go"], {
+      env: { ...process.env, HOME: home, OPENCODE_CONFIG_DIR: cfg(home), OCM_MARKER: marker },
+      cwd: project,
+      encoding: "utf8",
+      timeout: 120_000,
+    })
+    // the model call is expected to fail against the dead endpoint; the !
+    // block has already run by then, so the marker is the assertion
+    if (!existsSync(marker)) {
+      throw new Error(`the ! block did not run: no marker at ${marker}; opencode run exited ${run.status}\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`)
+    }
+    expect(readFileSync(marker, "utf8")).toBe("executed\n")
+    // invariant: config safety — the user's provider keys survived the install
+    const after = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
+    expect(after.model).toBe(userConfig.model)
+    expect(after.provider).toEqual(userConfig.provider)
+  })
+  // opencode spawns: canary + error scan + config resolution + one run (see harness.mjs)
+}, 420_000)
