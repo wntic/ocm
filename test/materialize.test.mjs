@@ -919,6 +919,30 @@ test("21. a user edit to a rendered command's body is overwritten by the next ma
   })
 })
 
+test("21b. dropping the variable from a body turns the rendered file back into a symlink, without displacing ocm's own artifact (review finding)", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: { commands: { "deploy.md": ROOTED_COMMAND } } })
+    materialize(home, [["mp", mp, null]])
+    const dest = join(cfg(home), "commands", "adw:deploy.md")
+    expect(lstatSync(dest).isSymbolicLink()).toBe(false)
+
+    // the author removes the variable: this body needs no substitution, so the
+    // dest goes back to being a symlink. link() proves ownership by "symlink
+    // into a managed dir", so without the transition it would call ocm's own
+    // rendered file unmanaged — skipping it forever, and under --force moving
+    // it into the displaced cache as though it were the user's file
+    const source = join(mp, "plugins", "adw", "commands", "deploy.md")
+    writeFileSync(source, COMMAND)
+    const [report] = materialize(home, [["mp", mp, null]])
+
+    expect(lstatSync(dest).isSymbolicLink()).toBe(true)
+    expect(realpathSync(dest)).toBe(realpathSync(source))
+    const unmanaged = report.warnings.filter((w) => w.includes("not managed by ocm"))
+    if (unmanaged.length) throw new Error(`ocm called its own rendered file unmanaged:\n${unmanaged.join("\n")}`)
+    assertAbsent(join(home, ".cache", "ocm", "displaced"))
+  })
+})
+
 test("22. re-materializing one marketplace leaves another marketplace's rendered command byte-identical: not removed, not re-created", async () => {
   await withFakeHome(async (home) => {
     const rooted = (plugin) => `---\ndescription: ${plugin} helper\n---\n\npython3 "\${OCM_PLUGIN_ROOT}/plugins/${plugin}/scripts/run.sh"\n`

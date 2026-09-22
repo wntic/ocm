@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readlinkSync, rmSync, rmdirSync } 
 import { basename, dirname, join, relative } from "node:path"
 import { setSkillsPath } from "./config.js"
 import { discoverPlugins, PLUGIN_NAME_RE } from "./discovery.js"
-import { gcTargets, isRenderedFile, link, mirror, render } from "./links.js"
+import { gcTargets, isRenderedFile, isRenderedFrom, link, mirror, render } from "./links.js"
 import { pluginRefusal, refusalOutcomes } from "./gate.js"
 import { foldedComponentGroups } from "./limits.js"
 import { pluginGateFindings } from "./manifest-gate.js"
@@ -179,6 +179,17 @@ export function materialize(name, dir, options = {}) {
     return status === "created" && owned ? "ok" : status
   }
 
+  // the rendered→symlink transition, the mirror of the one above: an author
+  // who drops the variable from a body leaves a rendered file where a symlink
+  // now belongs. link() proves ownership by "is a symlink into a managed
+  // dir", so it would call ocm's own artifact unmanaged — skipping it forever
+  // without --force, and with --force moving it into the displaced cache as
+  // though it were the user's hand-written file. The marker naming this exact
+  // source is the proof, so no other marketplace's file can match.
+  const clearRendered = (dest, source) => {
+    if (isRenderedFrom(dest, source, dir)) rmSync(dest, { force: true })
+  }
+
   mkdirSync(OPENCODE_COMMANDS_DIR, { recursive: true })
   mkdirSync(OPENCODE_AGENTS_DIR, { recursive: true })
   mkdirSync(OPENCODE_PLUGINS_DIR, { recursive: true })
@@ -231,7 +242,9 @@ export function materialize(name, dir, options = {}) {
       const dest = join(OPENCODE_COMMANDS_DIR, `${plugin.name}:${file}`)
       desiredCommands.add(`${plugin.name}:${file}`)
       const warnStart = ctx.warnings.length
-      const status = renderRooted(source, dest, plugin.name) ?? link(source, dest, ctx, plugin.name, file)
+      const rendered = renderRooted(source, dest, plugin.name)
+      if (rendered === null) clearRendered(dest, source)
+      const status = rendered ?? link(source, dest, ctx, plugin.name, file)
       linkOutcome("command", plugin.name, file, source, dest, status, warnStart)
     }
     for (const file of plugin.components.agent ?? []) {
@@ -241,7 +254,9 @@ export function materialize(name, dir, options = {}) {
       const dest = join(OPENCODE_AGENTS_DIR, `${plugin.name}:${file}`)
       desiredAgents.add(`${plugin.name}:${file}`)
       const warnStart = ctx.warnings.length
-      const status = renderRooted(source, dest, plugin.name) ?? link(source, dest, ctx, plugin.name, file)
+      const rendered = renderRooted(source, dest, plugin.name)
+      if (rendered === null) clearRendered(dest, source)
+      const status = rendered ?? link(source, dest, ctx, plugin.name, file)
       linkOutcome("agent", plugin.name, file, source, dest, status, warnStart)
     }
     for (const rel of plugin.components.skill ?? []) {

@@ -53,6 +53,18 @@ function takeOver(dest, ctx, plugin) {
   return true
 }
 
+// ownership by the marker's own words: the file at `path` was rendered from
+// exactly this source. Stronger proof than "is a rendered file", and it needs
+// no registry — which matters for the rendered→symlink transition, where the
+// caller is already writing this dest for this source.
+export function isRenderedFrom(path, source, dir) {
+  try {
+    return readFileSync(path, "utf8").includes(`<!-- ${RENDERED_MARKER}${relative(dir, source)} @ `)
+  } catch {
+    return false
+  }
+}
+
 export function isRenderedFile(path) {
   try {
     return readFileSync(path, "utf8").includes(RENDERED_MARKER)
