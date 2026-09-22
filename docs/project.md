@@ -24,6 +24,7 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.5.1 | brief 35 §1, §3, §4 (docs and template only) | published 2026-09-19 |
 | v0.6.0 | briefs 27, 28, 29, 34 — write safety, platform, manifest gate, MCP shape | published 2026-09-20 |
 | v0.6.1 | brief 38 §0 — the TUI freeze at zero columns, and a stale loader after upgrade | published 2026-09-20 |
+| v0.7.0 | briefs 30, 31, 38, 39, 40, 41 — outcome-derived reports, per-root cache, renames in the loader, local changed-set, plugin-root substitution, small correctness | tagged 2026-09-22 |
 
 Rules:
 

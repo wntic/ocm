@@ -12,6 +12,21 @@ facts below are from the v1 path unless marked**, because that is what 1.18.20
 executes. Where v2 already differs, it is called out — treat those as change
 risk, not as current behaviour.
 
+## Re-verification, 2026-09-22 (v0.7.0)
+
+`./scripts/oc-probe.sh` passes against **opencode 1.18.32**: the loader and
+TUI modules load with no plugin-load errors, the canary proves the probe can
+still detect one, and installed commands, agents and skills all resolve. Every
+mechanically checkable fact below therefore still holds on 1.18.32.
+
+What has **not** been re-done is the source reading: the claims marked as
+verified by source are still from 1.18.20 @ `d6855b6`, and the v1/v2 split
+described below was true of that tree. Treat a source-only claim as
+"unchallenged since 1.18.20", not as "confirmed on 1.18.32". The two facts
+most worth re-reading when someone next has the source open are the
+`shell.env` hook's call sites (brief 41 depends on it *not* covering the
+command-template path) and the TUI dialog size API (brief 36's ceiling).
+
 Two verification methods are used below:
 
 - **source** — read in the cloned repo at the cited path.

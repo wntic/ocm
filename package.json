@@ -1,6 +1,6 @@
 {
   "name": "@wntic/ocm",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "File-based plugin marketplace for opencode: skills, agents, commands distributed via git repos",
   "type": "module",
   "bin": {
