@@ -7,7 +7,7 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, opencodeProbe, withFakeHome } from "./harness.mjs"
+import { assertAbsent, opencodeProbe, rootCacheDir, withFakeHome } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -52,7 +52,7 @@ function writeTree(dir, tree) {
 
 const cfg = (home) => join(home, ".config", "opencode")
 
-const skillsLinks = (home) => join(home, ".cache", "ocm", "links", "mp", "skills")
+const skillsLinks = (home) => join(rootCacheDir(home), "links", "mp", "skills")
 
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 
@@ -93,7 +93,7 @@ const registryFile = (home) => join(cfg(home), "ocm", "registry.json")
 
 const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8"))
 
-const cloneDir = (home, name) => join(home, ".cache", "ocm", "marketplaces", name)
+const cloneDir = (home, name) => join(rootCacheDir(home), "marketplaces", name)
 
 // failing with the whole report in the message beats failing on
 // "cannot read .map of undefined" when the outcome record is absent

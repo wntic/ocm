@@ -205,8 +205,8 @@ export function removeMarketplace(name) {
   // a consumed record is pruned so a later teardown stops re-reporting it
   const { lines: restore, resolved } = restoreDisplaced({ marketplace: name })
   if (resolved) writeJsonAtomic(DISPLACED_RECORD_FILE, `${JSON.stringify(resolved, null, 2)}\n`)
-  const skillsWarning = setSkillsPath(join(LINKS_DIR, name, "skills"), false)
-  if (skillsWarning) warnings.push(skillsWarning)
+  const skills = setSkillsPath(join(LINKS_DIR, name, "skills"), false)
+  if (skills.state === "skipped" || skills.state === "failed") warnings.push(skills.reason)
   // collision records never materialized, so their mcp keys are not ours to
   // drop; a disabled record's keys came down when it was disabled — after a
   // spec 18 takeover they belong to the name's new owner, not to us

@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, rootCacheDir, withFakeHome } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -51,7 +51,7 @@ const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8
 
 const commandLink = (home, plugin, file) => join(cfg(home), "commands", `${plugin}:${file}`)
 
-const skillMirror = (home, mp, plugin) => join(home, ".cache", "ocm", "links", mp, "skills", `${plugin}--python-style`)
+const skillMirror = (home, mp, plugin) => join(rootCacheDir(home), "links", mp, "skills", `${plugin}--python-style`)
 
 const mcpKeys = (home) => {
   try {
@@ -452,7 +452,7 @@ phase("2. marketplace add through the core registers and materializes, and refus
   expect(readRegistry(home).marketplaces["mp-b"]).toBeUndefined()
   expect(readFileSync(registryFile(home), "utf8")).toBe(bytes) // the refusal wrote nothing
   assertAbsent(commandLink(home, "adw", "deploy.md"))
-  assertAbsent(join(home, ".cache", "ocm", "links", "mp-b"))
+  assertAbsent(join(rootCacheDir(home), "links", "mp-b"))
 })
 
 phase("3. remove through the core leaves zero ocm-- traces, no links, no skills.paths entry, no registry record — and keeps a local marketplace's directory", async (home) => {
@@ -474,7 +474,7 @@ phase("3. remove through the core leaves zero ocm-- traces, no links, no skills.
   const mp = join(home, "mp")
   writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
   expect(ocm(home, "add", mp).status).toBe(0)
-  const skillsEntry = join(home, ".cache", "ocm", "links", "mp", "skills")
+  const skillsEntry = join(rootCacheDir(home), "links", "mp", "skills")
   expect(JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8")).skills.paths).toContain(skillsEntry)
 
   coreOk(home, [{ fn: "removeMarketplace", args: ["mp"] }])
@@ -484,7 +484,7 @@ phase("3. remove through the core leaves zero ocm-- traces, no links, no skills.
   expect(after.skills.paths).toEqual(["/users/me/my-skills"]) // no entry for mp
   expect(after.model).toBe("claude-sonnet-4-6")
   assertAbsent(commandLink(home, "adw", "commit.md"))
-  assertAbsent(join(home, ".cache", "ocm", "links", "mp"))
+  assertAbsent(join(rootCacheDir(home), "links", "mp"))
   expect(readRegistry(home).marketplaces.mp).toBeUndefined()
   assertFileExists(join(mp, "plugins", "adw", "commands", "commit.md")) // a local dir is the user's
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
@@ -506,7 +506,7 @@ phase("4. trust grant/deny/revoke and pin through the core update the registry a
   // spawned stdio is not a TTY: add leaves trust undecided and the
   // executable components blocked
   expect(ocm(home, "add", `file://${remote}`, "--name", "mp").status).toBe(0)
-  const clone = join(home, ".cache", "ocm", "marketplaces", "mp")
+  const clone = join(rootCacheDir(home), "marketplaces", "mp")
   const notifyLink = join(cfg(home), "plugins", "ocm--tool--notify.js")
   const workLink = () => assertResolves(commandLink(home, "tool", "work.md"), join(clone, "plugins", "tool", "commands", "work.md"))
 
@@ -704,7 +704,7 @@ phase("4. a recorded fake api drives main menu → browse → per-plugin menu �
   expect(adw.enabled).toBe(true)
   expect(typeof adw.installedAt).toBe("string")
   assertResolves(commandLink(home, "adw", "commit.md"), join(mp, "plugins", "adw", "commands", "commit.md"))
-  expect(lstatSync(join(home, ".cache", "ocm", "links", "mp", "skills", "adw--python-style")).isDirectory()).toBe(true)
+  expect(lstatSync(join(rootCacheDir(home), "links", "mp", "skills", "adw--python-style")).isDirectory()).toBe(true)
   assertResolves(commandLink(home, "beta", "lint.md"), join(mp, "plugins", "beta", "commands", "lint.md"))
   expect(rec.toasts.some((t) => t.message.includes("adw"))).toBe(true)
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
@@ -734,7 +734,7 @@ phase("5. failure paths: unreachable marketplace on update, plugin-name collisio
   } } })
   expect(cli(home, "add", `file://${remote}`, "--name", "gitmp").status).toBe(0)
   expect(cli(home, "uninstall", "tool").status).toBe(0) // the per-plugin menu must offer Install
-  const clone = join(home, ".cache", "ocm", "marketplaces", "gitmp")
+  const clone = join(rootCacheDir(home), "marketplaces", "gitmp")
   const notifyLink = join(cfg(home), "plugins", "ocm--tool--notify.js")
 
   const mpA = join(home, "mp-a")
@@ -770,7 +770,7 @@ phase("5. failure paths: unreachable marketplace on update, plugin-name collisio
   }
   expect(readRegistry(home).marketplaces["mp-b"]).toBeUndefined()
   expect(readFileSync(registryFile(home), "utf8")).toBe(bytes) // the refusal wrote nothing
-  assertAbsent(join(home, ".cache", "ocm", "links", "mp-b"))
+  assertAbsent(join(rootCacheDir(home), "links", "mp-b"))
 
   // blocked components on install, then the Trust route out of the block
   const blocked = uiDrive(home, [
@@ -837,7 +837,7 @@ phase("6. every mutation path ends by emitting the restart notice; an unchanged 
   expect(hasNotice(remove)).toBe(true)
   expect(confirmText(remove)).toContain("fresh") // the confirmation shows what will be removed
   expect(readRegistry(home).marketplaces.mpx).toBeUndefined()
-  assertAbsent(join(home, ".cache", "ocm", "links", "mpx"))
+  assertAbsent(join(rootCacheDir(home), "links", "mpx"))
 
   const trust = uiDrive(home, [{ select: "Marketplaces" }, { select: "gitmp" }, { select: "Trust" }, { confirm: true }])
   expect(hasNotice(trust)).toBe(true)

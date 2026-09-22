@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, opencodeProbe, withFakeHome, withFakeOpencode } from "./harness.mjs"
+import { assertAbsent, opencodeProbe, rootCacheDir, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -62,11 +62,11 @@ function editRegistry(home, edit) {
   writeFileSync(registryFile(home), `${JSON.stringify(registry, null, 2)}\n`)
 }
 
-const cloneDir = (home, name = "mp") => join(home, ".cache", "ocm", "marketplaces", name)
+const cloneDir = (home, name = "mp") => join(rootCacheDir(home), "marketplaces", name)
 
 const commandLink = (home, plugin, file) => join(cfg(home), "commands", `${plugin}:${file}`)
 
-const skillMirror = (home, plugin) => join(home, ".cache", "ocm", "links", "mp", "skills", `${plugin}--python-style`)
+const skillMirror = (home, plugin) => join(rootCacheDir(home), "links", "mp", "skills", `${plugin}--python-style`)
 
 const mcpKeys = (home) => {
   try {
@@ -812,7 +812,7 @@ function preGateGitHome(home) {
     },
   })
   const dir = cloneDir(home)
-  mkdirSync(join(home, ".cache", "ocm", "marketplaces"), { recursive: true })
+  mkdirSync(join(rootCacheDir(home), "marketplaces"), { recursive: true })
   git(home, ["clone", `file://${remote}`, dir])
   const at = "2026-01-01T00:00:00.000Z"
   mkdirSync(join(cfg(home), "ocm"), { recursive: true })
@@ -1285,7 +1285,7 @@ phase("10. a skill that loses its frontmatter name between two updates is skippe
   if (JSON.stringify(skillsAfter) !== JSON.stringify(skillsBefore)) {
     throw new Error(`the update must leave .skills.paths in ${config} untouched: before ${JSON.stringify(skillsBefore)}, after ${JSON.stringify(skillsAfter)}`)
   }
-  assertAbsent(join(home, ".cache", "ocm", "links", "mp", "skills", "adw--notes"))
+  assertAbsent(join(rootCacheDir(home), "links", "mp", "skills", "adw--notes"))
   if (noticeCount(output) !== 1) {
     throw new Error(`the mirror removal must fire the restart notice exactly once:\n${output}`)
   }

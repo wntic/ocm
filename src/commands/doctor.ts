@@ -7,10 +7,10 @@ import { componentRoot, isGitRepo, readRegistry, registryWriterVersion, versionC
 import type { CoreRegistry } from "../../loader/core.js"
 import { installLoader, loaderStatus, packageVersion, reportTuiPlugin, type LoaderFileStatus } from "../loader"
 import { materializeLinks } from "../install"
-import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OCM_REGISTRY_FILE } from "../paths"
+import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OCM_REGISTRY_FILE, OCM_ROOT_CACHE_DIR, OCM_ROOT_SLUG } from "../paths"
 import { error, fixed, reportFindings, warning, type Finding } from "../findings"
 import { ocmPluginErrors } from "../probe"
-import { strandedMessage, strandedRoots } from "../stranded"
+import { relativeXdgWarning, strandedMessage, strandedRoots } from "../stranded"
 import { checkConfig } from "./doctor-config"
 import { checkBrokenLinks, checkFoldedRecords, checkForbiddenPaths, checkMaterialized, checkStaleRecords } from "./doctor-links"
 import { checkDisplaced, checkOrphanMirrors, checkStrays } from "./doctor-orphans"
@@ -18,15 +18,6 @@ import { recloneMarketplace } from "./update"
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
-}
-
-// brief 28 §1 edge case: a relative XDG_CONFIG_HOME makes the install move
-// with the cwd — warn rather than silently resolving it, because an install
-// that moves is not an install
-function relativeXdgWarning(): string | null {
-  const xdg = process.env.XDG_CONFIG_HOME
-  if (!xdg || xdg.startsWith("/")) return null
-  return "XDG_CONFIG_HOME is relative — every ocm command run from a different directory sees a different install; set it to an absolute path"
 }
 
 export function doctor(fix: boolean): void {
@@ -52,6 +43,8 @@ export function doctor(fix: boolean): void {
   checkWriterVersion(findings)
   checkGitPath(findings)
   checkLoader(findings, fix)
+  // brief 38: name the cache namespace so a user can find their own
+  console.log(`  cache   ${OCM_ROOT_SLUG} (${OCM_ROOT_CACHE_DIR})`)
   // a registry that cannot be honored must never be read as "nothing owns
   // these files": the stray and MCP fixes stay report-only until it is
   // fixed, or --fix would uninstall everything at once

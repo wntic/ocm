@@ -367,6 +367,11 @@ re-installing is instant and offline.
   pid. The loader's startup sync never waits — it skips entirely and stays
   due for the next start. A lock whose holder is gone, older than 10
   minutes, or unreadable is broken with a warning.
+- **The cache is namespaced per config root.** Clones, skill link trees and
+  displaced originals live under `~/.cache/ocm/roots/<slug>/`, one namespace
+  per config root (`ocm doctor` prints the slug), so two config roots
+  referencing the same marketplace never interact — at the cost of one clone
+  per root per marketplace. `roots.json` and the sync stamp stay global.
 
 ## Platform
 

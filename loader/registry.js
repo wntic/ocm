@@ -43,7 +43,9 @@ export function normalizeRegistry(raw) {
     marketplaces[name] = {
       url: typeof entry.url === "string" ? entry.url : "",
       dir,
-      local: !dir.startsWith(MARKETPLACES_DIR),
+      // v1 registries predate the per-root namespace: their managed clones
+      // sit at the old layout, which still counts as ocm's
+      local: !(dir.startsWith(MARKETPLACES_DIR) || dir.startsWith(join(CACHE_DIR, "marketplaces"))),
       addedAt,
       mode: "auto",
       ref: null,

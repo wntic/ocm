@@ -84,10 +84,22 @@ export function strandedMessage(stranded: StrandedRoot): string {
 
 // brief 28 §2.3: the mutating commands warn once before proceeding — the
 // mutation is never refused. Only when the active root holds no registry:
-// two live installs are a user decision, not a stranding.
-export function reportStrandedNotice(): void {
-  if (existsSync(OCM_REGISTRY_FILE)) return
+// two live installs are a user decision, not a stranding. Returns whether
+// the notice printed, so read-only commands can drop hints it contradicts.
+export function reportStrandedNotice(): boolean {
+  if (existsSync(OCM_REGISTRY_FILE)) return false
   const first = strandedRoots()[0]
-  if (!first) return
+  if (!first) return false
   console.error(`warning: an ocm install is stranded in another config root\n${stateLines(first)}`)
+  return true
+}
+
+// brief 28 §1 edge case: a relative XDG_CONFIG_HOME makes the install move
+// with the cwd — warn rather than silently resolving it, because an install
+// that moves is not an install. Brief 38 §3: the warning lives at the write
+// boundary, not only in doctor
+export function relativeXdgWarning(): string | null {
+  const xdg = process.env.XDG_CONFIG_HOME
+  if (!xdg || xdg.startsWith("/")) return null
+  return "XDG_CONFIG_HOME is relative — every ocm command run from a different directory sees a different install; set it to an absolute path"
 }

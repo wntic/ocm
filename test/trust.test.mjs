@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, withFakeHome, assertFileExists, withFakeOpencode } from "./harness.mjs"
+import { assertAbsent, rootCacheDir, withFakeHome, assertFileExists, withFakeOpencode } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -43,7 +43,7 @@ const pluginLink = (home, plugin = "adw", file = "notify.js") => join(cfg(home),
 
 const commandLink = (home, plugin = "adw") => join(cfg(home), "commands", `${plugin}:commit.md`)
 
-const skillMirror = (home, mp = "mp", plugin = "adw") => join(home, ".cache", "ocm", "links", mp, "skills", `${plugin}--python-style`)
+const skillMirror = (home, mp = "mp", plugin = "adw") => join(rootCacheDir(home), "links", mp, "skills", `${plugin}--python-style`)
 
 const mcpKeys = (home) => { try { return JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8")).mcp ?? {} } catch { return {} } }
 
@@ -84,7 +84,7 @@ const commitAll = (dir, msg) => { git(dir, ["add", "-A"]); git(dir, ["-c", "user
 
 const gitRepo = (dir, tree) => { writeTree(dir, tree); git(dir, ["init", "-b", "main"]); commitAll(dir, "fixture") }
 
-const cloneDir = (home, name = "mp") => join(home, ".cache", "ocm", "marketplaces", name)
+const cloneDir = (home, name = "mp") => join(rootCacheDir(home), "marketplaces", name)
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`
 

@@ -127,8 +127,13 @@ export function checkMaterialized(registry: CoreRegistry, findings: Finding[], f
       findings.push(error(`marketplace "${name}": ${missing} materialized component(s) missing (ocm update)`))
       continue
     }
-    materializeLinks(name, entry)
-    findings.push(fixed(`marketplace "${name}": re-materialized ${missing} component(s) (restart opencode to activate)`))
+    // brief 38 §2: the count comes from what the materializer did, not from
+    // the pre-state — a skipped outcome is a warning, not a write
+    const report = materializeLinks(name, entry)
+    const created = report.outcomes.filter((outcome) => outcome.state === "created").length
+    if (created > 0) {
+      findings.push(fixed(`marketplace "${name}": re-materialized ${created} component(s) (restart opencode to activate)`))
+    }
   }
 }
 

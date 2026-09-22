@@ -20,7 +20,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, withFakeHome, withFakeOpencode } from "./harness.mjs"
+import { assertAbsent, rootCacheDir, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
 const OCM_BIN = fileURLToPath(new URL("../bin/ocm.ts", import.meta.url))
 
@@ -55,9 +55,9 @@ const LINT = "---\ndescription: my own lint\n---\n\nMy hand-written lint.\n"
 
 const USER_CONFIG = json({ model: "claude-sonnet-4-6" })
 
-const recordsFile = (home) => join(home, ".cache", "ocm", "displaced-records.json")
+const recordsFile = (home) => join(rootCacheDir(home), "displaced-records.json")
 
-const displacedRoot = (home) => join(home, ".cache", "ocm", "displaced")
+const displacedRoot = (home) => join(rootCacheDir(home), "displaced")
 
 function walkPaths(dir) {
   if (!existsSync(dir)) return []
@@ -744,7 +744,7 @@ phase("an update past a blocked mcp change and an untrust keep the user's config
   }
   const updated = run(["update", "mp"])
   if (updated.status !== 0) throw new Error(`ocm update exited ${updated.status} — a blocked executable change must not fail the update:\n${updated.output}`)
-  const skillsLinks = join(home, ".cache", "ocm", "links", "mp", "skills")
+  const skillsLinks = join(rootCacheDir(home), "links", "mp", "skills")
   assertAbsent(join(skillsLinks, "adw--broken")) // a nameless skill never materializes
   expect(lstatSync(join(skillsLinks, "adw--style")).isDirectory()).toBe(true)
   const record = JSON.parse(readFileSync(registryFile(home), "utf8")).marketplaces.mp.plugins.adw

@@ -2,6 +2,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { OPENCODE_CONFIG_FILE, OPENCODE_DIR } from "./paths.js"
 import { isRecord } from "./registry.js"
 
+// brief 38 §2: the outcome says what this run did — "wrote" only when the
+// config was actually written, so no caller can claim a fix it did not make
 export function setSkillsPath(skillsDir, present) {
   let config = {}
   let raw
@@ -12,19 +14,19 @@ export function setSkillsPath(skillsDir, present) {
     try {
       config = JSON.parse(raw)
     } catch {
-      return `skipped ${OPENCODE_CONFIG_FILE}: not valid JSON, left untouched`
+      return { state: "skipped", reason: `skipped ${OPENCODE_CONFIG_FILE}: not valid JSON, left untouched` }
     }
   }
-  if (!isRecord(config)) return `skipped ${OPENCODE_CONFIG_FILE}: not a JSON object`
+  if (!isRecord(config)) return { state: "skipped", reason: `skipped ${OPENCODE_CONFIG_FILE}: not a JSON object` }
   if (config.skills !== undefined && !isRecord(config.skills)) {
-    return `skipped ${OPENCODE_CONFIG_FILE}: "skills" is not an object`
+    return { state: "skipped", reason: `skipped ${OPENCODE_CONFIG_FILE}: "skills" is not an object` }
   }
   const skills = isRecord(config.skills) ? config.skills : {}
   if (skills.paths !== undefined && !Array.isArray(skills.paths)) {
-    return `skipped ${OPENCODE_CONFIG_FILE}: "skills.paths" is not an array`
+    return { state: "skipped", reason: `skipped ${OPENCODE_CONFIG_FILE}: "skills.paths" is not an array` }
   }
   const paths = Array.isArray(skills.paths) ? skills.paths : []
-  if (paths.includes(skillsDir) === present) return null
+  if (paths.includes(skillsDir) === present) return { state: "noop", reason: null }
   const next = present ? [...paths, skillsDir] : paths.filter((p) => p !== skillsDir)
   const updated = { ...config }
   if (present || next.length) {
@@ -41,7 +43,7 @@ export function setSkillsPath(skillsDir, present) {
     writeFileSync(tmp, `${JSON.stringify(updated, null, 2)}\n`)
     renameSync(tmp, OPENCODE_CONFIG_FILE)
   } catch (err) {
-    return `failed ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}`
+    return { state: "failed", reason: `failed ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}` }
   }
-  return null
+  return { state: "wrote", reason: null }
 }
