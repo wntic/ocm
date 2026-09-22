@@ -10,6 +10,7 @@ import { pluginGateFindings } from "./manifest-gate.js"
 import { syncMcp } from "./mcp.js"
 import { LINKS_DIR, DISPLACED_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "./paths.js"
 import { readRegistry, isRecord } from "./registry.js"
+import { refusalAliases } from "./renames.js"
 import { approvedComponents, componentKey } from "./trust.js"
 
 function managedDirs(dir, registry) {
@@ -96,9 +97,12 @@ export function materialize(name, dir, options = {}) {
   // brief 31 §2: source paths that changed in this pass; a current outcome
   // for one of them is reported as refreshed
   const changed = options.changed ?? null
-  // brief 31 §5: discovered name → kept name for a refused rename; the
-  // whole run — dests, desired sets, outcomes — sees the kept name
-  const aliases = options.aliases ?? null
+  // brief 31 §5 / brief 40: discovered name → kept name for a refused
+  // rename; the whole run — dests, desired sets, outcomes — sees the kept
+  // name. The registry's recorded refusals are the source of truth, so a
+  // caller with no rename knowledge keeps the plugin under its old name
+  const aliases = refusalAliases(entry)
+  if (options.aliases) for (const [to, from] of options.aliases) aliases.set(to, from)
   const skillsDir = join(LINKS_DIR, name, "skills")
   const desiredCommands = new Set()
   const desiredAgents = new Set()
@@ -132,7 +136,7 @@ export function materialize(name, dir, options = {}) {
   // plugin to the name its record kept, so every dest and outcome below
   // uses it
   const active = (only === null ? discovered : discovered.filter((plugin) => plugin.name === only))
-    .map((plugin) => (aliases !== null && aliases.has(plugin.name) ? { ...plugin, name: aliases.get(plugin.name) } : plugin))
+    .map((plugin) => (aliases.has(plugin.name) ? { ...plugin, name: aliases.get(plugin.name) } : plugin))
   // the setSkillsPath decision keeps today's meaning: desired skills whose
   // render succeeded, not the shim's derived counts.skill — a skill skipped
   // by an unowned dest must still keep the skills path registered

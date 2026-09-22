@@ -19,8 +19,13 @@ permission:
     "docs/**": allow
   bash:
     "*": deny
-    "bun*": allow
+    # narrow, because `bun -e` runs arbitrary code and would route around
+    # every line below it — a brief-40 run deleted a file that way
+    "bun test*": allow
+    "bun bin/ocm.ts*": allow
     "bunx tsc*": allow
+    # deleting a tracked file goes through git, where it is auditable
+    "git rm*": allow
     "./scripts/*": allow
     "ls*": allow
     "cat*": allow
@@ -67,6 +72,11 @@ Load the skills that apply:
   instruction that cannot be satisfied — **stop and return it as a finding**,
   stating the options and which you would pick. Your parent relays it to the
   lead, which is the only agent a human can see.
+
+- **Never route around a permission.** `bun -e`, a shell one-liner, a helper
+  script — if the harness denied it, the answer is to report it, not to find
+  another door. An allowlist that can be walked around protects nobody, and
+  the report is how a real gap gets fixed.
 
 - **You cannot edit `test/`, `scripts/` or `.opencode/`.** The first is the
   check you are judged by; the second is the gate that runs it; the third is

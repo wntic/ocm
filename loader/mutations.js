@@ -135,8 +135,11 @@ export function grantTrust(name) {
   if (!components.length) return { granted: false, report: null, wasV1: false }
   // spec 20: a grant materializes links, so the records behind those links
   // are refreshed first — otherwise doctor reads the new links as unowned
-  const { registrable } = reconcilePluginRecords(registry, name, root)
+  const { registrable, kept } = reconcilePluginRecords(registry, name, root)
   registerPlugins(registry, name, registrable)
+  // registration replaces the plugins map wholesale, so the records a
+  // refused rename kept go back after it
+  Object.assign(entry.plugins, kept)
   grantEntry(entry, components)
   saveRegistry(registry)
   const report = materialize(name, root, { enabled: enabledPlugins(entry, root) })

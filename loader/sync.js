@@ -4,10 +4,12 @@ import { writeJsonAtomic } from "./atomic.js"
 import { git, isGitRepo, treePluginFiles } from "./git.js"
 import { treeFoldRefusal } from "./limits.js"
 import { tryRegistryLock } from "./lock.js"
-import { deriveComponents } from "./marketplace.js"
+import { deriveComponents, registerPlugins } from "./marketplace.js"
+import { discoverMarketplace } from "./manifest.js"
 import { removeMcpKeys } from "./mcp.js"
 import { enabledPlugins, materialize } from "./materialize.js"
 import { reconcilePluginRecords } from "./reconcile.js"
+import { readRenames, resolveChains } from "./renames.js"
 import { DEFAULT_SYNC_INTERVAL_MS, REGISTRY_FILE, STAMP_FILE } from "./paths.js"
 import { isRecord, markTrustPending, ocmSelfVersion, readRegistry, registryWriterVersion, saveRegistryIfChanged, versionCompare } from "./registry.js"
 import { executableComponents, trustFingerprint } from "./trust.js"
@@ -80,21 +82,45 @@ function recordSync(name, value, revision) {
   } catch {}
 }
 
+// brief 40: the rename half of record reconciliation, before materialize —
+// the materializer reads the registry from disk, so a migrated record must
+// be saved before links are made. The record itself migrates inside
+// reconcilePluginRecords; this half registers, saves and drops the old
+// name's mcp keys, exactly as `ocm update` does. The raw file is mutated in
+// place, never migrated, so unknown fields survive.
+function prepareRecords(name, root) {
+  try {
+    const raw = JSON.parse(readFileSync(REGISTRY_FILE, "utf8"))
+    if (!isRecord(raw) || raw.version !== 2 || !isRecord(raw.marketplaces?.[name])) return null
+    const plugins = [...discoverMarketplace(root).plugins.values()]
+    const { resolved, cycles } = resolveChains(readRenames(root, plugins))
+    const { pruned, removed, renamed, kept, registrable } = reconcilePluginRecords(raw, name, root, { discovered: plugins, resolved })
+    registerPlugins(raw, name, registrable)
+    // registration replaces the plugins map wholesale, so the records a
+    // refused rename kept go back after it
+    Object.assign(raw.marketplaces[name].plugins, kept)
+    saveRegistryIfChanged(raw)
+    removeMcpKeys([...removed, ...renamed.map((rename) => rename.from), ...pruned])
+    return {
+      entry: raw.marketplaces[name],
+      warnings: cycles.map((cycle) => `rename cycle ignored: ${cycle.join(" → ")} → ${cycle[0]}`),
+    }
+  } catch {
+    return null
+  }
+}
+
 // spec 20: the sync path refreshes per-plugin component records after every
-// pull, exactly as the CLI update does — register, then derive from the
-// outcomes the pass above already produced, so the loader and the CLI write
-// the same record for the same disk (brief 31 §3). It runs after
-// materialize — the materializer's inputs are computed from the pre-pull
-// records — and writes only when the canonical content changed, so an
-// unchanged pull leaves the registry byte-identical. The raw file is mutated
-// in place, never migrated, so unknown fields survive.
-function refreshRecords(name, root, outcomes) {
+// pull, exactly as the CLI update does — derive from the outcomes the pass
+// above already produced, so the loader and the CLI write the same record
+// for the same disk (brief 31 §3). It runs after materialize and writes
+// only when the canonical content changed, so an unchanged pull leaves the
+// registry byte-identical. The raw file is mutated in place, never
+// migrated, so unknown fields survive.
+function deriveRecords(name, outcomes) {
   try {
     const raw = JSON.parse(readFileSync(REGISTRY_FILE, "utf8"))
     if (!isRecord(raw) || raw.version !== 2 || !isRecord(raw.marketplaces?.[name])) return
-    const { pruned, registrable } = reconcilePluginRecords(raw, name, root)
-    if (pruned.length) removeMcpKeys(pruned)
-    registerPlugins(raw, name, registrable)
     deriveComponents(raw, name, outcomes)
     saveRegistryIfChanged(raw)
   } catch {}
@@ -153,13 +179,17 @@ async function runSync(entries, options, result) {
     // discovery roots at the subdir when the source was a tree url (spec 05);
     // git operations above ran against the clone root
     const root = entry.subdir ? join(entry.dir, entry.subdir) : entry.dir
-    const links = materialize(name, root, { enabled: enabledPlugins(entry, root) })
+    const prepared = pulled ? prepareRecords(name, root) : null
+    const links = materialize(name, root, { enabled: enabledPlugins(prepared?.entry ?? entry, root) })
     if (links.warnings.length) result.warnings = [...(result.warnings ?? []), ...links.warnings.map((w) => `${name}: ${w}`)]
+    if (prepared?.warnings.length) result.warnings = [...(result.warnings ?? []), ...prepared.warnings.map((w) => `${name}: ${w}`)]
     // brief 31 §3: what changed is what the outcomes say moved — a pull
     // that changed nothing on disk is not a change
     if (links.outcomes.some((o) => o.state === "created" || o.state === "removed" || o.state === "refreshed")) result.changed = true
-    if (pulled) refreshRecords(name, root, links.outcomes)
-    markDriftedTrust(name, entry, root)
+    if (pulled) deriveRecords(name, links.outcomes)
+    // brief 40: the prepared entry carries a refusal recorded this pass —
+    // without it the fingerprint would be computed pre-refusal and drift
+    markDriftedTrust(name, prepared?.entry ?? entry, root)
     recordSync(name, { at: new Date().toISOString(), ok: true, error: null }, revision)
   }
   // the pre-08 global stamp is obsolete: the throttle lives in lastSync.at

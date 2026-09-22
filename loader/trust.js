@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import { discoverPlugins, mcpSourceFile, readMcpServers } from "./discovery.js"
+import { refusalAliases } from "./renames.js"
 import { isRecord } from "./registry.js"
 
 // canonical JSON: keys sorted at every level, so reordering mcp.json leaves a
@@ -32,15 +33,22 @@ function pluginFile(pluginDir, file) {
 
 // every executable component of every discovered plugin, sorted by its
 // marketplace-relative path: plugins/<p>/plugin/*.{js,ts} files and every
-// server entry in a plugin's mcp.json (spec 07)
+// server entry in a plugin's mcp.json (spec 07). Brief 40: a refused
+// rename's target reports under the kept name and path, so the fingerprint
+// matches the grant recorded before the plugin moved while a content
+// change still drifts
 export function executableComponents(dir, entry) {
+  const aliases = refusalAliases(entry)
   const components = []
-  for (const plugin of discoverPlugins(dir)) {
+  for (const discovered of discoverPlugins(dir)) {
+    const kept = aliases.get(discovered.name)
+    const plugin = kept === undefined ? discovered : { ...discovered, name: kept }
+    const rewrite = (rel) => (kept === undefined ? rel : rel.replace(`plugins/${discovered.name}/`, `plugins/${kept}/`))
     for (const file of plugin.components.plugin ?? []) {
       const source = pluginFile(plugin.dir, file)
       if (!source) continue
       components.push({
-        rel: relative(dir, source.path),
+        rel: rewrite(relative(dir, source.path)),
         hash: sha256(source.content),
         kind: "plugin",
         plugin: plugin.name,
@@ -56,7 +64,7 @@ export function executableComponents(dir, entry) {
       // sit in the fingerprint (brief 34 §1.1 — the readers agree)
       if (server === "$schema") continue
       components.push({
-        rel: `${relative(dir, mcpFile)}:${server}`,
+        rel: rewrite(`${relative(dir, mcpFile)}:${server}`),
         hash: sha256(canonicalJson(value)),
         kind: "mcp",
         plugin: plugin.name,

@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs"
-import { basename } from "node:path"
+import { basename, relative } from "node:path"
+import { incumbentMarketplace } from "./collisions.js"
 import { discoverPlugins } from "./discovery.js"
 import { discoverMarketplace } from "./manifest.js"
 import { pluginGateFindings } from "./manifest-gate.js"
 import { foldedDirPairs, pluginLimitViolation } from "./limits.js"
+import { isRecord } from "./registry.js"
 
 // spec 20: one reconciliation of the per-plugin records after a pull or a
 // trust grant — the CLI update path and the loader's sync converge here
@@ -15,17 +17,70 @@ export function reconcilePluginRecords(registry, name, root, options = {}) {
   const warnings = []
   const pruned = []
   const dropped = []
-  if (!entry || !existsSync(root)) return { warnings, pruned, dropped, registrable: [] }
+  const renamed = []
+  const removed = []
+  const refused = []
+  const kept = {}
+  if (!entry || !existsSync(root)) return { warnings, pruned, dropped, renamed, removed, refused, kept, registrable: [] }
   const plugins = [...(options.discovered ?? discoverMarketplace(root).plugins.values())]
   const shipped = new Set(plugins.map((plugin) => plugin.name))
   const resolved = options.resolved ?? {}
+  // brief 40: a recorded refusal is state — it protects the kept record from
+  // the prune and its target from registration. A caller that read the
+  // manifest's renames clears a record that no longer matches it; one that
+  // passed no renames (a trust grant) did not, so the recorded state stands
+  const refusals = isRecord(entry.refusedRenames) ? entry.refusedRenames : {}
+  if (options.resolved !== undefined) {
+    for (const [from, to] of Object.entries(refusals)) {
+      if (resolved[from] !== to || !entry.plugins[from]) delete refusals[from]
+    }
+  }
+  // brief 40: renames apply before absence is decided, so the prune below
+  // never sees a name that migrated away. A target another marketplace
+  // provides is refused: the record stays under its old name and the
+  // refusal is recorded on the entry
+  for (const [from, to] of Object.entries(resolved)) {
+    const record = entry.plugins[from]
+    if (!record) continue
+    if (to === null) {
+      delete entry.plugins[from]
+      removed.push(from)
+      continue
+    }
+    const incumbent = incumbentMarketplace(registry, name, to)
+    if (incumbent) {
+      refusals[from] = to
+      const dir = plugins.find((plugin) => plugin.name === to)?.dir ?? null
+      // the record's source follows the disk so doctor's legacy check sees
+      // a real directory
+      if (dir !== null) record.source = relative(root, dir)
+      refused.push({ from, to, incumbent, dir })
+      continue
+    }
+    // the target is not shipped (yet): the record dangles rather than moves
+    if (!shipped.has(to)) continue
+    entry.plugins[to] = record
+    delete entry.plugins[from]
+    delete refusals[from]
+    renamed.push({ from, to })
+  }
+  // derived from the final refusal state, so a refusal that cleared this
+  // run — the incumbent went away — registers its target again
+  const excluded = new Set(Object.values(refusals))
+  // registration replaces the plugins map wholesale, so the caller re-adds
+  // these after it
+  for (const from of Object.keys(refusals)) {
+    if (entry.plugins[from]) kept[from] = entry.plugins[from]
+  }
   for (const pluginName of Object.keys(entry.plugins)) {
-    if (!shipped.has(pluginName) && !(pluginName in resolved)) {
+    if (!shipped.has(pluginName) && !(pluginName in resolved) && !(pluginName in refusals)) {
       delete entry.plugins[pluginName]
       pruned.push(pluginName)
     }
   }
-  let registrable = plugins.filter((candidate) => !(options.excluded ?? new Set()).has(candidate.name))
+  if (Object.keys(refusals).length) entry.refusedRenames = refusals
+  else delete entry.refusedRenames
+  let registrable = plugins.filter((candidate) => !excluded.has(candidate.name))
   // spec 17: an upstream name that breaks a length limit skips that plugin;
   // the rest of the update proceeds. The warning is the materializer's — it
   // emits one skipped outcome per component (brief 31 §4), and every caller
@@ -79,5 +134,5 @@ export function reconcilePluginRecords(registry, name, root, options = {}) {
     }
     return false
   })
-  return { warnings, pruned, dropped, registrable }
+  return { warnings, pruned, dropped, renamed, removed, refused, kept, registrable }
 }

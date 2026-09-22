@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { dirClashes, discoverPlugins } from "./discovery.js"
 import { isRecord } from "./registry.js"
 
-function readJsonRecord(file) {
+export function readJsonRecord(file) {
   if (!existsSync(file)) return undefined
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8"))
