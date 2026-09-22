@@ -2,11 +2,11 @@
 // plugin-name collisions, displaced originals.
 
 import { spawnSync, spawn } from "node:child_process"
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, mkdtempSync, readlinkSync } from "node:fs"
-import { join, relative } from "node:path"
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, mkdtempSync, readlinkSync } from "node:fs"
+import { basename, join, relative } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, opencodeProbe, withFakeHome, withFakeOpencode } from "./harness.mjs"
+import { assertAbsent, assertFileExists, opencodeProbe, rootCacheDir, withFakeHome, withFakeOpencode } from "./harness.mjs"
 import http from "node:http"
 import { tmpdir } from "node:os"
 
@@ -35,7 +35,7 @@ const registryFile = (home) => join(cfg(home), "ocm", "registry.json")
 
 const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8"))
 
-const skillsLinks = (home) => join(home, ".cache", "ocm", "links", "mp", "skills")
+const skillsLinks = (home) => join(rootCacheDir(home), "links", "mp", "skills")
 
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 
@@ -93,7 +93,7 @@ const MCP = json({ db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], 
 
 const configFile = (home) => join(cfg(home), "opencode.json")
 
-const displacedRoot = (home) => join(home, ".cache", "ocm", "displaced")
+const displacedRoot = (home) => join(rootCacheDir(home), "displaced")
 
 function lineWith(output, word) {
   const line = output.split("\n").find((l) => l.includes(word))
@@ -217,7 +217,7 @@ phase("5. install --force displaces an unowned file into ~/.cache/ocm/displaced/
   assertResolves(commandDest, join(mp, "plugins", "adw", "commands", "commit.md"))
   assertResolves(agentDest, join(mp, "plugins", "adw", "agents", "reviewer.md"))
   // the displaced files are moved, not deleted, and the path is printed
-  const files = walkPaths(join(home, ".cache", "ocm", "displaced")).filter((p) => lstatSync(p).isFile())
+  const files = walkPaths(displacedRoot(home)).filter((p) => lstatSync(p).isFile())
   expect(files.map((p) => readFileSync(p, "utf8")).sort()).toEqual(["# my own commit command\n", "# my own reviewer\n"])
   for (const needle of ["displaced", "adw:commit.md"]) expect(`${forced.stdout}\n${forced.stderr}`).toContain(needle)
 })
@@ -236,7 +236,7 @@ phase("6. ocm remove leaves zero ocm-- traces in opencode.json, no links, no ski
   expect(after.skills.paths).toEqual(["/users/me/my-skills"]) // no entry for mp
   expect(after.model).toBe("claude-sonnet-4-6")
   for (const gone of [join(cfg(home), "commands", "adw:commit.md"), join(cfg(home), "commands", "beta:lint.md"),
-    join(home, ".cache", "ocm", "links", "mp")]) assertAbsent(gone)
+    join(rootCacheDir(home), "links", "mp")]) assertAbsent(gone)
   expect(readRegistry(home).marketplaces.mp).toBeUndefined()
   assertFileExists(join(mp, "plugins", "adw", "commands", "commit.md")) // a local dir is the user's
 })
@@ -253,7 +253,7 @@ phase("7. scan of a URL leaves no temp directory and no registry change", async 
   expect(scanned.stdout).toContain("adw") // reports what would be installed
   // never modifies the registry, never writes outside its temp directory
   assertAbsent(registryFile(home))
-  assertAbsent(join(home, ".cache", "ocm", "marketplaces"))
+  assertAbsent(join(rootCacheDir(home), "marketplaces"))
   expect(walkPaths(join(home, ".cache")).filter((p) => p.includes(".scan-"))).toEqual([])
 })
 
@@ -374,7 +374,7 @@ function snapTree(dir) {
   }
   return out
 }
-const snapOutput = (home) => [join(home, ".cache", "ocm", "links"), join(cfg(home), "commands"), join(cfg(home), "agents"), join(cfg(home), "plugins")].map(snapTree).join("--\n")
+const snapOutput = (home) => [join(rootCacheDir(home), "links"), join(cfg(home), "commands"), join(cfg(home), "agents"), join(cfg(home), "plugins")].map(snapTree).join("--\n")
 
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 const SKILL = "---\nname: python-style\ndescription: Python style guidance\n---\n\n# Python style\n\nUse ruff.\n"
@@ -390,7 +390,7 @@ phase("1. a relative path from $HOME installs live links and survives ocm update
   const entry = readRegistry(home).marketplaces.mp
   if (entry.dir !== real) throw new Error(`expected mp.dir to hold the absolute real path ${real} in ${registryFile(home)}, got ${entry.dir}`)
   assertResolves(commandLink(home), join(mp, "plugins", "adw", "commands", "commit.md"))
-  assertFileExists(join(home, ".cache", "ocm", "links", "mp", "skills", "adw--python-style", "SKILL.md"))
+  assertFileExists(join(rootCacheDir(home), "links", "mp", "skills", "adw--python-style", "SKILL.md"))
   const updated = ocm(home, ["update"], { cwd: tmpdir() })
   if (updated.status !== 0) throw new Error(`ocm update from ${tmpdir()} exited ${updated.status}: ${updated.output}`)
   expect(updated.output).not.toContain("directory missing")
@@ -430,7 +430,7 @@ phase("3. a nonexistent path is refused before any write: no registry file, no l
   expect(result.status).toBe(1)
   expect(result.output).toContain("path does not exist")
   assertAbsent(registryFile(home))
-  assertAbsent(join(home, ".cache", "ocm", "links"))
+  assertAbsent(join(rootCacheDir(home), "links"))
 })
 
 phase("4. a 200-char plugin name is refused whole before any write: one error naming the limit, exit 1, zero writes", async (home) => {
@@ -506,7 +506,7 @@ phase("5. an unreachable repo under a tty fails fast with the ocm error instead 
     if (elapsed >= 2000) throw new Error(`expected the failure within 2s, took ${elapsed}ms:\n${run.stderr}`)
     expect(run.stderr).toContain("cannot access")
     expect(run.stderr).toContain(url)
-    assertAbsent(join(home, ".cache", "ocm", "marketplaces", "ocm-test--private-repo")) // no clone left behind
+    assertAbsent(join(rootCacheDir(home), "marketplaces", "ocm-test--private-repo")) // no clone left behind
   } finally {
     server.closeAllConnections?.()
     server.close()
@@ -669,7 +669,7 @@ phase("10. a git marketplace whose tree ships a folded plugins pair is refused w
   for (const needle of ["differ only in case", "plugins/case-Kit and plugins/case-kit", "ask the author to rename one"]) {
     expect(result.output).toContain(needle)
   }
-  assertAbsent(join(home, ".cache", "ocm", "marketplaces", "case-mp")) // the refused clone is cleaned up
+  assertAbsent(join(rootCacheDir(home), "marketplaces", "case-mp")) // the refused clone is cleaned up
   // zero writes: registry, config and every link surface are byte-identical
   expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
   expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes)
@@ -753,7 +753,7 @@ phase("11. a plugin shipping commands that differ only in case is refused whole;
   for (const needle of ["differ only in case", "plugins/case-kit/commands/Run.md and plugins/case-kit/commands/run.md", "both install as case-kit:run.md"]) {
     expect(result.output).toContain(needle)
   }
-  assertAbsent(join(home, ".cache", "ocm", "marketplaces", "case-mp")) // the refused clone is cleaned up
+  assertAbsent(join(rootCacheDir(home), "marketplaces", "case-mp")) // the refused clone is cleaned up
   // zero writes: registry, config and every link surface are byte-identical
   expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
   expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes)
@@ -1156,15 +1156,20 @@ phase("6. ownership and cache layout: user config and files survive the cycle, t
 }
 
 // brief 28 §2.3: the stranded-install mutation notice — add, init, update,
-// install and trust warn once on stderr and proceed; nothing is refused
+// install and trust warn once on stderr and proceed; nothing is refused.
+// brief 38 §1 (phases 4-7): the per-config-root cache namespace — the same
+// marketplace under two roots, teardown isolation, slug spellings, and the
+// config-safety invariants across both roots
 {
 const NOTICE_LEAD = "warning: an ocm install is stranded in another config root"
 
 // the file-level ocm helper cannot set the child's XDG_CONFIG_HOME, and the
-// notice only exists when the variable moves the active root
-function ocmEnv(home, args, env = {}, timeout = 120_000) {
+// notice only exists when the variable moves the active root. cwd is set only
+// by the relative-XDG phase: a relative XDG_CONFIG_HOME resolves against the
+// child's working directory, which must be the fake home
+function ocmEnv(home, args, env = {}, timeout = 120_000, cwd) {
   const r = spawnSync(process.execPath, [OCM_BIN, ...args], {
-    env: withFakeOpencode({ ...process.env, HOME: home, ...env }), encoding: "utf8", timeout,
+    env: withFakeOpencode({ ...process.env, HOME: home, ...env }), encoding: "utf8", timeout, cwd,
   })
   return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }
 }
@@ -1249,6 +1254,254 @@ phase("3. every noticing command prints the stranded notice once before its own 
     rmSync(xdg, { recursive: true, force: true })
     noticed(args.join(" "), ocmEnv(home, args, env))
   }
+}, 600_000)
+
+// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
+function assertResolves(dest, source) {
+  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
+  expect(realpathSync(dest)).toBe(realpathSync(source))
+}
+
+// invariant: ocm never writes under another tool's directories
+function assertNoForeignToolDirs(home) {
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}
+
+const ROOTS_DIR = (home) => join(home, ".cache", "ocm", "roots")
+
+phase("4. the same git marketplace added under two config roots yields two clones and two link trees; each root's list shows only its own, and one root's remove leaves the other working", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
+  const url = `file://${remote}`
+  const xdg = join(home, "xdg")
+  const addedA = ocmEnv(home, ["add", url, "--name", "shared"])
+  if (addedA.status !== 0) throw new Error(`ocm add under the default root exited ${addedA.status}:\n${addedA.output}`)
+  // the F187 repro: without per-root namespaces the second add renames over
+  // the first root's clone and dies with a raw ENOTEMPTY
+  const addedB = ocmEnv(home, ["add", url, "--name", "shared"], { XDG_CONFIG_HOME: xdg })
+  if (addedB.status !== 0) throw new Error(`the second add of the same marketplace, under XDG_CONFIG_HOME=${xdg}, exited ${addedB.status}:\n${addedB.output}`)
+  const cloneA = join(rootCacheDir(home), "marketplaces", "shared")
+  const cloneB = join(rootCacheDir(home, xdg), "marketplaces", "shared")
+  if (cloneA === cloneB) throw new Error(`both config roots resolved to one cache namespace: ${cloneA}`)
+  assertFileExists(join(cloneA, "plugins", "adw", "commands", "commit.md"))
+  assertFileExists(join(cloneB, "plugins", "adw", "commands", "commit.md"))
+  const namespaces = readdirSync(ROOTS_DIR(home))
+  if (namespaces.length !== 2) throw new Error(`expected exactly two cache namespaces after the two adds, found ${JSON.stringify(namespaces)}`)
+  // list isolation needs a marketplace only the xdg root knows about
+  writeTree(join(home, "solo"), { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } } } })
+  expect(ocmEnv(home, ["add", join(home, "solo")], { XDG_CONFIG_HOME: xdg }).status).toBe(0)
+  const listA = ocmEnv(home, ["list"])
+  if (listA.status !== 0) throw new Error(`ocm list under the default root exited ${listA.status}:\n${listA.output}`)
+  if (!listA.stdout.includes("shared") || listA.stdout.includes("solo")) {
+    throw new Error(`the default root's list must show only its own marketplaces:\n${listA.stdout}`)
+  }
+  const listB = ocmEnv(home, ["list"], { XDG_CONFIG_HOME: xdg })
+  if (listB.status !== 0) throw new Error(`ocm list under the xdg root exited ${listB.status}:\n${listB.output}`)
+  for (const needle of ["shared", "solo"]) {
+    if (!listB.stdout.includes(needle)) throw new Error(`the xdg root's list must show "${needle}":\n${listB.stdout}`)
+  }
+  // teardown under the default root (F189): the xdg root's clone, link tree,
+  // command link and skills.paths all survive it
+  const removed = ocmEnv(home, ["remove", "shared"])
+  if (removed.status !== 0) throw new Error(`ocm remove under the default root exited ${removed.status}:\n${removed.output}`)
+  assertAbsent(cloneA) // a git marketplace's clone comes down with it
+  assertFileExists(join(cloneB, "plugins", "adw", "commands", "commit.md"))
+  assertFileExists(join(rootCacheDir(home, xdg), "links", "shared", "skills", "adw--python-style", "SKILL.md"))
+  assertResolves(join(xdg, "opencode", "commands", "adw:commit.md"), join(cloneB, "plugins", "adw", "commands", "commit.md"))
+  const relisted = ocmEnv(home, ["list"], { XDG_CONFIG_HOME: xdg })
+  if (!relisted.stdout.includes("shared")) throw new Error(`the xdg root lost its marketplace to the other root's remove:\n${relisted.stdout}`)
+  const bConfig = JSON.parse(readFileSync(join(xdg, "opencode", "opencode.json"), "utf8"))
+  const ocmEntries = bConfig.skills.paths.filter((p) => p.includes(join(home, ".cache", "ocm")))
+  for (const p of ocmEntries) {
+    if (!p.startsWith(rootCacheDir(home, xdg))) throw new Error(`the xdg root's skills.paths leaves its own cache namespace: ${p}`)
+  }
+  if (!ocmEntries.includes(join(rootCacheDir(home, xdg), "links", "shared", "skills"))) {
+    throw new Error(`the xdg root's skills.paths lost its namespace entry for "shared": ${JSON.stringify(bConfig.skills.paths)}`)
+  }
+}, 600_000)
+
+phase("5. after ocm remove under the default root, the xdg root still resolves its components in opencode and doctor under it reports no orphans, printing its cache namespace slug", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
+  const url = `file://${remote}`
+  const xdg = join(home, "xdg")
+  const env = { XDG_CONFIG_HOME: xdg }
+  expect(ocmEnv(home, ["add", url, "--name", "mp"]).status).toBe(0)
+  expect(ocmEnv(home, ["add", url, "--name", "mp"], env).status).toBe(0)
+  expect(ocmEnv(home, ["remove", "mp"]).status).toBe(0)
+  assertFileExists(join(rootCacheDir(home, xdg), "links", "mp", "skills", "adw--python-style", "SKILL.md"))
+  assertResolves(join(xdg, "opencode", "commands", "adw:commit.md"), join(rootCacheDir(home, xdg), "marketplaces", "mp", "plugins", "adw", "commands", "commit.md"))
+  const probe = opencodeProbe(join(xdg, "opencode"), home)
+  if (!probe.available) return console.log("skipped:", probe.optIn ? "OCM_PROBE not set" : "opencode is not on PATH")
+  if (probe.unreliable) throw new Error("probe cannot trust itself: the canary broken plugin produced no error line")
+  expect(probe.commands.join("\n")).toContain("adw:commit")
+  expect(probe.skills.join("\n")).toContain("python-style")
+  // the exit code is not pinned: another root's empty registry is not this
+  // test's subject, and the spec does not make it exit-code-relevant here
+  const diagnosed = ocmEnv(home, ["doctor"], env, 300_000)
+  for (const needle of ["orphaned ocm skills path", "no marketplace owns this link"]) {
+    if (diagnosed.output.includes(needle)) {
+      throw new Error(`doctor under the xdg root must not report "${needle}" after the other root's teardown:\n${diagnosed.output}`)
+    }
+  }
+  const slug = basename(rootCacheDir(home, xdg))
+  if (!/^[a-z]+-[0-9a-f]{6}$/.test(slug)) throw new Error(`the cache namespace slug must be <prefix>-<6 hex chars>, got "${slug}"`)
+  if (!diagnosed.output.includes(slug)) {
+    throw new Error(`doctor must print the cache namespace slug "${slug}" so a user can find their own:\n${diagnosed.output}`)
+  }
+}, 900_000)
+
+phase("6. a config root reached by symlink and trailing-slash spellings resolves to one cache namespace, stable across the root's creation", async (home) => {
+  mkdirSync(join(home, "xdg-real"), { recursive: true })
+  symlinkSync(join(home, "xdg-real"), join(home, "xdg-link"))
+  const byLink = join(home, "xdg-link")
+  const bySlash = `${join(home, "xdg-link")}/`
+  const byReal = join(home, "xdg-real")
+  // git marketplaces, not local dirs: only a git add clones into the cache
+  // namespace, so the namespace assertions below have something to see
+  gitRepo(join(home, "mp-a"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  gitRepo(join(home, "mp-b"), { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } } } })
+  gitRepo(join(home, "mp-c"), { plugins: { gamma: { "plugin.json": PLUGIN_JSON, commands: { "test.md": COMMAND } } } })
+  // no init first: the first add must derive the slug before the config root
+  // exists, and every later spelling must land in the same namespace
+  const first = ocmEnv(home, ["add", `file://${join(home, "mp-a")}`, "--name", "mp-a"], { XDG_CONFIG_HOME: byLink })
+  if (first.status !== 0) throw new Error(`ocm add via the symlink spelling exited ${first.status}:\n${first.output}`)
+  expect(ocmEnv(home, ["add", `file://${join(home, "mp-b")}`, "--name", "mp-b"], { XDG_CONFIG_HOME: bySlash }).status).toBe(0)
+  expect(ocmEnv(home, ["add", `file://${join(home, "mp-c")}`, "--name", "mp-c"], { XDG_CONFIG_HOME: byReal }).status).toBe(0)
+  const namespaces = readdirSync(ROOTS_DIR(home))
+  if (namespaces.length !== 1) throw new Error(`three spellings of one config root must share one cache namespace, found ${JSON.stringify(namespaces)}`)
+  const expected = rootCacheDir(home, byReal)
+  if (join(ROOTS_DIR(home), namespaces[0]) !== expected) {
+    throw new Error(`expected the shared namespace at ${expected}, found ${namespaces[0]}`)
+  }
+  expect(readdirSync(join(expected, "marketplaces")).sort()).toEqual(["mp-a", "mp-b", "mp-c"])
+  // a command over the now-existing root must not mint a second namespace
+  ocmEnv(home, ["doctor"], { XDG_CONFIG_HOME: byLink }, 300_000)
+  const after = readdirSync(ROOTS_DIR(home))
+  if (after.length !== 1) throw new Error(`a later command minted a second cache namespace for the same root: ${JSON.stringify(after)}`)
+}, 600_000)
+
+phase("7. user config, files and tui.json entries survive dual-root adds in both roots, and each root's skills.paths stays inside its own cache namespace", async (home) => {
+  const xdg = join(home, "xdg")
+  const userConfig = { model: "claude-sonnet-4-6", permission: { edit: "allow" }, skills: { paths: ["/users/me/my-skills"] }, mcp: { "user-server": { type: "local", command: ["echo"] } } }
+  const seed = (root) => writeTree(root, {
+    "opencode.json": json(userConfig), "tui.json": json({ plugin: ["my-own-tui-plugin"] }), commands: { "mine.md": "# my own command\n" },
+  })
+  seed(cfg(home))
+  seed(join(xdg, "opencode"))
+  writeTree(join(home, "mp-a"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
+  writeTree(join(home, "mp-b"), { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND }, skills: { "python-style": { "SKILL.md": SKILL } } } } })
+  expect(ocmEnv(home, ["add", join(home, "mp-a")]).status).toBe(0)
+  expect(ocmEnv(home, ["add", join(home, "mp-b")], { XDG_CONFIG_HOME: xdg }).status).toBe(0)
+  const checkRoot = (label, root, namespace, skillsEntry) => {
+    const config = JSON.parse(readFileSync(join(root, "opencode.json"), "utf8"))
+    if (config.model !== "claude-sonnet-4-6") throw new Error(`${label}: the user's model key did not survive:\n${JSON.stringify(config)}`)
+    if (JSON.stringify(config.mcp?.["user-server"]) !== JSON.stringify({ type: "local", command: ["echo"] })) {
+      throw new Error(`${label}: the user's mcp server did not survive:\n${JSON.stringify(config.mcp)}`)
+    }
+    if (!config.skills.paths.includes("/users/me/my-skills")) {
+      throw new Error(`${label}: the user's skills.paths entry did not survive: ${JSON.stringify(config.skills.paths)}`)
+    }
+    if (!config.skills.paths.includes(skillsEntry)) {
+      throw new Error(`${label}: expected the cache namespace entry ${skillsEntry} in skills.paths: ${JSON.stringify(config.skills.paths)}`)
+    }
+    for (const p of config.skills.paths) {
+      if (p.includes(join(home, ".cache", "ocm")) && !p.startsWith(namespace)) {
+        throw new Error(`${label}: skills.paths leaves its own cache namespace: ${p}`)
+      }
+    }
+    const tui = JSON.parse(readFileSync(join(root, "tui.json"), "utf8"))
+    if (!tui.plugin?.includes("my-own-tui-plugin")) throw new Error(`${label}: the user's tui.json plugin entry did not survive: ${JSON.stringify(tui)}`)
+    if (readFileSync(join(root, "commands", "mine.md"), "utf8") !== "# my own command\n") throw new Error(`${label}: the user's command file did not survive`)
+  }
+  checkRoot("the default root", cfg(home), rootCacheDir(home), join(rootCacheDir(home), "links", "mp-a", "skills"))
+  checkRoot("the xdg root", join(xdg, "opencode"), rootCacheDir(home, xdg), join(rootCacheDir(home, xdg), "links", "mp-b", "skills"))
+  // teardown under one root leaves the other root's config untouched
+  expect(ocmEnv(home, ["remove", "mp-a"]).status).toBe(0)
+  checkRoot("the xdg root after the default root's remove", join(xdg, "opencode"), rootCacheDir(home, xdg), join(rootCacheDir(home, xdg), "links", "mp-b", "skills"))
+  assertNoForeignToolDirs(home)
+}, 600_000)
+
+phase("8. read-only commands report the stranded install: list drops the false empty hint, search and info notice before their own errors", async (home) => {
+  const xdg = join(home, "xdg")
+  writeTree(join(home, "mp"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  const added = ocmEnv(home, ["add", join(home, "mp")], { XDG_CONFIG_HOME: xdg })
+  if (added.status !== 0) throw new Error(`ocm add under XDG_CONFIG_HOME=${xdg} exited ${added.status}:\n${added.output}`)
+  // the active root is the default one and holds no registry: F167's state
+  const listed = ocmEnv(home, ["list"])
+  if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}:\n${listed.output}`)
+  if (noticeCount(listed.stderr) !== 1) throw new Error(`expected the stranded notice exactly once on stderr from ocm list, got ${noticeCount(listed.stderr)}:\n${listed.stderr}`)
+  if (listed.stdout.includes("no marketplaces added yet")) {
+    throw new Error(`ocm list must not claim the home is empty while ${join(xdg, "opencode")} holds an install:\n${listed.stdout}`)
+  }
+  for (const [args, needle] of [
+    [["search", "nonexistent"], 'no matches for "nonexistent"'],
+    [["info", "nonexistent"], 'plugin "nonexistent" not found in any marketplace'],
+  ]) {
+    const run = ocmEnv(home, args)
+    if (run.status !== 1) throw new Error(`ocm ${args[0]} must keep its not-found exit code 1, got ${run.status}:\n${run.output}`)
+    if (noticeCount(run.stderr) !== 1) throw new Error(`expected the stranded notice exactly once on stderr from ocm ${args[0]}, got ${noticeCount(run.stderr)}:\n${run.stderr}`)
+    if (!run.stderr.includes(needle)) throw new Error(`ocm ${args[0]} must keep its own error "${needle}" beside the notice:\n${run.stderr}`)
+  }
+}, 600_000)
+
+phase("9. a genuinely empty home: ocm list keeps its empty hint and prints no stranded notice", async (home) => {
+  const listed = ocmEnv(home, ["list"])
+  if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}:\n${listed.output}`)
+  if (!listed.stdout.includes("no marketplaces added yet")) {
+    throw new Error(`a home with no install anywhere must keep the empty hint:\n${listed.stdout}`)
+  }
+  if (noticeCount(listed.stderr) !== 0) throw new Error(`nothing is stranded anywhere, yet stderr carries the notice:\n${listed.stderr}`)
+}, 300_000)
+
+phase("10. a relative XDG_CONFIG_HOME warns at the write boundary: add proceeds and warns, list stays silent", async (home) => {
+  writeTree(join(home, "mp"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  // cwd must be the fake home: a relative XDG_CONFIG_HOME resolves against
+  // the child's working directory, and the repo root must not grow a rel-dir/
+  const added = ocmEnv(home, ["add", join(home, "mp")], { XDG_CONFIG_HOME: "rel-dir" }, 120_000, home)
+  if (added.status !== 0) throw new Error(`ocm add under a relative XDG_CONFIG_HOME exited ${added.status}:\n${added.output}`)
+  for (const needle of ["XDG_CONFIG_HOME is relative", "set it to an absolute path"]) {
+    if (!added.stderr.includes(needle)) throw new Error(`the add must warn at the write boundary ("${needle}"):\n${added.stderr}`)
+  }
+  assertFileExists(join(home, "rel-dir", "opencode", "ocm", "registry.json"))
+  const listed = ocmEnv(home, ["list"], { XDG_CONFIG_HOME: "rel-dir" }, 120_000, home)
+  if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}:\n${listed.output}`)
+  if (listed.stderr.includes("XDG_CONFIG_HOME is relative")) {
+    throw new Error(`a read-only command must not warn about the relative XDG_CONFIG_HOME:\n${listed.stderr}`)
+  }
+}, 420_000)
+
+phase("11. read-only commands in the stranded state write nothing: root B's registry and roots.json keep their bytes and mtimes, root A's config stays absent", async (home) => {
+  const xdg = join(home, "xdg")
+  writeTree(join(home, "mp"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocmEnv(home, ["add", join(home, "mp")], { XDG_CONFIG_HOME: xdg }).status).toBe(0)
+  const bRegistry = join(xdg, "opencode", "ocm", "registry.json")
+  const rootsFile = join(home, ".cache", "ocm", "roots.json")
+  const snap = (file) => ({ bytes: readFileSync(file, "utf8"), mtimeMs: statSync(file).mtimeMs })
+  const bBefore = snap(bRegistry)
+  const rootsBefore = snap(rootsFile)
+  assertAbsent(join(home, ".config"))
+  // the runs notice and error — that is phase 8's subject; here only their
+  // side effects matter
+  for (const args of [["list"], ["search", "nonexistent"], ["info", "nonexistent"]]) ocmEnv(home, args)
+  const bAfter = snap(bRegistry)
+  if (bAfter.bytes !== bBefore.bytes || bAfter.mtimeMs !== bBefore.mtimeMs) {
+    throw new Error(`a read-only command rewrote the stranded root's registry at ${bRegistry}`)
+  }
+  const rootsAfter = snap(rootsFile)
+  if (rootsAfter.bytes !== rootsBefore.bytes || rootsAfter.mtimeMs !== rootsBefore.mtimeMs) {
+    throw new Error(`a read-only command rewrote ${rootsFile}`)
+  }
+  assertAbsent(join(home, ".config"))
 }, 600_000)
 }
 

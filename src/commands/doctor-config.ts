@@ -1,7 +1,7 @@
 // spec 12 doctor: the opencode.json checks. Every fix goes through the core's
 // atomic, ownership-scoped writers (setSkillsPath, removeMcpKeys), which
-// return a warning string on failure instead of throwing — a failed write is
-// an error finding, never a corrupted config.
+// report their outcome instead of throwing — a failed write is an error
+// finding, never a corrupted config.
 import { existsSync, readFileSync } from "node:fs"
 import { mcpShapeError, removeMcpKeys, removeMcpKeysExact, setSkillsPath } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
@@ -47,9 +47,9 @@ function checkSkillsPaths(config: Record<string, unknown>, findings: Finding[], 
       findings.push(error(`${entry}: orphaned ocm skills path — target is gone (ocm doctor --fix)`))
       continue
     }
-    const failure = setSkillsPath(entry, false)
-    if (failure) findings.push(error(failure))
-    else findings.push(fixed(`${entry}: removed from skills.paths`))
+    const outcome = setSkillsPath(entry, false)
+    if (outcome.state === "skipped" || outcome.state === "failed") findings.push(error(outcome.reason!))
+    else if (outcome.state === "wrote") findings.push(fixed(`${entry}: removed from skills.paths`))
   }
 }
 

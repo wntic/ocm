@@ -6,6 +6,7 @@ import type { CoreExecutableComponent } from "../../loader/core.js"
 export interface ListOptions {
   all?: boolean
   json?: boolean
+  stranded?: boolean
 }
 
 // the marketplace row's parenthesised markers, in print order: mode, pin,
@@ -31,7 +32,8 @@ export function list(options: ListOptions = {}): void {
   }
   const entries = Object.entries(registry.marketplaces)
   if (!entries.length) {
-    console.log("no marketplaces added yet (ocm add <url|path>)")
+    // the stranded notice already explained why the home looks empty
+    if (!options.stranded) console.log("no marketplaces added yet (ocm add <url|path>)")
     return
   }
   for (const [name, entry] of entries) {

@@ -5,7 +5,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync,
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, withFakeHome, withFakeOpencode } from "./harness.mjs"
+import { assertAbsent, assertFileExists, rootCacheDir, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -69,7 +69,7 @@ const configFile = (home) => join(cfg(home), "opencode.json")
 
 const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8"))
 
-const cloneDir = (home, name = "mp") => join(home, ".cache", "ocm", "marketplaces", name)
+const cloneDir = (home, name = "mp") => join(rootCacheDir(home), "marketplaces", name)
 
 const pluginLink = (home, plugin, file) => join(cfg(home), "plugins", `ocm--${plugin}--${file}`)
 
@@ -160,7 +160,7 @@ phase("3. doctor detects a stale core by version comment, a stray ocm file in pl
   // an orphaned ocm skills.paths entry, a user entry whose target is also gone, an orphaned MCP key
   const configPath = join(cfg(home), "opencode.json")
   const config = JSON.parse(readFileSync(configPath, "utf8"))
-  const goneOcm = join(home, ".cache", "ocm", "links", "gone", "skills")
+  const goneOcm = join(rootCacheDir(home), "links", "gone", "skills")
   const goneUser = join(home, "gone-user-skills")
   config.skills ??= { paths: [] }
   config.skills.paths.push(goneOcm, goneUser)
@@ -192,7 +192,7 @@ phase("3. doctor detects a stale core by version comment, a stray ocm file in pl
   expect(after.mcp["user-server"]).toEqual(userConfig.mcp["user-server"])
   expect(after.model).toBe(userConfig.model)
   assertResolves(join(cfg(home), "plugins", "ocm--adw--notify.js"), join(mp, "plugins", "adw", "plugin", "notify.js"))
-  expect(lstatSync(join(home, ".cache", "ocm", "links", "mp", "skills", "adw--style")).isDirectory()).toBe(true)
+  expect(lstatSync(join(rootCacheDir(home), "links", "mp", "skills", "adw--style")).isDirectory()).toBe(true)
 
   // idempotence: a second --fix writes nothing
   const before = [coreFile, configPath, registryFile(home)].map((p) => readFileSync(p, "utf8"))
@@ -261,7 +261,7 @@ phase("6. a full add → install → update → remove cycle creates nothing und
   gitRepo(remote, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { style: { "SKILL.md": SKILL("style") } } } } })
   expect(ocm(home, "add", `file://${remote}`, "--name", "mp", "--explicit").status).toBe(0)
   expect(ocm(home, "install", "adw").status).toBe(0)
-  assertResolves(join(cfg(home), "commands", "adw:commit.md"), join(home, ".cache", "ocm", "marketplaces", "mp", "plugins", "adw", "commands", "commit.md"))
+  assertResolves(join(cfg(home), "commands", "adw:commit.md"), join(cloneDir(home), "plugins", "adw", "commands", "commit.md"))
   expect(ocm(home, "update", "mp").status).toBe(0)
   expect(ocm(home, "remove", "mp").status).toBe(0)
   assertAbsent(join(cfg(home), "commands", "adw:commit.md"))
@@ -311,7 +311,7 @@ const SRC_PATHS_MODULE = fileURLToPath(new URL("../src/paths.ts", import.meta.ur
 // loaderSync above. src/paths.ts is TypeScript: the child runs under bun.
 function pathConstants(home, env) {
   const runner = join(home, "paths-runner.mjs")
-  writeFileSync(runner, "const l = await import(process.argv[2]); const s = await import(process.argv[3]); console.log(JSON.stringify({ OPENCODE_DIR: l.OPENCODE_DIR, CACHE_DIR: l.CACHE_DIR, OPENCODE_GLOBAL_DIR: s.OPENCODE_GLOBAL_DIR, OCM_CACHE_DIR: s.OCM_CACHE_DIR }))\n")
+  writeFileSync(runner, "const l = await import(process.argv[2]); const s = await import(process.argv[3]); console.log(JSON.stringify({ OPENCODE_DIR: l.OPENCODE_DIR, CACHE_DIR: l.CACHE_DIR, LINKS_DIR: l.LINKS_DIR, OPENCODE_GLOBAL_DIR: s.OPENCODE_GLOBAL_DIR, OCM_CACHE_DIR: s.OCM_CACHE_DIR, OCM_LINKS_DIR: s.OCM_LINKS_DIR }))\n")
   const r = spawnSync(process.execPath, [runner, LOADER_PATHS_MODULE, SRC_PATHS_MODULE], { env: { ...process.env, HOME: home, ...env }, encoding: "utf8", timeout: 120_000 })
   if (r.status !== 0) throw new Error(`the paths runner exited ${r.status}: ${r.stderr}`)
   return JSON.parse(r.stdout)
@@ -398,11 +398,11 @@ phase("3. a single-dash plugins/ocm-stray.js is a doctor warning naming the risk
 phase("4. orphan sweep: an unowned ocm-- link and skill mirror are each reported; --fix removes them and the skills.paths entry, and the user's own files survive", async (home) => {
   expect(ocm(home, ["init"]).status).toBe(0)
   // seeded orphans: a working ocm-- link and a rendered skill mirror, no registry backing
-  const ghostCommand = join(home, ".cache", "ocm", "marketplaces", "ghost", "plugins", "demo-kit", "commands", "tdd.md")
-  writeTree(join(home, ".cache", "ocm", "marketplaces", "ghost", "plugins", "demo-kit", "commands"), { "tdd.md": COMMAND })
+  const ghostCommand = join(rootCacheDir(home), "marketplaces", "ghost", "plugins", "demo-kit", "commands", "tdd.md")
+  writeTree(join(rootCacheDir(home), "marketplaces", "ghost", "plugins", "demo-kit", "commands"), { "tdd.md": COMMAND })
   const orphanLink = join(cfg(home), "plugins", "ocm--demo-kit--tdd.md")
   symlinkSync(ghostCommand, orphanLink)
-  const ghostSkills = join(home, ".cache", "ocm", "links", "ghost", "skills")
+  const ghostSkills = join(rootCacheDir(home), "links", "ghost", "skills")
   writeTree(join(ghostSkills, "demo-kit--tdd"), { "SKILL.md": "---\nname: \"demo-kit:tdd\"\ndescription: orphaned mirror\n---\n\nBody.\n" })
   const userSkills = join(home, "my-skills")
   writeTree(userSkills, { "SKILL.md": SKILL }) // a real user entry: not ocm's to judge or touch
@@ -468,7 +468,7 @@ phase("7. a corrupt opencode.json during add: one warning, the manual skills.pat
   const warnings = result.output.split("\n").filter((l) => /warning/i.test(l) && /opencode\.json|not valid JSON/.test(l))
   if (warnings.length !== 1) throw new Error(`expected exactly one warning about the corrupt config, got ${warnings.length}:\n${result.output}`)
   expect(result.output).toContain("skills.paths NOT written — opencode.json is not valid JSON")
-  expect(result.output).toContain(join(home, ".cache", "ocm", "links", "mp", "skills")) // the exact edit to make by hand
+  expect(result.output).toContain(join(rootCacheDir(home), "links", "mp", "skills")) // the exact edit to make by hand
   expect(result.output).not.toMatch(/\b1 skills\b/) // the skill is not counted as installed
   expect(readFileSync(configFile(home), "utf8")).toBe(garbage) // a config that does not parse is never rewritten
 })
@@ -562,6 +562,10 @@ phase("11. a set XDG_CONFIG_HOME relocates the install: init and add write only 
   expect(set.OPENCODE_GLOBAL_DIR).toBe(root)
   expect(set.CACHE_DIR).toBe(join(home, ".cache", "ocm"))
   expect(set.OCM_CACHE_DIR).toBe(join(home, ".cache", "ocm"))
+  // brief 38: the link tree lives under the per-root cache namespace, and
+  // both modules agree on it
+  expect(set.LINKS_DIR).toBe(join(rootCacheDir(home, xdg), "links"))
+  expect(set.OCM_LINKS_DIR).toBe(join(rootCacheDir(home, xdg), "links"))
   // join, not resolve: a relative value produces a relative constant, the
   // same rule opencode follows — never run ocm itself with one
   const relative = pathConstants(home, { XDG_CONFIG_HOME: "rel-dir" })
@@ -587,6 +591,9 @@ phase("12. an empty-string XDG_CONFIG_HOME falls back to $HOME/.config/opencode 
   const constants = pathConstants(home, env)
   expect(constants.OPENCODE_DIR).toBe(join(home, ".config", "opencode"))
   expect(constants.OPENCODE_GLOBAL_DIR).toBe(join(home, ".config", "opencode"))
+  // brief 38: the fallback root still gets its own cache namespace
+  expect(constants.LINKS_DIR).toBe(join(rootCacheDir(home), "links"))
+  expect(constants.OCM_LINKS_DIR).toBe(join(rootCacheDir(home), "links"))
   const init = ocm(home, ["init"], 120_000, { env })
   if (init.status !== 0) throw new Error(`ocm init exited ${init.status} with an empty XDG_CONFIG_HOME:\n${init.output}`)
   const mp = join(home, "mp")
@@ -867,4 +874,159 @@ phase("21. an undecided marketplace's blocked plugin and mcp components are with
   if (stale.length) throw new Error(`blocked components must not be reported as stale records:\n${stale.join("\n")}`)
   expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes) // doctor writes nothing
 }, 420_000)
+}
+
+// brief 38 §2: no finding may claim a fix the run did not perform.
+// setSkillsPath returns null both for "I wrote the config" and "nothing to
+// do" (including when there is no opencode.json at all), so doctor-orphans
+// prints `fixed …: removed from skills.paths` for an orphaned mirror tree
+// whose skills dir was never in any skills.paths. The fixed line may print
+// only when a write actually happened; brief 38 tests 2 and 7, scoped to
+// doctor --fix, live here too.
+{
+// the file-level ocm helper cannot set the child's XDG_CONFIG_HOME, and the
+// two-root test below needs it — same signature as the absorbed block above
+function ocm(home, args, timeout = 120_000, options = {}) {
+  const r = spawnSync(process.execPath, [OCM_BIN, ...args], {
+    env: withFakeOpencode({ ...process.env, HOME: home, ...options.env }, options), encoding: "utf8", timeout,
+  })
+  return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` }
+}
+
+const fixedLines = (output) => output.split("\n").filter((l) => /^\s*fixed\b/.test(l))
+
+// an orphaned skill mirror under an unregistered marketplace's link tree,
+// phase-4 fixture style: a rendered SKILL.md, and no marketplace named
+// "ghost" in any registry or config
+function seedGhostMirror(linksDir) {
+  const mirror = join(linksDir, "ghost", "skills", "demo-kit--tdd")
+  writeTree(mirror, { "SKILL.md": "---\nname: \"demo-kit:tdd\"\ndescription: orphaned mirror\n---\n\nBody.\n" })
+  return mirror
+}
+
+phase("22. doctor --fix on a home with no opencode.json removes an orphaned mirror tree and prints no skills.paths claim", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  // verified against src/loader.ts: init installs the loader trio and
+  // tui.json, never opencode.json
+  assertAbsent(configFile(home))
+  const mirror = seedGhostMirror(join(rootCacheDir(home), "links"))
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}:\n${fixed.output}`)
+  assertAbsent(mirror) // the removal did happen
+  assertAbsent(join(rootCacheDir(home), "links", "ghost"))
+  assertAbsent(configFile(home)) // the config the claimed write would have touched
+  if (!fixedLines(fixed.output).some((l) => l.includes(mirror))) {
+    throw new Error(`expected a fixed line naming the removed mirror ${mirror}:\n${fixed.output}`)
+  }
+  if (fixed.output.includes("removed from skills.paths")) {
+    throw new Error(`doctor claims a skills.paths removal, but ${configFile(home)} never existed:\n${fixed.output}`)
+  }
+  for (const line of fixedLines(fixed.output)) {
+    if (line.includes("skills.paths")) throw new Error(`a fixed line mentions skills.paths for a config that does not exist:\n${line}`)
+  }
+}, 600_000)
+
+phase("23. doctor --fix under root A with root B installed: B's links and config stay untouched, and no fixed line claims a skills.paths write the run did not make", async (home) => {
+  const xdg = join(home, "xdg")
+  const env = { XDG_CONFIG_HOME: xdg }
+  // root A: the user's config, skills entry and plugin predate every ocm write
+  const userSkills = join(home, "my-skills")
+  writeTree(userSkills, { "SKILL.md": SKILL("style") })
+  writeTree(cfg(home), { "opencode.json": json({ model: "claude-sonnet-4-6", skills: { paths: [userSkills] } }), plugins: { "my-own.js": USER_PLUGIN } })
+  expect(ocm(home, ["init"]).status).toBe(0)
+  writeTree(join(home, "mp-a"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { style: { "SKILL.md": SKILL("style") } } } } })
+  expect(ocm(home, ["add", join(home, "mp-a")]).status).toBe(0)
+  // root B, reached only through XDG_CONFIG_HOME
+  expect(ocm(home, ["init"], 120_000, { env }).status).toBe(0)
+  writeTree(join(home, "mp-b"), { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND }, skills: { lint: { "SKILL.md": SKILL("lint") } } } } })
+  expect(ocm(home, ["add", join(home, "mp-b")], 120_000, { env }).status).toBe(0)
+  // an orphaned mirror tree in root A's namespace only, registered nowhere
+  // and absent from every skills.paths
+  const mirror = seedGhostMirror(join(rootCacheDir(home), "links"))
+  const bConfigFile = join(xdg, "opencode", "opencode.json")
+  const bConfigBefore = readFileSync(bConfigFile, "utf8")
+  const bMirror = join(rootCacheDir(home, xdg), "links", "mp-b", "skills", "beta--lint")
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000) // root A: no XDG variable
+  // exit 1 is expected, not a failure: root B holds a marketplace, so doctor
+  // under root A reports it as a stranded install — an error finding that
+  // sets the exit code even though the fixes ran (src/commands/doctor.ts
+  // pushes strandedRoots() as errors before reportFindings)
+  if (fixed.status !== 1) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 1 with root B stranded:\n${fixed.output}`)
+  const errors = fixed.output.split("\n").filter((l) => /^\s*error\b/.test(l))
+  if (errors.length !== 1 || !errors[0].includes("an ocm install is stranded in another config root")) {
+    throw new Error(`expected exactly one error finding, the stranded root B — anything else means the exit code is 1 for the wrong reason:\n${fixed.output}`)
+  }
+  if (!fixed.output.includes(`installed at: ${join(xdg, "opencode")}`)) throw new Error(`the stranded finding must name root B:\n${fixed.output}`)
+  // root B is untouched: its link tree, its config bytes, its own entry
+  assertFileExists(join(bMirror, "SKILL.md"))
+  expect(readFileSync(bConfigFile, "utf8")).toBe(bConfigBefore)
+  expect(JSON.parse(readFileSync(bConfigFile, "utf8")).skills.paths).toContain(join(rootCacheDir(home, xdg), "links", "mp-b", "skills"))
+  // root A's orphan is gone; its own registered entry and the user's survive
+  assertAbsent(mirror)
+  assertAbsent(join(rootCacheDir(home), "links", "ghost"))
+  const aConfig = JSON.parse(readFileSync(configFile(home), "utf8"))
+  expect(aConfig.skills.paths).toContain(join(rootCacheDir(home), "links", "mp-a", "skills"))
+  expect(aConfig.skills.paths).toContain(userSkills)
+  expect(readFileSync(join(cfg(home), "plugins", "my-own.js"), "utf8")).toBe(USER_PLUGIN)
+  // every fixed line corresponds to a write: the mirror removal is there,
+  // nothing claims a skills.paths write (the ghost dir was never in any
+  // config), and nothing mentions root B's cache namespace
+  const lines = fixedLines(fixed.output)
+  if (!lines.some((l) => l.includes(mirror))) throw new Error(`expected a fixed line naming the removed mirror ${mirror}:\n${fixed.output}`)
+  for (const line of lines) {
+    if (line.includes("skills.paths")) {
+      throw new Error(`doctor claims a skills.paths removal for ${mirror}, which was never in any skills.paths:\n${line}`)
+    }
+    if (line.includes(rootCacheDir(home, xdg))) throw new Error(`a fixed line mentions root B's cache namespace:\n${line}`)
+  }
+}, 600_000)
+
+// positive control: the truthful line must not disappear when the fix lands
+phase("24. when the orphaned tree's skills dir IS in skills.paths, doctor --fix removes both and the fixed line still prints", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  const mirror = seedGhostMirror(join(rootCacheDir(home), "links"))
+  const ghostSkills = join(rootCacheDir(home), "links", "ghost", "skills")
+  const userSkills = join(home, "my-skills")
+  writeTree(userSkills, { "SKILL.md": SKILL("style") })
+  writeTree(cfg(home), { "opencode.json": json({ model: "claude-sonnet-4-6", skills: { paths: [userSkills, ghostSkills] } }) })
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}:\n${fixed.output}`)
+  if (!fixedLines(fixed.output).some((l) => l.includes("removed from skills.paths") && l.includes(ghostSkills))) {
+    throw new Error(`expected a fixed line naming ${ghostSkills} as removed from skills.paths:\n${fixed.output}`)
+  }
+  expect(JSON.parse(readFileSync(configFile(home), "utf8")).skills.paths).toEqual([userSkills]) // ocm's entry cleaned, the user's stays
+  assertAbsent(mirror)
+  assertAbsent(join(rootCacheDir(home), "links", "ghost"))
+}, 600_000)
+
+phase("25. ownership through doctor --fix: user keys, skills entry, command and plugin survive, and a second --fix is a full no-op", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  const mirror = seedGhostMirror(join(rootCacheDir(home), "links"))
+  const ghostSkills = join(rootCacheDir(home), "links", "ghost", "skills")
+  const userSkills = join(home, "my-skills")
+  writeTree(userSkills, { "SKILL.md": SKILL("style") })
+  const userConfig = { model: "claude-sonnet-4-6", permission: { edit: "allow" }, skills: { paths: [userSkills, ghostSkills] }, mcp: { "user-server": { type: "local", command: ["echo"] } } }
+  writeTree(cfg(home), { "opencode.json": json(userConfig), commands: { "mine.md": "# my own command\n" }, plugins: { "my-own.js": USER_PLUGIN } })
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}:\n${fixed.output}`)
+  const after = JSON.parse(readFileSync(configFile(home), "utf8"))
+  expect(after.skills.paths).toEqual([userSkills]) // the orphaned entry gone, the user's stays
+  expect(after.model).toBe(userConfig.model) // config safety: outside ocm's keys, untouched
+  expect(after.permission).toEqual(userConfig.permission)
+  expect(after.mcp["user-server"]).toEqual(userConfig.mcp["user-server"])
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  expect(readFileSync(join(cfg(home), "plugins", "my-own.js"), "utf8")).toBe(USER_PLUGIN)
+  assertAbsent(mirror)
+  assertAbsent(join(rootCacheDir(home), "links", "ghost"))
+  // idempotence: a second --fix writes nothing and claims nothing
+  const tracked = [configFile(home), registryFile(home), join(cfg(home), "tui.json")]
+  const existing = () => tracked.filter((p) => existsSync(p))
+  const beforeFiles = existing()
+  const before = beforeFiles.map((p) => readFileSync(p, "utf8"))
+  const again = ocm(home, ["doctor", "--fix"], 300_000)
+  if (again.status !== 0) throw new Error(`second ocm doctor --fix exited ${again.status}:\n${again.output}`)
+  expect(existing()).toEqual(beforeFiles)
+  expect(existing().map((p) => readFileSync(p, "utf8"))).toEqual(before)
+  if (fixedLines(again.output).length) throw new Error(`a second --fix must claim no fixes:\n${again.output}`)
+}, 600_000)
 }

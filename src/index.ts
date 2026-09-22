@@ -3,6 +3,7 @@ import { basename } from "node:path"
 import { registryWriterVersion, versionCompare, withRegistryLock } from "../loader/core.js"
 import { installLoader, loaderStatus, migrateLegacyLayout, packageVersion, reportTuiPlugin, uninstallLoader } from "./loader"
 import { migrateInstallation, migrationNeeded } from "./migrate"
+import { migrateLegacyCache, reportUnreferencedOldCache } from "./migrate-cache"
 import { OCM_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_TUI_CONFIG } from "./paths"
 import { add, pin, remove } from "./commands/marketplace"
 import { update } from "./commands/update"
@@ -13,7 +14,7 @@ import { search } from "./commands/search"
 import { info } from "./commands/info"
 import { validate } from "./commands/validate"
 import { doctor } from "./commands/doctor"
-import { reportStrandedNotice } from "./stranded"
+import { relativeXdgWarning, reportStrandedNotice } from "./stranded"
 import { flushReportSink, markMutation } from "./report"
 
 const HELP = `ocm - file-based plugin marketplace for opencode
@@ -119,6 +120,10 @@ function refuseNewerHome(): void {
 // lock, creates nothing
 async function mutating<T>(command: string, fn: () => T | Promise<T>): Promise<T> {
   refuseNewerHome()
+  // brief 38 §3 F186: a relative XDG_CONFIG_HOME is a write-boundary warning
+  // — the mutation proceeds
+  const relative = relativeXdgWarning()
+  if (relative) console.error(`warning: ${relative}`)
   markMutation()
   return withRegistryLock(command, fn)
 }
@@ -156,8 +161,10 @@ export async function main(argv: string[]): Promise<void> {
       await withRegistryLock(command ? `ocm ${command}` : "ocm", () => {
         migrateLegacyLayout()
         migrateInstallation()
+        migrateLegacyCache()
       })
     }
+    reportUnreferencedOldCache()
     await refreshStaleLoader(command)
 
     switch (command) {
@@ -201,13 +208,15 @@ export async function main(argv: string[]): Promise<void> {
         await mutating("ocm pin", () => pin(positional[0]!, positional[1], flags.has("clear")))
         break
       case "list":
-        list({ all: flags.has("all"), json: flags.has("json") })
+        list({ all: flags.has("all"), json: flags.has("json"), stranded: reportStrandedNotice() })
         break
       case "search":
+        reportStrandedNotice()
         requireArg(positional[0], "missing search query")
         search(positional[0]!, { enabledOnly: flags.has("enabled-only"), json: flags.has("json") })
         break
       case "info":
+        reportStrandedNotice()
         requireArg(positional[0], "missing plugin name")
         info(positional[0]!, { json: flags.has("json") })
         break

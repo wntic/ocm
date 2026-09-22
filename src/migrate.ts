@@ -8,6 +8,7 @@ import { existsSync, readFileSync, readdirSync, readlinkSync, rmSync } from "nod
 import { join } from "node:path"
 import { componentRoot, enabledPlugins, materialize, readRegistry } from "../loader/core.js"
 import {
+  OCM_CACHE_DIR,
   OCM_LEGACY_REGISTRY_FILE,
   OCM_LINKS_DIR,
   OCM_REGISTRY_FILE,
@@ -18,6 +19,7 @@ import {
 } from "./paths"
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "./registry"
 import { reportUpgrade, reportWarnings } from "./report"
+import { cacheMigrationNeeded } from "./migrate-cache"
 import type { Registry } from "./types"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -114,7 +116,14 @@ function relinkSkills(): void {
     if (!legacy.length && !container) continue
     const links = materialize(name, root, { enabled: enabledPlugins(entry, root) })
     reportWarnings(links.warnings.map((warning) => `${name}: ${warning}`))
-    for (const plugin of legacy) for (const line of skillMapping(skillsDir, plugin)) console.log(line)
+    // brief 38: the pre-spec-03 whole-dir symlinks sit in the old-layout
+    // cache, which stays put until the cache migration moves it — the mapping
+    // is printed from them, read back from the mirrors materialize just
+    // wrote into the namespace. Not part of the trigger above: the symlink
+    // outlives the relink, so triggering on it would re-report forever
+    for (const plugin of legacySkillLinks(join(OCM_CACHE_DIR, "links", name, "skills"), root)) {
+      for (const line of skillMapping(skillsDir, plugin)) console.log(line)
+    }
   }
 }
 
@@ -124,10 +133,11 @@ export function migrateInstallation(): void {
   relinkSkills()
 }
 
-// read-only mirror of every trigger above and of migrateLegacyLayout: main()
-// takes the registry lock only when this returns true, so it must agree with
-// the migrations exactly — a false positive blocks a read-only command on a
-// held lock, a false negative leaves a migration write unlocked
+// read-only mirror of every trigger above, of migrateLegacyLayout and of the
+// cache migration in migrate-cache.ts: main() takes the registry lock only
+// when this returns true, so it must agree with the migrations exactly — a
+// false positive blocks a read-only command on a held lock, a false negative
+// leaves a migration write unlocked
 export function migrationNeeded(): boolean {
   if (existsSync(join(OPENCODE_PLUGINS_DIR, "ocm-core.js")) || existsSync(join(OPENCODE_PLUGINS_DIR, "ocm-ui.js"))) return true
   const registryFile = existsSync(OCM_REGISTRY_FILE) ? OCM_REGISTRY_FILE : OCM_LEGACY_REGISTRY_FILE
@@ -142,6 +152,7 @@ export function migrationNeeded(): boolean {
       return true
     } catch {}
   }
+  if (cacheMigrationNeeded()) return true
   // spec 27 §5: this sweep runs before every dispatch, including help and
   // doctor, so it reads the tolerant core registry — a corrupt one must not
   // throw here

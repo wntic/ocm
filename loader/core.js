@@ -6,6 +6,8 @@ export { writeJsonAtomic } from "./atomic.js"
 export {
   CACHE_DIR,
   DEFAULT_SYNC_INTERVAL_MS,
+  DISPLACED_DIR,
+  DISPLACED_RECORD_FILE,
   HOME,
   LEGACY_REGISTRY_FILE,
   LINKS_DIR,
@@ -17,6 +19,9 @@ export {
   OPENCODE_DIR,
   OPENCODE_PLUGINS_DIR,
   REGISTRY_FILE,
+  ROOTS_DIR,
+  ROOT_CACHE_DIR,
+  ROOT_SLUG,
   STAMP_FILE,
 } from "./paths.js"
 export { dirClashes, discoverPlugins, mcpShapeError, readMcpServers } from "./discovery.js"

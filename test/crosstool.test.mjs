@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync,
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, rootCacheDir, withFakeHome } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -49,7 +49,7 @@ const registryFile = (home) => join(cfg(home), "ocm", "registry.json")
 
 const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8"))
 
-const mpRoot = (home, name) => join(home, ".cache", "ocm", "marketplaces", name)
+const mpRoot = (home, name) => join(rootCacheDir(home), "marketplaces", name)
 
 function isSamePath(a, b) {
   if (typeof a !== "string") return false
@@ -195,7 +195,7 @@ phase("2. a plugin with only commands.claude/ and skills/ installs its skill and
   const components = readRegistry(home).marketplaces.mp.plugins.adw.components
   expect(components.command).toBeUndefined()
   expect(components.skill).toEqual(["python-style"])
-  const skillMd = join(home, ".cache", "ocm", "links", "mp", "skills", "adw--python-style", "SKILL.md")
+  const skillMd = join(rootCacheDir(home), "links", "mp", "skills", "adw--python-style", "SKILL.md")
   expect(readFileSync(skillMd, "utf8")).toContain('name: "adw:python-style"')
   assertAbsent(join(cfg(home), "commands", "adw:commit.md"))
   // invariant: idempotence — installing again rewrites nothing
@@ -308,7 +308,7 @@ phase("5. round-trip on a wntic/agentic-development-workflow fixture: adw skills
   expect(ocm(home, "add", `file://${repo}`).status).toBe(0)
   const root = mpRoot(home, "wntic-adw") // the manifest name seeds it, as in the real repo
   if (!existsSync(root)) throw new Error(`expected the clone at ${root} (marketplace.json name "wntic-adw")`)
-  const links = join(home, ".cache", "ocm", "links", "wntic-adw", "skills")
+  const links = join(rootCacheDir(home), "links", "wntic-adw", "skills")
   expect(readFileSync(join(links, "adw--python-style", "SKILL.md"), "utf8")).toContain('name: "adw:python-style"')
   expect(readFileSync(join(links, "adw--architecture", "SKILL.md"), "utf8")).toContain('name: "adw:architecture"')
   assertResolves(join(cfg(home), "commands", "run-report:run-report.md"), join(root, "plugins", "run-report", "commands", "run-report.md"))

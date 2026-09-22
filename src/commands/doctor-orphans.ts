@@ -85,9 +85,9 @@ export function checkOrphanMirrors(registry: CoreRegistry, findings: Finding[], 
       else findings.push(error(`${path}: no marketplace owns this link (orphaned by a loader uninstall?) — ocm doctor --fix removes it`))
     }
     if (!fix) continue
-    const failure = setSkillsPath(skillsDir, false)
-    if (failure) findings.push(error(failure))
-    else findings.push(fixed(`${skillsDir}: removed from skills.paths`))
+    const outcome = setSkillsPath(skillsDir, false)
+    if (outcome.state === "skipped" || outcome.state === "failed") findings.push(error(outcome.reason!))
+    else if (outcome.state === "wrote") findings.push(fixed(`${skillsDir}: removed from skills.paths`))
     rmSync(join(OCM_LINKS_DIR, name), { recursive: true, force: true })
   }
 }

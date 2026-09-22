@@ -1,5 +1,15 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
+import {
+  CACHE_DIR,
+  DISPLACED_DIR,
+  DISPLACED_RECORD_FILE,
+  LINKS_DIR,
+  MARKETPLACES_DIR,
+  ROOT_CACHE_DIR,
+  ROOT_SLUG,
+  STAMP_FILE,
+} from "../loader/core.js"
 
 export const HOME = homedir()
 
@@ -12,14 +22,19 @@ export const OPENCODE_COMMANDS_DIR = join(OPENCODE_GLOBAL_DIR, "commands")
 export const OPENCODE_AGENTS_DIR = join(OPENCODE_GLOBAL_DIR, "agents")
 export const OPENCODE_PLUGINS_DIR = join(OPENCODE_GLOBAL_DIR, "plugins")
 
-export const OCM_CACHE_DIR = join(HOME, ".cache", "ocm")
-export const OCM_MARKETPLACES_DIR = join(OCM_CACHE_DIR, "marketplaces")
-export const OCM_LINKS_DIR = join(OCM_CACHE_DIR, "links")
+// brief 38: the cache constants come from loader/core.js — the per-config-root
+// namespace — so both paths modules produce identical paths for identical env
+// by construction
+export const OCM_CACHE_DIR = CACHE_DIR
+export const OCM_MARKETPLACES_DIR = MARKETPLACES_DIR
+export const OCM_LINKS_DIR = LINKS_DIR
 // spec 21: originals displaced by --force takeovers, one copy per <ts>/
-export const OCM_DISPLACED_DIR = join(OCM_CACHE_DIR, "displaced")
-export const OCM_DISPLACED_RECORD_FILE = join(OCM_CACHE_DIR, "displaced-records.json")
+export const OCM_DISPLACED_DIR = DISPLACED_DIR
+export const OCM_DISPLACED_RECORD_FILE = DISPLACED_RECORD_FILE
 // pre-08 global sync stamp, folded into per-marketplace lastSync by the migration
-export const OCM_STAMP_FILE = join(OCM_CACHE_DIR, "last-sync.json")
+export const OCM_STAMP_FILE = STAMP_FILE
+export const OCM_ROOT_CACHE_DIR = ROOT_CACHE_DIR
+export const OCM_ROOT_SLUG = ROOT_SLUG
 
 export const OCM_DIR = join(OPENCODE_GLOBAL_DIR, "ocm")
 export const OCM_REGISTRY_FILE = join(OCM_DIR, "registry.json")

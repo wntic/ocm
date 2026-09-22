@@ -263,6 +263,13 @@ export interface CoreResolvedPlugin {
   entry: CoreMarketplaceEntry
 }
 
+// brief 38 §2: what setSkillsPath actually did — "wrote" only when the
+// config was written, so no caller can claim a fix it did not make
+export interface CoreSkillsPathOutcome {
+  state: "wrote" | "noop" | "skipped" | "failed"
+  reason: string | null
+}
+
 export declare const HOME: string
 export declare const OPENCODE_DIR: string
 export declare const OPENCODE_CONFIG_FILE: string
@@ -273,6 +280,11 @@ export declare const OCM_DIR: string
 export declare const CACHE_DIR: string
 export declare const MARKETPLACES_DIR: string
 export declare const LINKS_DIR: string
+export declare const DISPLACED_DIR: string
+export declare const DISPLACED_RECORD_FILE: string
+export declare const ROOTS_DIR: string
+export declare const ROOT_CACHE_DIR: string
+export declare const ROOT_SLUG: string
 export declare const REGISTRY_FILE: string
 export declare const LEGACY_REGISTRY_FILE: string
 export declare const STAMP_FILE: string
@@ -326,7 +338,7 @@ export declare function materialize(
   },
 ): CoreMaterializeReport
 export declare function enabledPlugins(entry: unknown, dir: string): Set<string> | null
-export declare function setSkillsPath(skillsDir: string, present: boolean): string | null
+export declare function setSkillsPath(skillsDir: string, present: boolean): CoreSkillsPathOutcome
 export declare function removeLinksFor(name: string, marketplaceDir: string): CoreMaterializeReport
 export declare function executableComponents(dir: string, entry: unknown): CoreExecutableComponent[]
 export declare function approvedComponents(dir: string, entry: unknown): Map<string, boolean>

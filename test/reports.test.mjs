@@ -6,7 +6,7 @@ import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeF
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, assertFileExists, withFakeHome } from "./harness.mjs"
+import { assertAbsent, assertFileExists, rootCacheDir, withFakeHome } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -42,7 +42,7 @@ const cfg = (home) => join(home, ".config", "opencode")
 
 const readRegistry = (home) => JSON.parse(readFileSync(join(cfg(home), "ocm", "registry.json"), "utf8"))
 
-const cloneDir = (home, name = "mp") => join(home, ".cache", "ocm", "marketplaces", name)
+const cloneDir = (home, name = "mp") => join(rootCacheDir(home), "marketplaces", name)
 
 const commandLink = (home, plugin, file) => join(cfg(home), "commands", `${plugin}:${file}`)
 
@@ -132,7 +132,7 @@ phase("4. the restart notice follows actual changes: skill-only install and remo
   expect(ocm(home, ["add", mp, "--explicit"]).status).toBe(0)
   const skilled = ocm(home, ["install", "skillkit"]) // skill-only: the mirror counts as created
   expect(skilled.status).toBe(0)
-  expect(lstatSync(join(home, ".cache", "ocm", "links", "mp", "skills", "skillkit--style")).isDirectory()).toBe(true)
+  expect(lstatSync(join(rootCacheDir(home), "links", "mp", "skills", "skillkit--style")).isDirectory()).toBe(true)
   if (noticeCount(skilled.output) !== 1) throw new Error(`expected the restart notice on the skill-only install:\n${skilled.output}`)
   expect(ocm(home, ["install", "adw"]).status).toBe(0)
   rmSync(join(mp, "plugins", "adw", "commands", "b.md"))

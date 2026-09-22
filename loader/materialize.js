@@ -288,8 +288,8 @@ export function materialize(name, dir, options = {}) {
   // a scoped pass never unregisters the skills path: other plugins'
   // rendered skills may still live there
   if (only === null || skillsRendered > 0) {
-    const warning = setSkillsPath(skillsDir, skillsRendered > 0)
-    if (warning) warnings.push(warning)
+    const skills = setSkillsPath(skillsDir, skillsRendered > 0)
+    if (skills.state === "skipped" || skills.state === "failed") warnings.push(skills.reason)
   }
 
   return report()

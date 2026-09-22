@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
-import { assertAbsent, withFakeHome, withFakeOpencode } from "./harness.mjs"
+import { assertAbsent, rootCacheDir, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
 // Helpers shared verbatim by the absorbed files below.
 
@@ -38,7 +38,7 @@ const registryFile = (home) => join(cfg(home), "ocm", "registry.json")
 
 const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8"))
 
-const skillsLinks = (home, mp = "mp") => join(home, ".cache", "ocm", "links", mp, "skills")
+const skillsLinks = (home, mp = "mp") => join(rootCacheDir(home), "links", mp, "skills")
 
 const manifest = (plugins) => `${JSON.stringify({ plugins }, null, 2)}\n`
 
@@ -89,7 +89,7 @@ const commitAll = (dir, message) => {
   git(dir, ["-c", "user.email=ocm@test", "-c", "user.name=ocm", "commit", "-m", message])
 }
 
-const cloneDir = (home, name = "mp") => join(home, ".cache", "ocm", "marketplaces", name)
+const cloneDir = (home, name = "mp") => join(rootCacheDir(home), "marketplaces", name)
 
 const commandLink = (home, plugin, file) => join(cfg(home), "commands", `${plugin}:${file}`)
 
@@ -387,7 +387,7 @@ phase("1. an AP-conformant plugin.json installs, and category/tags from extensio
   expect(manifest.tags).toEqual(["python"])
   expect(manifest.version).toBe("2.0.0")
   assertResolves(join(cfg(home), "commands", "adw:commit.md"), join(mp, "plugins", "adw", "commands", "commit.md"))
-  const mirror = join(home, ".cache", "ocm", "links", "mp", "skills", "adw--python-style", "SKILL.md")
+  const mirror = join(rootCacheDir(home), "links", "mp", "skills", "adw--python-style", "SKILL.md")
   expect(readFileSync(mirror, "utf8")).toContain('name: "adw:python-style"')
   // config safety: user keys survive outside ocm's skills.paths entry
   const after = JSON.parse(readFileSync(configPath, "utf8"))
@@ -566,7 +566,7 @@ phase("7. a skill nested two levels under skills/ installs in opencode and warns
   expect(ocm(home, "add", mp).status).toBe(0)
   expect(ocm(home, "install", "adw").status).toBe(0)
   expect(readRegistry(home).marketplaces.mp.plugins.adw.components.skill).toEqual(["group/nested"])
-  const mirror = join(home, ".cache", "ocm", "links", "mp", "skills", "adw--group-nested", "SKILL.md")
+  const mirror = join(rootCacheDir(home), "links", "mp", "skills", "adw--group-nested", "SKILL.md")
   expect(readFileSync(mirror, "utf8")).toContain('name: "adw:nested-skill"')
   const result = ocm(home, "validate", mp)
   const output = `${result.stdout}\n${result.stderr}`
@@ -1382,7 +1382,7 @@ phase("11. a repeat add of the same url is refused by url before any clone, even
   const refusal = `error: ${url} is already added as marketplace "ocm-e2e3-big"\n  use "ocm update ocm-e2e3-big", or "ocm remove ocm-e2e3-big" first`
   if (!repeat.stderr.includes(refusal)) throw new Error(`the repeat add must be refused by url with exactly:\n${refusal}\ngot:\n${repeat.stderr}`)
   if (repeat.stdout.includes("cloning")) throw new Error(`the url refusal must fire before any clone — no cloning line on stdout:\n${repeat.stdout}`)
-  expect(readdirSync(join(home, ".cache", "ocm", "marketplaces")).sort()).toEqual(["ocm-e2e3-big"])
+  expect(readdirSync(join(rootCacheDir(home), "marketplaces")).sort()).toEqual(["ocm-e2e3-big"])
 })
 
 phase("12. a different url declaring an added name clones, then refuses saying the fetched copy was discarded", async (home) => {
@@ -1405,7 +1405,7 @@ phase("12. a different url declaring an added name clones, then refuses saying t
   if (!added.stdout.includes("cloning")) throw new Error(`the residual case cannot be known before fetching — stdout must show the clone happened:\n${added.stdout}`)
   const refusal = `error: marketplace "ocm-e2e3-big" already added from ${bigUrl}\n  its marketplace.json declares that name; the copy just fetched was discarded\n  add this one under another name: ocm add ${otherUrl} --name <name>`
   if (!added.stderr.includes(refusal)) throw new Error(`the refusal must state the residual case exactly:\n${refusal}\ngot:\n${added.stderr}`)
-  expect(readdirSync(join(home, ".cache", "ocm", "marketplaces")).sort()).toEqual(["ocm-e2e3-big"])
+  expect(readdirSync(join(rootCacheDir(home), "marketplaces")).sort()).toEqual(["ocm-e2e3-big"])
 })
 
 phase("13. url comparison ignores a trailing \"/\" and \".git\" on either side", async (home) => {

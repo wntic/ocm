@@ -7,9 +7,10 @@
 // module under test therefore runs in a spawned child that inherits the fake
 // $HOME from its environment; the child's homedir() is the fake one.
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const RUNNER = `
@@ -163,4 +164,34 @@ export function assertFileExists(path) {
 
 export function assertAbsent(path) {
   if (existsSync(path)) throw new Error(`expected nothing at ${path}`)
+}
+
+// brief 38: the per-config-root cache namespace, ~/.cache/ocm/roots/<slug>/.
+// A deliberate replication of loader/paths.js's derivation — the tests
+// asserting the slug form itself is the point. xdg is XDG_CONFIG_HOME's
+// value (undefined or "" for the default root). The canonical path realpaths
+// the deepest existing ancestor and joins the missing tail back on, so the
+// slug is stable before and after the config root exists (macOS temp dirs
+// sit behind /var -> /private/var; a plain resolve() would flip mid-flight).
+export function rootCacheDir(home, xdg) {
+  const configRoot = xdg ? join(xdg, "opencode") : join(home, ".config", "opencode")
+  let canonical
+  let cur = configRoot
+  const tail = []
+  for (;;) {
+    if (existsSync(cur)) {
+      canonical = join(realpathSync(cur), ...tail)
+      break
+    }
+    tail.unshift(basename(cur))
+    const parent = dirname(cur)
+    if (parent === cur) {
+      canonical = resolve(configRoot)
+      break
+    }
+    cur = parent
+  }
+  const prefix = xdg ? "xdg" : "default"
+  const slug = `${prefix}-${createHash("sha256").update(canonical).digest("hex").slice(0, 6)}`
+  return join(home, ".cache", "ocm", "roots", slug)
 }
