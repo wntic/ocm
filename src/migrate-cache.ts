@@ -45,7 +45,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // active root's registry referencing it. Tolerant read — a corrupt registry
 // cannot reference anything and must not throw here.
 export function cacheMigrationNeeded(): boolean {
-  if (!OLD_ITEMS.some((item) => existsSync(join(OCM_CACHE_DIR, item)))) return false
+  // The registry naming an old path is the whole condition. The moves run
+  // before the rewrites, so a crash between them leaves the old directories
+  // gone and the registry still pointing at them; also requiring the
+  // directories to exist made that state permanent — every marketplace
+  // reading as "directory missing", a git one recoverable only by re-cloning
+  // and a local one not at all. On the next command the moves skip what has
+  // already moved and the rewrites finish the job.
+  //
+  // It must not widen further: an old-layout cache *no* registry references
+  // may belong to another config root, and moving it is the cross-root harm
+  // this brief exists to end. reportUnreferencedOldCache handles that case.
   const prefix = `${join(OCM_CACHE_DIR, "marketplaces")}/`
   return Object.values(readRegistry().marketplaces).some((entry) => entry.dir.startsWith(prefix))
 }

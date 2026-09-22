@@ -440,6 +440,38 @@ test("6. a second run on the migrated cache is a no-op: no migration words, byte
   })
 }, 240_000)
 
+phase("7b. a cache migration interrupted between the move and the rewrite finishes on the next command (review finding)", async (home) => {
+  // The moves happen before the registry rewrite. A crash in that window
+  // leaves the old directories gone and the registry still naming them, and a
+  // predicate requiring *both* halves to be incomplete would call that state
+  // finished — the clone unreachable for good, with a local marketplace not
+  // even recoverable by re-cloning.
+  const remote = join(home, "remote-mp")
+  gitRepo(remote, { plugins: { adw: {
+    "plugin.json": `${JSON.stringify({ description: "a demo plugin" }, null, 2)}\n`,
+    commands: { "commit.md": "---\ndescription: commit\n---\n\nbody\n" },
+  } } })
+  expect(ocm(home, "add", `file://${remote}`).status).toBe(0)
+
+  const oldPrefix = join(home, ".cache", "ocm", "marketplaces")
+  const registry = JSON.parse(readFileSync(registryFile(home), "utf8"))
+  const [name, entry] = Object.entries(registry.marketplaces)[0]
+  const clone = entry.dir
+  if (!clone.includes(join(".cache", "ocm", "roots"))) throw new Error(`expected a namespaced clone, got ${clone}`)
+  // rewind only the registry: the clone stays where the move already put it
+  entry.dir = join(oldPrefix, name)
+  writeFileSync(registryFile(home), `${JSON.stringify(registry, null, 2)}\n`)
+  assertAbsent(entry.dir)
+
+  const healed = ocm(home, "list")
+  if (healed.status !== 0) throw new Error(`ocm list exited ${healed.status}:\n${healed.stdout}\n${healed.stderr}`)
+  const after = JSON.parse(readFileSync(registryFile(home), "utf8")).marketplaces[name]
+  if (after.dir.startsWith(`${oldPrefix}/`)) {
+    throw new Error(`the registry still names the old-layout path after a later command: ${after.dir}`)
+  }
+  expect(after.dir).toBe(clone)
+}, 300_000)
+
 phase("7. an old-layout cache no registry references is reported and left alone", async (home) => {
   const oldCache = join(home, ".cache", "ocm")
   writeTree(join(oldCache, "marketplaces", "stray-mp"), { "README.md": "# a stray clone\n" })
