@@ -1,9 +1,8 @@
 import { existsSync, mkdirSync } from "node:fs"
-import { dirname, relative } from "node:path"
-import { pullRepo, reconcilePluginRecords, registerPlugins } from "../../loader/core.js"
+import { dirname } from "node:path"
+import { pullRepo, readRenames, reconcilePluginRecords, registerPlugins, resolveChains } from "../../loader/core.js"
 import { componentRoot, deriveComponents, materializeLinks, removeMcpKeys } from "../install"
-import { discoverMarketplace, readRenames } from "../discovery"
-import { applyRenames, resolveChains } from "../renames"
+import { discoverMarketplace } from "../discovery"
 import { clone, git } from "../git"
 import { loadRegistryForWrite, saveRegistry, saveRegistryIfChanged } from "../registry"
 import { installLoader, reportTuiPlugin } from "../loader"
@@ -124,7 +123,7 @@ async function updateOne(registry: Registry, name: string, trust?: boolean): Pro
       if (report.after) entry.revision = report.after
       entry.lastSync = { at: new Date().toISOString(), ok: true, error: null }
       saveRegistry(registry)
-      const links = materializeLinks(name, entry, false, views.paths, views.aliases)
+      const links = materializeLinks(name, entry, false, views.paths)
       report.warnings.push(...links.warnings)
       // brief 31 §3: the records are derived from what materialized, then
       // saved again — two writes, one lock (spec 27 §1)
@@ -193,19 +192,20 @@ async function updateOne(registry: Registry, name: string, trust?: boolean): Pro
 }
 
 // what reconcile computed for updateOne's report: the discovered plugins,
-// the pre-reconcile record snapshots, and the git-diff views (the per-plugin
-// file lists and the changed set the materializer turns into `refreshed`)
+// the pre-registration record snapshots, and the git-diff views (the
+// per-plugin file lists and the changed set the materializer turns into
+// `refreshed`)
 interface ReconcileViews {
   plugins: DiscoveredPlugin[]
   versions: Map<string, string | null>
   known: Set<string>
   changes: Map<string, FileChange[]>
   paths: Set<string> | null
-  aliases: Map<string, string>
 }
 
-// discover, apply renames, reconcile against the registry (spec 08 step 4);
-// the record reconciliation itself is the core's shared function (spec 20)
+// discover, reconcile against the registry (spec 08 step 4); the record
+// reconciliation itself — renames, refusals, prune — is the core's shared
+// function (spec 20)
 function reconcile(registry: Registry, name: string, report: MarketplaceReport): ReconcileViews {
   const entry = registry.marketplaces[name]!
   const root = componentRoot(entry)
@@ -215,35 +215,26 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport):
   const renames = readRenames(root, plugins)
   const { resolved, cycles } = resolveChains(renames)
   for (const cycle of cycles) report.warnings.push(`rename cycle ignored: ${cycle.join(" → ")} → ${cycle[0]}`)
-  const applied = applyRenames(registry, name, entry, discovered.plugins, resolved)
-  // snapshotted before the shared prune: a pruned plugin is never discovered,
-  // so pluginReports never looks its entries up
-  const versions = new Map(Object.entries(entry.plugins).map(([pluginName, plugin]) => [pluginName, plugin.version]))
-  const known = new Set(Object.keys(entry.plugins))
   const fileViews = pluginFileChanges(entry, report.before, report.after, plugins)
   const changed = new Set([...fileViews.changes].filter(([, files]) => files.length > 0).map(([pluginName]) => pluginName))
-  const { warnings, pruned, dropped, registrable } = reconcilePluginRecords(registry, name, root, {
-    discovered: plugins, excluded: applied.excluded, resolved, changed,
+  const { warnings, pruned, dropped, renamed, removed, refused, kept, registrable } = reconcilePluginRecords(registry, name, root, {
+    discovered: plugins, resolved, changed,
   })
+  // snapshotted after the reconcile — a migrated record sits under its new
+  // name — and before registration, so a new plugin is not yet known
+  const versions = new Map(Object.entries(entry.plugins).map(([pluginName, plugin]) => [pluginName, plugin.version]))
+  const known = new Set(Object.keys(entry.plugins))
   registerPlugins(registry, name, registrable)
-  const mcp = removeMcpKeys([...applied.removed, ...applied.renamed.map((rename) => rename.from), ...pruned])
+  // registration replaces the plugins map wholesale, so the records a
+  // refused rename kept go back after it
+  Object.assign(entry.plugins, kept)
+  const mcp = removeMcpKeys([...removed, ...renamed.map((rename) => rename.from), ...pruned])
   if (mcp.warning) report.warnings.push(mcp.warning)
   report.warnings.push(...warnings)
-  Object.assign(entry.plugins, applied.kept)
-  // brief 31 §5: a refused rename is inert — the renamed directory links
-  // under the kept name for this run, and the record's source follows the
-  // disk so doctor's legacy check sees a real directory
-  const aliases = new Map<string, string>()
-  for (const refusal of applied.refused) {
-    if (refusal.dir === null) continue
-    aliases.set(refusal.to, refusal.from)
-    const kept = entry.plugins[refusal.from]
-    if (kept) kept.source = relative(root, refusal.dir)
-  }
-  report.renamed = applied.renamed.map((rename) => ({ ...rename, net: "renamed" as const, reason: null }))
-  report.removed = applied.removed
+  report.renamed = renamed.map((rename) => ({ ...rename, net: "renamed" as const, reason: null }))
+  report.removed = removed
   report.pruned = pruned
   report.dropped = dropped
-  report.refused = applied.refused.map(({ from, to, incumbent }) => ({ from, to, incumbent, held: true, components: [] }))
-  return { plugins, versions, known, changes: fileViews.changes, paths: fileViews.paths, aliases }
+  report.refused = refused.map(({ from, to, incumbent }) => ({ from, to, incumbent, held: true, components: [] }))
+  return { plugins, versions, known, changes: fileViews.changes, paths: fileViews.paths }
 }

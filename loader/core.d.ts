@@ -129,6 +129,9 @@ export interface CoreMarketplaceEntry {
     components?: Record<string, string>
   }
   trustPending?: boolean
+  // brief 40: renames refused for a cross-marketplace collision, as
+  // from → to; the record stays under `from` until the collision clears
+  refusedRenames?: Record<string, string>
   lastSync: { at: string; ok: boolean; error: string | null } | null
   plugins: Record<string, CoreMarketplacePlugin>
 }
@@ -150,8 +153,6 @@ export interface CoreParsedSource {
 export interface CoreReconcileOptions {
   // the discovered plugins to register; discovered fresh when omitted
   discovered?: CoreManifestPlugin[]
-  // rename targets refused for a cross-marketplace collision
-  excluded?: Set<string>
   // resolved renames: a pruned name that is a rename source survives
   resolved?: Record<string, string | null>
   // plugins whose files changed in this pull; a changed manifest-less
@@ -165,6 +166,16 @@ export interface CoreReconcileResult {
   // installed plugins the manifest gate dropped: uninstalled, one report
   // line each (brief 29 §3)
   dropped: { name: string; reason: string }[]
+  // brief 40: records migrated along resolved renames before the prune
+  renamed: { from: string; to: string }[]
+  removed: string[]
+  // brief 40: renames refused for a cross-marketplace collision — the
+  // record stays under its old name and the refusal is recorded on the
+  // entry's refusedRenames
+  refused: { from: string; to: string; incumbent: string; dir: string | null }[]
+  // brief 40: records a refusal kept at their old name, re-added after
+  // registration replaces the plugins map
+  kept: Record<string, CoreMarketplacePlugin>
   // brief 31 §3: the plugins left for the caller to register after it
   // materializes — registration from outcomes is the caller's job
   registrable: CoreManifestPlugin[]
@@ -351,6 +362,11 @@ export declare function reconcilePluginRecords(
   root: string,
   options?: CoreReconcileOptions,
 ): CoreReconcileResult
+export declare function readRenames(marketplaceDir: string, plugins: CoreManifestPlugin[]): Record<string, string | null>
+export declare function resolveChains(renames: Record<string, string | null>): {
+  resolved: Record<string, string | null>
+  cycles: string[][]
+}
 export declare function addMarketplace(source: string, options?: CoreAddOptions): Promise<CoreAddResult>
 export declare function addRefusalChain(
   name: string,

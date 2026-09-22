@@ -1501,3 +1501,321 @@ phase("16. a plugin whose manifest vanished between add and update prints no ver
   if (!existsSync(link)) throw new Error(`expected the grandfathered command link at ${link}`)
 }, 240_000)
 }
+
+// brief 40: the loader's startup sync applies ordinary plugin renames — a
+// rename first seen by the sync lands exactly where `ocm update` would land
+// it: the record migrates wholesale, links follow the new name, trust-gated
+// code waits for the user's re-decision, chains resolve to their fixed
+// point, cycles warn once and move nothing. A rename refused for colliding
+// with another marketplace's plugin name becomes registry state, so the
+// kept record survives every later pass — syncs, doctor --fix, trust —
+// until the collision clears and the rename applies, reported
+{
+// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
+function assertResolves(dest, source) {
+  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
+  expect(realpathSync(dest)).toBe(realpathSync(source))
+}
+
+// the loader's sync with the syncAll result printed: ocm-loader.js discards
+// it, so the sync's own warnings are only observable through a runner like
+// this
+const REPORT_RUNNER = 'const mod = await import(process.argv[2]); const result = await mod.syncAll({ reason: "startup" }); console.log(JSON.stringify(result))\n'
+
+function loaderSyncReport(home, env = {}) {
+  const runner = join(home, "sync-report-runner.mjs")
+  writeFileSync(runner, REPORT_RUNNER)
+  const result = spawnSync(process.execPath, [runner, CORE_MODULE], {
+    env: { ...process.env, HOME: home, ...env }, encoding: "utf8", timeout: 120_000,
+  })
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
+}
+
+phase("1. the loader's sync applies an ordinary rename: the record migrates with enabled and installedAt, links move to the new name and the mcp key follows once trust is re-decided", async (home) => {
+  // invariants: config safety and ownership — the user's keys and command
+  // predate the rename and must survive it outside ocm's owned keys
+  writeTree(cfg(home), {
+    "opencode.json": json({ mcp: { "user-server": { type: "local", command: ["echo"] } } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { old: {
+    "plugin.json": json({ version: "1.0.0", description: "demo plugin" }),
+    commands: { "review.md": COMMAND },
+    "mcp.json": mcpJson(MCP),
+  } } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp", "--trust", "--explicit")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  if (ocm(home, "install", "old").status !== 0) throw new Error("ocm install old exited non-zero")
+  const record = readRegistry(home).marketplaces.mp.plugins.old
+  if (!record?.installedAt) throw new Error(`expected old installed with installedAt in ${registryFile(home)}, got ${JSON.stringify(record)}`)
+  assertResolves(commandLink(home, "old", "review.md"), join(cloneDir(home), "plugins", "old", "commands", "review.md"))
+  expect(mcpKeys(home)["ocm--old--db"]).toEqual(MCP.db) // the fixture's starting point
+
+  renameSync(join(remote, "plugins", "old"), join(remote, "plugins", "new"))
+  writeFileSync(join(remote, "plugins", "new", "plugin.json"), json({ version: "2.0.0", description: "demo plugin" }))
+  writeFileSync(join(remote, "marketplace.json"), renames({ old: "new" }))
+  commitAll(remote, "rename old to new")
+
+  const synced = loaderSync(home, { OCM_SYNC_INTERVAL_MS: "0" }) // interval 0: the sync is due now
+  if (synced.status !== 0) throw new Error(`loader sync exited ${synced.status}: ${synced.stderr}`)
+  const plugins = readRegistry(home).marketplaces.mp.plugins
+  if (!plugins.new) throw new Error(`expected the record migrated to "new" in ${registryFile(home)}, got ${JSON.stringify(plugins)}`)
+  expect(plugins.new.enabled).toBe(true)
+  expect(plugins.new.installedAt).toBe(record.installedAt) // the install survives the rename
+  expect(plugins.new.version).toBe("2.0.0") // the version comes from the new manifest
+  expect(plugins.old).toBeUndefined()
+  assertResolves(commandLink(home, "new", "review.md"), join(cloneDir(home), "plugins", "new", "commands", "review.md"))
+  assertAbsent(commandLink(home, "old", "review.md"))
+  expect(mcpKeys(home)["ocm--old--db"]).toBeUndefined() // the rename removes the old name's key
+  expect(mcpKeys(home)["ocm--new--db"]).toBeUndefined() // trust-gated: the renamed component's path is new to the grant — exactly where `ocm update` would block pending its prompt
+  expect(readRegistry(home).marketplaces.mp.trustPending).toBeTruthy() // the loader surfaces the drift instead of prompting
+  expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] }) // invariant: config safety
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+
+  // the user re-decides — the non-interactive re-grant, as after `ocm update`
+  const trusted = ocm(home, "trust", "mp", "--yes")
+  if (trusted.status !== 0) throw new Error(`ocm trust mp --yes exited ${trusted.status}: ${trusted.stderr}`)
+  expect(mcpKeys(home)["ocm--new--db"]).toEqual(MCP.db) // the service survives under its new name once re-trusted
+  expect(readRegistry(home).marketplaces.mp.trustPending).toBeUndefined() // the re-grant clears the drift flag
+  expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] }) // invariant: config safety across the re-trust
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership across the re-trust
+
+  // invariant: idempotence — a second due sync renames nothing again
+  const settled = JSON.stringify(readRegistry(home).marketplaces.mp.plugins)
+  const again = loaderSync(home, { OCM_SYNC_INTERVAL_MS: "0" })
+  if (again.status !== 0) throw new Error(`second loader sync exited ${again.status}: ${again.stderr}`)
+  expect(JSON.stringify(readRegistry(home).marketplaces.mp.plugins)).toBe(settled)
+
+  // invariant: no plugin-load errors — every link the rename left behind resolves
+  const probe = opencodeProbe(cfg(home), home)
+  if (probe.available && !probe.unreliable) expect(probe.pluginErrors).toEqual([])
+}, 420_000)
+
+test("2. the loader's sync walks a rename chain to its fixed point; a cycle is ignored with exactly one warning and nothing moves", async () => {
+  // a→b→c: the record lands on c with its state; a and b are gone
+  await withFakeHome(async (home) => {
+    const remote = join(home, "remote")
+    gitRepo(remote, { plugins: { a: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } } } })
+    const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+    if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+    const installedAt = readRegistry(home).marketplaces.mp.plugins.a?.installedAt
+    if (!installedAt) throw new Error(`expected a installed with installedAt in ${registryFile(home)}`)
+    renameSync(join(remote, "plugins", "a"), join(remote, "plugins", "c"))
+    writeFileSync(join(remote, "marketplace.json"), renames({ a: "b", b: "c" }))
+    commitAll(remote, "rename a to c through b")
+
+    const synced = loaderSync(home, { OCM_SYNC_INTERVAL_MS: "0" })
+    if (synced.status !== 0) throw new Error(`loader sync exited ${synced.status}: ${synced.stderr}`)
+    const plugins = readRegistry(home).marketplaces.mp.plugins
+    if (!plugins.c) throw new Error(`expected the record to land on "c" in ${registryFile(home)}, got ${JSON.stringify(plugins)}`)
+    expect(plugins.c.enabled).toBe(true)
+    expect(plugins.c.installedAt).toBe(installedAt) // the chain migrates the record, it does not reinstall it
+    expect(plugins.a).toBeUndefined()
+    expect(plugins.b).toBeUndefined()
+    assertResolves(commandLink(home, "c", "x.md"), join(cloneDir(home), "plugins", "c", "commands", "x.md"))
+    assertAbsent(commandLink(home, "a", "x.md"))
+  })
+  // x↔y: the cycle is ignored — one warning, records and links untouched
+  await withFakeHome(async (home) => {
+    const remote = join(home, "remote")
+    gitRepo(remote, { plugins: {
+      x: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } },
+      y: { "plugin.json": PLUGIN_JSON, commands: { "y.md": COMMAND } },
+    } })
+    const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+    if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+    writeFileSync(join(remote, "marketplace.json"), renames({ x: "y", y: "x" }))
+    commitAll(remote, "declare a rename cycle")
+    const before = JSON.stringify(readRegistry(home).marketplaces.mp.plugins)
+
+    const synced = loaderSyncReport(home, { OCM_SYNC_INTERVAL_MS: "0" })
+    if (synced.status !== 0) throw new Error(`loader sync exited ${synced.status}: ${synced.stderr}`)
+    let report
+    try {
+      report = JSON.parse(synced.stdout)
+    } catch {
+      throw new Error(`the report runner printed no JSON result:\n${synced.stdout}\n--- stderr ---\n${synced.stderr}`)
+    }
+    const cycles = (report.warnings ?? []).filter((warning) => warning.includes("rename cycle ignored"))
+    expect(cycles).toEqual(["mp: rename cycle ignored: x → y → x"]) // once, with the CLI's text
+    const plugins = readRegistry(home).marketplaces.mp.plugins
+    expect(plugins.x?.enabled).toBe(true)
+    expect(plugins.y?.enabled).toBe(true)
+    assertResolves(commandLink(home, "x", "x.md"), join(cloneDir(home), "plugins", "x", "commands", "x.md"))
+    assertResolves(commandLink(home, "y", "y.md"), join(cloneDir(home), "plugins", "y", "commands", "y.md"))
+    expect(JSON.stringify(readRegistry(home).marketplaces.mp.plugins)).toBe(before) // no churn
+  })
+}, 480_000)
+
+phase("3. a due sync over a marketplace with no renames leaves the plugins record unchanged while lastSync.at advances", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  const before = JSON.stringify(readRegistry(home).marketplaces.mp.plugins)
+  const atBefore = readRegistry(home).marketplaces.mp.lastSync?.at
+
+  const synced = loaderSync(home, { OCM_SYNC_INTERVAL_MS: "0" }) // interval 0: the pass is due now
+  if (synced.status !== 0) throw new Error(`loader sync exited ${synced.status}: ${synced.stderr}`)
+  const entry = readRegistry(home).marketplaces.mp
+  expect(JSON.stringify(entry.plugins)).toBe(before) // no renames: no record churn
+  if (entry.lastSync?.at === atBefore) {
+    throw new Error(`the due pass must advance lastSync.at in ${registryFile(home)} — without it the no-churn assertion above proved nothing`)
+  }
+  assertResolves(commandLink(home, "tool", "work.md"), join(cloneDir(home), "plugins", "tool", "commands", "work.md"))
+}, 240_000)
+
+// the fixture's mcp server, one version forward: a content change that
+// forces the trust re-decision without touching any name
+const MCP_V2 = { db: { type: "local", command: ["npx", "-y", "@acme/db-mcp@2"], enabled: true } }
+
+// the refused-rename fixture: mp-a holds the name "new", mp-b's author
+// renames "old" to "new", and the loader's due sync is the first pass to
+// see it. Returns mp-b's pre-rename record for installedAt comparisons;
+// asserts only the starting point, so each phase below fails on its own
+// behaviour rather than on the fixture
+function refusedRenameHome(home) {
+  // invariants: config safety and ownership — the user's keys and command
+  // predate the rename and must survive everything ocm does here
+  writeTree(cfg(home), {
+    "opencode.json": json({ mcp: { "user-server": { type: "local", command: ["echo"] } } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  writeTree(join(home, "mp-a"), { plugins: { new: { "plugin.json": PLUGIN_JSON, commands: { "a.md": COMMAND } } } })
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { old: {
+    "plugin.json": json({ version: "1.0.0", description: "demo plugin" }),
+    commands: { "review.md": COMMAND },
+    "mcp.json": mcpJson(MCP),
+  } } })
+  const addedA = ocm(home, "add", join(home, "mp-a"))
+  if (addedA.status !== 0) throw new Error(`ocm add mp-a exited ${addedA.status}: ${addedA.stderr}`)
+  const addedB = ocm(home, "add", `file://${remote}`, "--name", "mp-b", "--trust")
+  if (addedB.status !== 0) throw new Error(`ocm add mp-b exited ${addedB.status}: ${addedB.stderr}`)
+  const record = readRegistry(home).marketplaces["mp-b"].plugins.old
+  if (!record?.installedAt) throw new Error(`expected old installed with installedAt in ${registryFile(home)}, got ${JSON.stringify(record)}`)
+  assertResolves(commandLink(home, "old", "review.md"), join(cloneDir(home, "mp-b"), "plugins", "old", "commands", "review.md"))
+  expect(mcpKeys(home)["ocm--old--db"]).toEqual(MCP.db) // the fixture's starting point
+
+  renameSync(join(remote, "plugins", "old"), join(remote, "plugins", "new"))
+  writeFileSync(join(remote, "marketplace.json"), renames({ old: "new" }))
+  commitAll(remote, "rename old to new")
+
+  const synced = loaderSync(home, { OCM_SYNC_INTERVAL_MS: "0" }) // interval 0: the sync is due now
+  if (synced.status !== 0) throw new Error(`loader sync exited ${synced.status}: ${synced.stderr}`)
+  return record
+}
+
+phase("4. the loader's sync refuses a colliding rename: the refusal becomes registry state and the kept record survives with its links and mcp keys", async (home) => {
+  const record = refusedRenameHome(home)
+  let entry = readRegistry(home).marketplaces["mp-b"]
+  if (entry.refusedRenames?.old !== "new") {
+    throw new Error(`expected the refusal recorded as refusedRenames.old = "new" in ${registryFile(home)}, got ${JSON.stringify(entry.refusedRenames)}`)
+  }
+  const kept = entry.plugins.old
+  if (!kept) throw new Error(`expected the record kept under "old" in ${registryFile(home)}, got ${JSON.stringify(entry.plugins)}`)
+  expect(kept.enabled).toBe(true)
+  expect(kept.installedAt).toBe(record.installedAt) // the install survives the refused rename
+  expect(entry.plugins.new).toBeUndefined() // the colliding target is never registered here
+  // the kept name's links resolve into the renamed directory — the alias the CLI already uses
+  assertResolves(commandLink(home, "old", "review.md"), join(cloneDir(home, "mp-b"), "plugins", "new", "commands", "review.md"))
+  assertAbsent(commandLink(home, "new", "review.md")) // the incumbent keeps the name
+  expect(mcpKeys(home)["ocm--old--db"]).toEqual(MCP.db) // the mcp key survives under the kept name
+  expect(mcpKeys(home)["ocm--new--db"]).toBeUndefined() // the colliding target never gains one
+  expect(entry.trustPending).toBeUndefined() // a refused rename moves no executable code
+  // the incumbent is untouched
+  assertResolves(commandLink(home, "new", "a.md"), join(home, "mp-a", "plugins", "new", "commands", "a.md"))
+
+  // invariant: idempotence — a second due sync refuses again and moves nothing
+  const settled = JSON.stringify(entry.plugins)
+  const again = loaderSync(home, { OCM_SYNC_INTERVAL_MS: "0" })
+  if (again.status !== 0) throw new Error(`second loader sync exited ${again.status}: ${again.stderr}`)
+  entry = readRegistry(home).marketplaces["mp-b"]
+  expect(JSON.stringify(entry.plugins)).toBe(settled)
+  expect(entry.refusedRenames?.old).toBe("new") // the refusal is state: it survives the process that wrote it
+  assertResolves(commandLink(home, "old", "review.md"), join(cloneDir(home, "mp-b"), "plugins", "new", "commands", "review.md"))
+
+  // invariant: config safety and ownership
+  expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] })
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+
+  // invariant: no plugin-load errors — every link the refusal left behind resolves
+  const probe = opencodeProbe(cfg(home), home)
+  if (probe.available && !probe.unreliable) expect(probe.pluginErrors).toEqual([])
+
+  // brief 40 edge case: a refusal recorded for a marketplace that is later
+  // removed goes with the marketplace — no orphan state
+  if (ocm(home, "remove", "mp-b").status !== 0) throw new Error("ocm remove mp-b exited non-zero")
+  expect(readRegistry(home).marketplaces["mp-b"]).toBeUndefined()
+}, 420_000)
+
+phase("5. a refused rename survives ocm doctor --fix and ocm trust — no caller of materialize needs rename knowledge for the kept plugin to stay installed", async (home) => {
+  const record = refusedRenameHome(home)
+  let entry = readRegistry(home).marketplaces["mp-b"]
+  if (!entry.plugins.old) throw new Error(`expected the record kept under "old" after the sync in ${registryFile(home)}, got ${JSON.stringify(entry.plugins)}`)
+
+  // doctor --fix re-clones a cleared cache and re-materializes with no alias
+  // map in hand: the kept record must survive from registry state alone
+  rmSync(cloneDir(home, "mp-b"), { recursive: true })
+  const doctor = spawnSync(process.execPath, [OCM_BIN, "doctor", "--fix"], {
+    env: withFakeOpencode({ ...process.env, HOME: home }), encoding: "utf8", timeout: 300_000,
+  })
+  if (doctor.status !== 0) throw new Error(`ocm doctor --fix exited ${doctor.status}:\n${doctor.stdout}\n--- stderr ---\n${doctor.stderr}`)
+  entry = readRegistry(home).marketplaces["mp-b"]
+  if (!entry.plugins.old) throw new Error(`expected the record kept under "old" after doctor --fix in ${registryFile(home)}, got ${JSON.stringify(entry.plugins)}`)
+  expect(entry.plugins.old.enabled).toBe(true)
+  expect(entry.plugins.old.installedAt).toBe(record.installedAt)
+  assertResolves(commandLink(home, "old", "review.md"), join(cloneDir(home, "mp-b"), "plugins", "new", "commands", "review.md"))
+  expect(mcpKeys(home)["ocm--old--db"]).toEqual(MCP.db)
+
+  // a content change forces the trust re-decision; the re-grant
+  // materializes with no alias map in hand either
+  const remote = join(home, "remote")
+  writeFileSync(join(remote, "plugins", "new", "mcp.json"), mcpJson(MCP_V2))
+  commitAll(remote, "change the mcp server")
+  const synced = loaderSync(home, { OCM_SYNC_INTERVAL_MS: "0" })
+  if (synced.status !== 0) throw new Error(`loader sync exited ${synced.status}: ${synced.stderr}`)
+  expect(readRegistry(home).marketplaces["mp-b"].trustPending).toBeTruthy() // the content change gates as usual
+  const trusted = ocm(home, "trust", "mp-b", "--yes")
+  if (trusted.status !== 0) throw new Error(`ocm trust mp-b --yes exited ${trusted.status}: ${trusted.stderr}`)
+  entry = readRegistry(home).marketplaces["mp-b"]
+  if (!entry.plugins.old) throw new Error(`expected the record kept under "old" after ocm trust in ${registryFile(home)}, got ${JSON.stringify(entry.plugins)}`)
+  expect(mcpKeys(home)["ocm--old--db"]).toEqual(MCP_V2.db) // the re-grant serves the kept name
+  expect(mcpKeys(home)["ocm--new--db"]).toBeUndefined()
+  assertResolves(commandLink(home, "old", "review.md"), join(cloneDir(home, "mp-b"), "plugins", "new", "commands", "review.md"))
+
+  // invariants: config safety and ownership
+  expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] })
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+}, 480_000)
+
+phase("6. a recorded refusal clears when the incumbent marketplace is removed: the next update applies the rename and reports it", async (home) => {
+  const record = refusedRenameHome(home)
+  if (ocm(home, "remove", "mp-a").status !== 0) throw new Error("ocm remove mp-a exited non-zero")
+  const result = ocm(home, "update", "mp-b")
+  if (result.status !== 0) throw new Error(`ocm update mp-b exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (!/renamed[^\n]*old[^\n]*new/.test(output)) {
+    throw new Error(`expected the update to report the rename old → new now that the incumbent is gone:\n${output}`)
+  }
+  const entry = readRegistry(home).marketplaces["mp-b"]
+  if (!entry.plugins.new) throw new Error(`expected the record migrated to "new" in ${registryFile(home)}, got ${JSON.stringify(entry.plugins)}`)
+  expect(entry.plugins.new.enabled).toBe(true)
+  expect(entry.plugins.new.installedAt).toBe(record.installedAt) // the install migrates, it does not reinstall
+  expect(entry.plugins.old).toBeUndefined()
+  expect(entry.refusedRenames ?? {}).toEqual({}) // the refusal state clears with the collision
+  assertResolves(commandLink(home, "new", "review.md"), join(cloneDir(home, "mp-b"), "plugins", "new", "commands", "review.md"))
+  assertAbsent(commandLink(home, "old", "review.md"))
+  // the rename is trust-gated exactly where an ordinary rename is: the old
+  // name's key is gone and the new name's waits for the user's re-decision
+  expect(mcpKeys(home)["ocm--old--db"]).toBeUndefined()
+  expect(mcpKeys(home)["ocm--new--db"]).toBeUndefined()
+  const trusted = ocm(home, "trust", "mp-b", "--yes")
+  if (trusted.status !== 0) throw new Error(`ocm trust mp-b --yes exited ${trusted.status}: ${trusted.stderr}`)
+  expect(mcpKeys(home)["ocm--new--db"]).toEqual(MCP.db) // the re-grant serves the new name
+  // invariants: config safety and ownership
+  expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] })
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+}, 420_000)
+}

@@ -60,6 +60,9 @@ export interface MarketplaceEntry {
   // set by the loader when executable components changed since the grant;
   // cleared by the next trust decision (spec 07)
   trustPending?: boolean
+  // brief 40: renames refused for a cross-marketplace collision, as
+  // from → to; the record stays under `from` until the collision clears
+  refusedRenames?: Record<string, string>
   lastSync: { at: string; ok: boolean; error: string | null } | null
   plugins: Record<string, MarketplacePlugin>
 }
