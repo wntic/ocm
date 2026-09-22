@@ -24,7 +24,7 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.5.1 | brief 35 §1, §3, §4 (docs and template only) | published 2026-09-19 |
 | v0.6.0 | briefs 27, 28, 29, 34 — write safety, platform, manifest gate, MCP shape | published 2026-09-20 |
 | v0.6.1 | brief 38 §0 — the TUI freeze at zero columns, and a stale loader after upgrade | published 2026-09-20 |
-| v0.7.0 | briefs 30, 31, 38, 39, 40, 41 — outcome-derived reports, per-root cache, renames in the loader, local changed-set, plugin-root substitution, small correctness | tagged 2026-09-22 |
+| v0.7.0 | briefs 30, 31, 38, 39, 40, 41 — outcome-derived reports, per-root cache, renames in the loader, local changed-set, plugin-root substitution, small correctness | published 2026-09-22 |
 
 Rules:
 
@@ -34,9 +34,14 @@ Rules:
 - While 0.x: one **minor** per milestone batch; **patch** only for
   hotfixes of an already-published version.
 - Breaking changes (schema, CLI contract, author requirements) are
-  allowed only in a minor while 0.x, must be listed in the brief's
-  **Breaking** note, and are justified by the absence of public
-  users. After 1.0 they require a deprecation window.
+  allowed only in a minor while 0.x and must be listed in the brief's
+  **Breaking** note. **The "no public users" justification has expired**:
+  npm recorded 126 downloads of v0.6.1 and 152 of v0.6.0 in one week
+  (2026-09-22). Earlier breaking changes — brief 19's mandatory
+  `plugin.json` above all — were argued as cheap on that basis, and it was
+  true when they were argued. From here a breaking change needs a
+  migration story that works without the user reading a release note.
+  After 1.0 they require a deprecation window.
 - `npm publish` runs only from `main`, only on a commit tagged
   `vX.Y.Z`. The tag is the release record; the version in
   `package.json` never lies about what is published.
