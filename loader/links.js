@@ -102,7 +102,7 @@ export function link(source, dest, ctx, plugin, component) {
 }
 
 // render: dest is owned iff it carries the rendered marker
-function render(source, dest, transform, ctx, plugin) {
+export function render(source, dest, transform, ctx, plugin) {
   let body
   let output
   try {

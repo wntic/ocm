@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, rmSync, rmdirSync } from "node:fs"
-import { dirname, join, relative } from "node:path"
+import { existsSync, mkdirSync, readFileSync, readlinkSync, rmSync, rmdirSync } from "node:fs"
+import { basename, dirname, join, relative } from "node:path"
 import { setSkillsPath } from "./config.js"
 import { discoverPlugins, PLUGIN_NAME_RE } from "./discovery.js"
-import { gcTargets, isRenderedFile, link, mirror } from "./links.js"
+import { gcTargets, isRenderedFile, link, mirror, render } from "./links.js"
 import { pluginRefusal, refusalOutcomes } from "./gate.js"
 import { foldedComponentGroups } from "./limits.js"
 import { pluginGateFindings } from "./manifest-gate.js"
@@ -61,6 +61,20 @@ function removeLegacyContainers(name) {
   rmSync(join(OPENCODE_AGENTS_DIR, `ocm--${name}`), { recursive: true, force: true })
 }
 
+// brief 41: a rendered command or agent is ours by its marker, but the
+// commands and agents dirs are shared between marketplaces and the marker
+// cannot say which one rendered it — the registry record claiming the
+// plugin and the component is the scope, as a symlink's target is for links
+function renderedComponentOwned(entry, type) {
+  return (path) => {
+    if (!isRenderedFile(path)) return false
+    const name = basename(path)
+    const split = name.indexOf(":")
+    const record = entry?.plugins?.[name.slice(0, split)]
+    return Boolean(record && !record.collision && (record.components?.[type] ?? []).includes(name.slice(split + 1)))
+  }
+}
+
 export function materialize(name, dir, options = {}) {
   const warnings = []
   const outcomes = []
@@ -103,6 +117,17 @@ export function materialize(name, dir, options = {}) {
   // caller with no rename knowledge keeps the plugin under its old name
   const aliases = refusalAliases(entry)
   if (options.aliases) for (const [to, from] of options.aliases) aliases.set(to, from)
+  // brief 41: the tokens substituted at materialization time — the suffix is
+  // the same normalization pluginRootEnv uses for the shell.env hook. The
+  // full literal including `}` is the token, so a per-marketplace form never
+  // matches the flat one
+  const suffix = name.replaceAll("-", "_").toUpperCase()
+  const rootTokens = [
+    "${OCM_PLUGIN_ROOT}",
+    "${CLAUDE_PLUGIN_ROOT}",
+    "${OCM_PLUGIN_ROOT_" + suffix + "}",
+    "${CLAUDE_PLUGIN_ROOT_" + suffix + "}",
+  ]
   const skillsDir = join(LINKS_DIR, name, "skills")
   const desiredCommands = new Set()
   const desiredAgents = new Set()
@@ -125,6 +150,33 @@ export function materialize(name, dir, options = {}) {
 
   const removedOutcome = (type, plugin, component, dest) => {
     outcomes.push({ type, plugin, component, source: null, dest, state: "removed", reason: null })
+  }
+
+  // brief 41: a body referencing a plugin-root variable renders with this
+  // marketplace's root substituted — the variable never reaches opencode's
+  // template engine, so a symlink would be broken exactly where it is used.
+  // Returns null when the body has no token, so the caller keeps link().
+  const renderRooted = (source, dest, plugin) => {
+    let body
+    try {
+      body = readFileSync(source, "utf8")
+    } catch {}
+    if (!body || !rootTokens.some((token) => body.includes(token))) return null
+    let existing
+    try {
+      existing = readlinkSync(dest)
+    } catch {}
+    // the symlink→rendered transition: dest is unambiguously ours by the
+    // same proof link() uses for "ok", so remove it — render() would
+    // otherwise displace it as unowned
+    if (existing === source) rmSync(dest, { force: true })
+    const owned = isRenderedFile(dest)
+    let text = body
+    for (const token of rootTokens) text = text.replaceAll(token, dir)
+    const status = render(source, dest, () => text, ctx, plugin)
+    // an update to an existing rendered file is a refresh (current or
+    // refreshed via the changed set), never a creation
+    return status === "created" && owned ? "ok" : status
   }
 
   mkdirSync(OPENCODE_COMMANDS_DIR, { recursive: true })
@@ -179,7 +231,7 @@ export function materialize(name, dir, options = {}) {
       const dest = join(OPENCODE_COMMANDS_DIR, `${plugin.name}:${file}`)
       desiredCommands.add(`${plugin.name}:${file}`)
       const warnStart = ctx.warnings.length
-      const status = link(source, dest, ctx, plugin.name, file)
+      const status = renderRooted(source, dest, plugin.name) ?? link(source, dest, ctx, plugin.name, file)
       linkOutcome("command", plugin.name, file, source, dest, status, warnStart)
     }
     for (const file of plugin.components.agent ?? []) {
@@ -189,7 +241,7 @@ export function materialize(name, dir, options = {}) {
       const dest = join(OPENCODE_AGENTS_DIR, `${plugin.name}:${file}`)
       desiredAgents.add(`${plugin.name}:${file}`)
       const warnStart = ctx.warnings.length
-      const status = link(source, dest, ctx, plugin.name, file)
+      const status = renderRooted(source, dest, plugin.name) ?? link(source, dest, ctx, plugin.name, file)
       linkOutcome("agent", plugin.name, file, source, dest, status, warnStart)
     }
     for (const rel of plugin.components.skill ?? []) {
@@ -260,11 +312,16 @@ export function materialize(name, dir, options = {}) {
   // plugin names cannot contain ":", "--" or uppercase (PLUGIN_NAME_RE),
   // so a name prefix never spans another plugin's entries
   const scope = only === null ? undefined : `${only}:`
-  for (const entry of gcTargets(OPENCODE_COMMANDS_DIR, desiredCommands, ctx, undefined, scope)) {
+  // built before the gc loops: their `entry` loop variable shadows the
+  // registry entry inside the loop head, where the argument would be a TDZ
+  // reference
+  const ownedCommand = renderedComponentOwned(entry, "command")
+  const ownedAgent = renderedComponentOwned(entry, "agent")
+  for (const entry of gcTargets(OPENCODE_COMMANDS_DIR, desiredCommands, ctx, ownedCommand, scope)) {
     const split = entry.indexOf(":")
     removedOutcome("command", entry.slice(0, split), entry.slice(split + 1), join(OPENCODE_COMMANDS_DIR, entry))
   }
-  for (const entry of gcTargets(OPENCODE_AGENTS_DIR, desiredAgents, ctx, undefined, scope)) {
+  for (const entry of gcTargets(OPENCODE_AGENTS_DIR, desiredAgents, ctx, ownedAgent, scope)) {
     const split = entry.indexOf(":")
     removedOutcome("agent", entry.slice(0, split), entry.slice(split + 1), join(OPENCODE_AGENTS_DIR, entry))
   }
@@ -329,14 +386,20 @@ export function removeLinksFor(name, marketplaceDir) {
   const warnings = []
   const outcomes = []
   const ctx = { name, dir: marketplaceDir, managed: [], revision: null, warnings }
+  // the record is still on disk here: removeMarketplace deletes it only
+  // after this teardown, and it is the scope proof for rendered commands
+  // and agents in the shared dirs
+  const entry = (readRegistry().marketplaces ?? {})[name]
   const removedOutcome = (type, plugin, component, dest) => {
     outcomes.push({ type, plugin, component, source: null, dest, state: "removed", reason: null })
   }
-  for (const entry of gcTargets(OPENCODE_COMMANDS_DIR, new Set(), ctx)) {
+  const ownedCommand = renderedComponentOwned(entry, "command")
+  const ownedAgent = renderedComponentOwned(entry, "agent")
+  for (const entry of gcTargets(OPENCODE_COMMANDS_DIR, new Set(), ctx, ownedCommand)) {
     const split = entry.indexOf(":")
     removedOutcome("command", entry.slice(0, split), entry.slice(split + 1), join(OPENCODE_COMMANDS_DIR, entry))
   }
-  for (const entry of gcTargets(OPENCODE_AGENTS_DIR, new Set(), ctx)) {
+  for (const entry of gcTargets(OPENCODE_AGENTS_DIR, new Set(), ctx, ownedAgent)) {
     const split = entry.indexOf(":")
     removedOutcome("agent", entry.slice(0, split), entry.slice(split + 1), join(OPENCODE_AGENTS_DIR, entry))
   }

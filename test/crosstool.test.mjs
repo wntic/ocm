@@ -311,7 +311,15 @@ phase("5. round-trip on a wntic/agentic-development-workflow fixture: adw skills
   const links = join(rootCacheDir(home), "links", "wntic-adw", "skills")
   expect(readFileSync(join(links, "adw--python-style", "SKILL.md"), "utf8")).toContain('name: "adw:python-style"')
   expect(readFileSync(join(links, "adw--architecture", "SKILL.md"), "utf8")).toContain('name: "adw:architecture"')
-  assertResolves(join(cfg(home), "commands", "run-report:run-report.md"), join(root, "plugins", "run-report", "commands", "run-report.md"))
+  // brief 41: the body references ${CLAUDE_PLUGIN_ROOT}, so the command
+  // renders with the clone root substituted in place of the variable
+  const runReportDest = join(cfg(home), "commands", "run-report:run-report.md")
+  const runReportStat = lstatSync(runReportDest)
+  if (runReportStat.isSymbolicLink()) throw new Error(`expected a regular file at ${runReportDest}, found a symlink`)
+  expect(runReportStat.isFile()).toBe(true)
+  const renderedBody = readFileSync(runReportDest, "utf8")
+  expect(renderedBody).toContain(`${root}/plugins/run-report/scripts/run_report.py`)
+  expect(renderedBody).toContain("ocm: rendered from ")
   // the command's script path resolves through the hook's CLAUDE_PLUGIN_ROOT
   const env = hookEnv(home)
   if (!isSamePath(env.CLAUDE_PLUGIN_ROOT, root)) {
@@ -323,4 +331,29 @@ phase("5. round-trip on a wntic/agentic-development-workflow fixture: adw skills
   assertFileExists(ref[0].replace("${CLAUDE_PLUGIN_ROOT}", env.CLAUDE_PLUGIN_ROOT))
   // invariant: no plugin-load errors, and opencode resolves the adw:<skill> names
 }, 420_000)
+
+phase("6. a command body referencing ${OCM_PLUGIN_ROOT} renders with the marketplace root substituted, and the same body in commands.claude/ is never materialized", async (home) => {
+  // ownership invariant: a hand-written command predates the run
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const mp = join(home, "mp")
+  const body = "---\ndescription: rooted helper\n---\n\npython3 \"${OCM_PLUGIN_ROOT}/plugins/adw/scripts/check.sh\"\n"
+  writeTree(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "commit.md": body },
+    "commands.claude": { "claude-only.md": body },
+  } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add ${mp} exited ${added.status}: ${added.stderr}`)
+  const dest = join(cfg(home), "commands", "adw:commit.md")
+  const stat = lstatSync(dest)
+  if (stat.isSymbolicLink()) throw new Error(`expected a regular file at ${dest}, found a symlink`)
+  expect(stat.isFile()).toBe(true)
+  const content = readFileSync(dest, "utf8")
+  // a local add stores its dir post-realpath (spec 17), so that is the root substituted
+  expect(content).toContain(`${realpathSync(mp)}/plugins/adw/scripts/check.sh`)
+  expect(content).not.toContain("${OCM_PLUGIN_ROOT}")
+  expect(content).toContain("ocm: rendered from ")
+  assertAbsent(join(cfg(home), "commands", "adw:claude-only.md"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+})
 }
