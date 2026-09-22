@@ -40,6 +40,7 @@ function lintPluginRootRefs(plugin, dirs, files, marketplaceDir, warnings) {
     try {
       content = readFileSync(file, "utf8")
     } catch {
+      // an unreadable file is not linted
       continue
     }
     for (const match of content.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}([^"\s]*)/g)) {
@@ -65,6 +66,7 @@ export function lintCrossTool(marketplaceDir) {
       try {
         content = readFileSync(file, "utf8")
       } catch {
+        // an unreadable file is not linted
         continue
       }
       for (const key of frontmatterKeys(content)) {

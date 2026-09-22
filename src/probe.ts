@@ -33,10 +33,18 @@ export function ocmPluginErrors(): string[] {
     })
     if (run.status !== 0) return []
     const output = `${run.stdout ?? ""}\n${run.stderr ?? ""}`
+    // two shapes, both attributable by the ocm path in the line. The first is
+    // a plugin opencode refused to load. The second is brief 39 §5's: a defect
+    // re-thrown out of the loader's sync surfaces as an uncaught
+    // ReferenceError/TypeError naming the file, not as a load failure — the
+    // justification for re-throwing was that doctor would report it, and
+    // without this it would not
+    const loadFailure = /level=ERROR.*failed to load plugin/
+    const defect = /\b(?:ReferenceError|TypeError)\b/
     return output
       .split("\n")
-      .filter((line) => /level=ERROR.*failed to load plugin/.test(line))
-      .filter((line) => line.includes("/ocm--") || line.includes("/ocm-loader.js"))
+      .filter((line) => loadFailure.test(line) || defect.test(line))
+      .filter((line) => line.includes("/ocm--") || line.includes("/ocm-loader.js") || /\/ocm\/[a-z-]+\.js/.test(line))
       .map((line) => line.trim())
   } catch {
     return []

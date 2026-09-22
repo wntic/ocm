@@ -18,7 +18,9 @@ function fileEntry(plugin, dirs, name) {
   for (const dir of dirs) {
     try {
       return { key: `${dir}/${name}`, hash: sha256(readFileSync(join(plugin.dir, dir, name))) }
-    } catch {}
+    } catch {
+      // an unreadable file falls through to the sibling dir, then warnUnreadable
+    }
   }
   warnUnreadable(join(plugin.dir, dirs[0], name))
   return null
@@ -31,6 +33,7 @@ function collectFiles(dir, rel, files, seen) {
   try {
     real = realpathSync(dir)
   } catch {
+    // an unreachable directory is skipped, matching listSkillDirs
     return
   }
   if (seen.has(real)) return
@@ -39,6 +42,7 @@ function collectFiles(dir, rel, files, seen) {
   try {
     entries = readdirSync(dir)
   } catch {
+    // a directory that cannot be listed contributes no files
     return
   }
   for (const entry of entries) {
@@ -47,7 +51,9 @@ function collectFiles(dir, rel, files, seen) {
     let isDir = false
     try {
       isDir = statSync(child).isDirectory()
-    } catch {}
+    } catch {
+      // an unstattable entry counts as a file — its read warns if it fails
+    }
     if (isDir) collectFiles(child, childRel, files, seen)
     else files.push({ rel: childRel, path: child })
   }

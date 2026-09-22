@@ -25,7 +25,7 @@ export {
   STAMP_FILE,
 } from "./paths.js"
 export { digestChanges, pluginHashes } from "./digest.js"
-export { dirClashes, discoverPlugins, mcpShapeError, readMcpServers } from "./discovery.js"
+export { dirClashes, discoverPlugins, manifestOnlyMessages, mcpShapeError, readMcpServers } from "./discovery.js"
 export { displacedRecords, displayPath, restoreDisplaced } from "./displaced.js"
 export { git, isGitRepo } from "./git.js"
 export { foldedComponentGroups, foldedDirPairs, pluginLimitViolation } from "./limits.js"

@@ -8,7 +8,9 @@ export function readJsonRecord(file) {
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8"))
     if (isRecord(parsed)) return parsed
-  } catch {}
+  } catch {
+    // an unreadable or unparseable file is not a record
+  }
   return undefined
 }
 
@@ -63,7 +65,9 @@ function readEntries(marketplaceDir, warnings) {
   let raw
   try {
     raw = JSON.parse(readFileSync(file, "utf8"))
-  } catch {}
+  } catch {
+    // an unreadable manifest reads as none — reported as ignored below
+  }
   if (!isRecord(raw)) {
     // a broken manifest is reported, never routed around (spec 15 §4)
     warnings.push(`${file}: not a valid JSON object — the manifest is ignored; the entries below were not applied`)
@@ -171,6 +175,7 @@ function tuiModule(plugin) {
       try {
         content = readFileSync(join(plugin.dir, dir, file), "utf8")
       } catch {
+        // an unreadable module is not a tui plugin
         continue
       }
       if (/\btui\s*:/.test(content)) return `${dir}/${file}`
@@ -189,6 +194,7 @@ export function readManifest(marketplaceDir) {
       description: isRecord(parsed) && typeof parsed.description === "string" ? parsed.description : undefined,
     }
   } catch {
+    // an unparseable manifest reads as no metadata
     return {}
   }
 }

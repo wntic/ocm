@@ -26,7 +26,9 @@ function pluginFile(pluginDir, file) {
     const path = join(pluginDir, dir, file)
     try {
       return { path, content: readFileSync(path) }
-    } catch {}
+    } catch {
+      // absent from this dir — the sibling dir is tried next
+    }
   }
   return null
 }

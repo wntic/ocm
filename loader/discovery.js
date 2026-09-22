@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { join } from "node:path"
+import { pluginGateFindings } from "./manifest-gate.js"
 import { isRecord } from "./registry.js"
 
 // plugin names become command/agent namespaces and file-name prefixes, so
@@ -13,7 +14,9 @@ function listMdFiles(pluginDir, dirs) {
   for (const dir of dirs) {
     try {
       for (const file of readdirSync(join(pluginDir, dir))) if (file.endsWith(".md")) names.add(file)
-    } catch {}
+    } catch {
+      // a missing or unreadable dir lists nothing
+    }
   }
   return [...names].sort()
 }
@@ -26,6 +29,7 @@ function listSkillDirs(pluginDir, dirs) {
     try {
       real = realpathSync(dir)
     } catch {
+      // an unreachable dir is not walked
       return
     }
     if (seen.has(real)) return
@@ -34,6 +38,7 @@ function listSkillDirs(pluginDir, dirs) {
     try {
       entries = readdirSync(dir)
     } catch {
+      // an unreadable dir is not walked
       return
     }
     for (const entry of entries) {
@@ -41,7 +46,9 @@ function listSkillDirs(pluginDir, dirs) {
       let isDir = false
       try {
         isDir = statSync(child).isDirectory()
-      } catch {}
+      } catch {
+        // an unstattable entry is not a directory
+      }
       if (!isDir) continue
       const childRel = rel ? `${rel}/${entry}` : entry
       if (existsSync(join(child, "SKILL.md"))) found.add(childRel)
@@ -61,7 +68,9 @@ function listJsFiles(pluginDir, dirs) {
       for (const file of readdirSync(join(pluginDir, dir))) {
         if (file.endsWith(".js") || file.endsWith(".ts")) names.add(file)
       }
-    } catch {}
+    } catch {
+      // a missing or unreadable dir lists nothing
+    }
   }
   return [...names].sort()
 }
@@ -95,6 +104,7 @@ export function readMcpServers(file) {
   try {
     parsed = JSON.parse(readFileSync(file, "utf8"))
   } catch {
+    // an unreadable or unparseable file reads as no servers — callers warn
     return null
   }
   if (!isRecord(parsed)) return null
@@ -179,6 +189,7 @@ export function containsSkillMd(dir, seen = new Set()) {
   try {
     real = realpathSync(dir)
   } catch {
+    // an unreachable dir holds no SKILL.md
     return false
   }
   if (seen.has(real)) return false
@@ -187,6 +198,7 @@ export function containsSkillMd(dir, seen = new Set()) {
   try {
     entries = readdirSync(dir)
   } catch {
+    // an unreadable dir holds no SKILL.md
     return false
   }
   for (const entry of entries) {
@@ -195,26 +207,33 @@ export function containsSkillMd(dir, seen = new Set()) {
     let isDir = false
     try {
       isDir = statSync(child).isDirectory()
-    } catch {}
+    } catch {
+      // an unstattable entry is not a directory
+    }
     if (isDir && containsSkillMd(child, seen)) return true
   }
   return false
 }
 
+function componentsOf(pluginDir) {
+  const components = {}
+  const commands = listMdFiles(pluginDir, ["commands", "command"])
+  if (commands.length) components.command = commands
+  const agents = listMdFiles(pluginDir, ["agents", "agent"])
+  if (agents.length) components.agent = agents
+  const skills = listSkillDirs(pluginDir, ["skills", "skill"])
+  if (skills.length) components.skill = skills
+  const pluginFiles = listJsFiles(pluginDir, ["plugin", "plugins"])
+  if (pluginFiles.length) components.plugin = pluginFiles
+  const mcpServers = listMcpServers(pluginDir)
+  if (mcpServers.length) components.mcp = mcpServers
+  return components
+}
+
 export function discoverPlugins(marketplaceDir) {
   const plugins = []
   const collect = (pluginDir) => {
-    const components = {}
-    const commands = listMdFiles(pluginDir, ["commands", "command"])
-    if (commands.length) components.command = commands
-    const agents = listMdFiles(pluginDir, ["agents", "agent"])
-    if (agents.length) components.agent = agents
-    const skills = listSkillDirs(pluginDir, ["skills", "skill"])
-    if (skills.length) components.skill = skills
-    const pluginFiles = listJsFiles(pluginDir, ["plugin", "plugins"])
-    if (pluginFiles.length) components.plugin = pluginFiles
-    const mcpServers = listMcpServers(pluginDir)
-    if (mcpServers.length) components.mcp = mcpServers
+    const components = componentsOf(pluginDir)
     if (!Object.keys(components).length) return
     const name = pluginDir.replace(/\/+$/, "").split("/").pop()
     plugins.push({ name: name.toLowerCase(), dir: pluginDir, components })
@@ -225,9 +244,39 @@ export function discoverPlugins(marketplaceDir) {
       const dir = join(pluginsDir, entry)
       try {
         if (statSync(dir).isDirectory()) collect(dir)
-      } catch {}
+      } catch {
+        // an unstattable entry is not a plugin directory
+      }
     }
   }
   if (!plugins.length) collect(marketplaceDir)
   return plugins
+}
+
+// brief 39 §4: discovery reaches a plugin only through a component file, so
+// a directory whose only content is a plugin.json is invisible to it. This
+// is diagnostic only — nothing installs, so each message says users are
+// unaffected; the manifest wording is the gate's verbatim (brief 29).
+export function manifestOnlyMessages(marketplaceDir) {
+  const messages = []
+  const pluginsDir = join(marketplaceDir, "plugins")
+  if (!existsSync(pluginsDir)) return messages
+  for (const entry of readdirSync(pluginsDir).sort()) {
+    const dir = join(pluginsDir, entry)
+    try {
+      if (!statSync(dir).isDirectory()) continue
+    } catch {
+      // an unstattable entry is not a plugin directory
+      continue
+    }
+    if (!existsSync(join(dir, "plugin.json"))) continue
+    if (Object.keys(componentsOf(dir)).length) continue
+    const findings = pluginGateFindings(marketplaceDir, { name: entry.toLowerCase(), dir, components: {} })
+    messages.push(
+      findings.length
+        ? `${findings.map((finding) => finding.message).join("\n")}\n  plugins/${entry} has no components — nothing installs, so users are unaffected`
+        : `plugins/${entry}: has a plugin.json but no components — either the manifest is wrong or the components are missing\n  nothing installs, so users are unaffected`,
+    )
+  }
+  return messages
 }

@@ -25,7 +25,9 @@ export function appendDisplacement(entry) {
   try {
     const parsed = JSON.parse(readFileSync(DISPLACED_RECORD_FILE, "utf8"))
     if (Array.isArray(parsed)) records = parsed
-  } catch {}
+  } catch {
+    // a missing or unparseable records file starts a fresh list
+  }
   records.push(entry)
   writeJsonAtomic(DISPLACED_RECORD_FILE, `${JSON.stringify(records, null, 2)}\n`)
 }
@@ -35,6 +37,7 @@ function readRecords() {
   try {
     parsed = JSON.parse(readFileSync(DISPLACED_RECORD_FILE, "utf8"))
   } catch {
+    // a missing or unparseable records file reads as no records
     return []
   }
   if (!Array.isArray(parsed)) return []
@@ -73,14 +76,18 @@ export function restoreDisplaced(scope) {
     try {
       lstatSync(record.dest)
       occupied = true
-    } catch {}
+    } catch {
+      // an absent path is not occupied — the restore may proceed
+    }
     if (occupied) {
       // a full byte compare, no size or mtime shortcut: only content that is
       // already the original counts as restored
       let identical = false
       try {
         identical = readFileSync(record.dest).equals(readFileSync(cache))
-      } catch {}
+      } catch {
+        // an unreadable side means not identical — the path is reported taken
+      }
       if (identical) {
         consumed.add(record)
       } else {

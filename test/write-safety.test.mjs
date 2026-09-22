@@ -617,6 +617,26 @@ phase("a corrupt registry refuses every mutating command: exit 1, the named erro
   }
 })
 
+phase("a corrupt registry refuses ocm init even when the loader is missing: exit 1, nothing written", async (home) => {
+  seedMarketplace(home)
+  const corrupt = "{\n"
+  writeFileSync(registryFile(home), corrupt)
+  // F126: make "init would install the loader" the live condition
+  rmSync(join(cfg(home), "plugins", "ocm-loader.js"), { force: true })
+  for (const name of readdirSync(join(cfg(home), "ocm"))) {
+    if (name !== "registry.json") rmSync(join(cfg(home), "ocm", name), { force: true })
+  }
+  const result = ocm(home, "init")
+  if (result.status !== 1) {
+    throw new Error(`ocm init on a corrupt ${registryFile(home)} with the loader missing exited ${result.status}, expected 1 — init must refuse like every other mutating command, not set up a home it cannot read:\n${result.output}`)
+  }
+  expect(result.stderr).toContain(corruptError(registryFile(home)))
+  expect(readFileSync(registryFile(home), "utf8")).toBe(corrupt)
+  expect(existsSync(join(cfg(home), "plugins", "ocm-loader.js"))).toBe(false)
+  expect(existsSync(join(cfg(home), "ocm", "core.js"))).toBe(false)
+  expect(existsSync(lockFile(home))).toBe(false)
+})
+
 phase("a registry that parses but is not a version 1|2 object refuses a mutation the same way", async (home) => {
   seedMarketplace(home)
   const wrongShape = json({ version: 7, marketplaces: {} })
@@ -772,3 +792,36 @@ phase("an update past a blocked mcp change and an untrust keep the user's config
   const diagnosed = run(["doctor"])
   if (diagnosed.status !== 0) throw new Error(`ocm doctor exited ${diagnosed.status} after update + untrust:\n${diagnosed.output}`)
 }, 600_000)
+
+// ---------------------------------------------------------------------------
+// brief 39 §3 (F127): `ocm loader uninstall` deletes ocm/ without loading the
+// registry, so the §5 corruption guard never fires. A teardown that cannot
+// know what it is destroying refuses; one that takes marketplace records
+// with it names them.
+
+phase("a corrupt registry refuses ocm loader uninstall: exit 1, the named error, ocm/ and the loader intact, no lock", async (home) => {
+  seedMarketplace(home)
+  const corrupt = "{\n"
+  writeFileSync(registryFile(home), corrupt)
+  const result = ocm(home, "loader", "uninstall")
+  if (result.status !== 1) {
+    throw new Error(`ocm loader uninstall on a corrupt ${registryFile(home)} exited ${result.status}, expected 1 — the teardown must refuse rather than delete a registry it cannot read:\n${result.output}`)
+  }
+  expect(result.stderr).toContain(corruptError(registryFile(home)))
+  expect(readFileSync(registryFile(home), "utf8")).toBe(corrupt)
+  expect(existsSync(join(cfg(home), "ocm"))).toBe(true)
+  expect(existsSync(join(cfg(home), "plugins", "ocm-loader.js"))).toBe(true)
+  expect(existsSync(lockFile(home))).toBe(false)
+})
+
+phase("ocm loader uninstall on a valid registry proceeds and names the marketplace records going with the teardown", async (home) => {
+  seedMarketplace(home)
+  const result = ocm(home, "loader", "uninstall")
+  if (result.status !== 0) {
+    throw new Error(`ocm loader uninstall on a valid ${registryFile(home)} exited ${result.status}:\n${result.output}`)
+  }
+  expect(result.stdout).toContain('removing marketplace record "mp" (a-kit)')
+  expect(result.stdout).toContain("removed auto-sync loader")
+  expect(existsSync(join(cfg(home), "ocm"))).toBe(false)
+  expect(existsSync(join(cfg(home), "plugins", "ocm-loader.js"))).toBe(false)
+})

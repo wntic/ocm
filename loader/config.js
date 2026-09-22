@@ -9,7 +9,9 @@ export function setSkillsPath(skillsDir, present) {
   let raw
   try {
     raw = readFileSync(OPENCODE_CONFIG_FILE, "utf8")
-  } catch {}
+  } catch {
+    // a missing config reads as empty
+  }
   if (raw !== undefined) {
     try {
       config = JSON.parse(raw)

@@ -296,6 +296,7 @@ export declare function writeJsonAtomic(path: string, content: string): void
 export declare function withRegistryLock<T>(command: string, fn: () => T | Promise<T>): Promise<T>
 export declare function tryRegistryLock<T>(fn: () => T | Promise<T>): Promise<T | { skipped: true }>
 export declare function discoverPlugins(marketplaceDir: string): CoreDiscoveredPlugin[]
+export declare function manifestOnlyMessages(marketplaceDir: string): string[]
 export declare function mcpShapeError(server: unknown): string | null
 export declare function mcpTrustLine(component: CoreExecutableComponent): string
 export declare function readMcpServers(file: string): Record<string, unknown> | null

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { writeJsonAtomic } from "./atomic.js"
+import { rethrowIfDefect } from "./defect.js"
 import { CACHE_DIR, LEGACY_REGISTRY_FILE, MARKETPLACES_DIR, OPENCODE_DIR, REGISTRY_FILE } from "./paths.js"
 
 export function isRecord(value) {
@@ -63,12 +64,16 @@ export function readRegistry() {
   if (existsSync(REGISTRY_FILE)) {
     try {
       return normalizeRegistry(JSON.parse(readFileSync(REGISTRY_FILE, "utf8")))
-    } catch {}
+    } catch (err) {
+      rethrowIfDefect(err)
+    }
     return { version: 2, marketplaces: {} }
   }
   try {
     return normalizeRegistry(JSON.parse(readFileSync(LEGACY_REGISTRY_FILE, "utf8")))
-  } catch {}
+  } catch (err) {
+    rethrowIfDefect(err)
+  }
   return { version: 2, marketplaces: {} }
 }
 
@@ -80,11 +85,15 @@ export function ocmSelfVersion() {
   try {
     const stamped = readFileSync(new URL(import.meta.url), "utf8").match(/^\/\/ ocm-version: (\S+)/m)
     if (stamped) return stamped[1]
-  } catch {}
+  } catch {
+    // an unreadable own file carries no stamp — the package.json fallback follows
+  }
   try {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"))
     if (isRecord(pkg) && typeof pkg.version === "string") return pkg.version
-  } catch {}
+  } catch {
+    // an unreadable package.json reads as no version
+  }
   return null
 }
 
@@ -108,7 +117,9 @@ export function registryWriterVersion() {
   try {
     const raw = JSON.parse(readFileSync(REGISTRY_FILE, "utf8"))
     if (isRecord(raw) && typeof raw.ocmVersion === "string") return raw.ocmVersion
-  } catch {}
+  } catch {
+    // a missing or unparseable registry is a pre-0.6.0 home — read as null
+  }
   return null
 }
 
@@ -188,11 +199,15 @@ function recordConfigRoot() {
   try {
     const raw = JSON.parse(readFileSync(ROOTS_FILE, "utf8"))
     if (isRecord(raw) && Array.isArray(raw.roots)) roots = raw.roots.filter((r) => typeof r === "string")
-  } catch {}
+  } catch {
+    // an unreadable roots.json reads as no roots — the list starts fresh
+  }
   if (roots.includes(root)) return
   try {
     writeJsonAtomic(ROOTS_FILE, `${JSON.stringify({ roots: [...roots, root] }, null, 2)}\n`)
-  } catch {}
+  } catch {
+    // best-effort breadcrumb — a failed write must not fail the mutation
+  }
 }
 
 export function saveRegistry(registry) {
@@ -211,7 +226,9 @@ export function saveRegistryIfChanged(registry) {
   let before
   try {
     before = readFileSync(REGISTRY_FILE, "utf8")
-  } catch {}
+  } catch {
+    // a missing file means the first write — nothing to compare against
+  }
   if (before !== undefined && serializeRegistry(registry) === before) return
   saveRegistry(registry)
 }
@@ -253,5 +270,7 @@ export function markTrustPending(name) {
     if (entry.trustPending === true) return
     entry.trustPending = true
     writeJsonAtomic(REGISTRY_FILE, JSON.stringify(raw, null, 2))
-  } catch {}
+  } catch (err) {
+    rethrowIfDefect(err)
+  }
 }

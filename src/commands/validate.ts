@@ -3,7 +3,7 @@
 // validate-files.ts.
 import { existsSync, readdirSync } from "node:fs"
 import { basename, dirname, join, relative } from "node:path"
-import { dirClashes, discoverPlugins, foldedComponentGroups, foldedDirPairs, lintCrossTool, marketplaceManifestFile } from "../../loader/core.js"
+import { dirClashes, discoverPlugins, foldedComponentGroups, foldedDirPairs, lintCrossTool, manifestOnlyMessages, marketplaceManifestFile } from "../../loader/core.js"
 import type { CoreDiscoveredPlugin } from "../../loader/core.js"
 import { error, reportFindings, warning, type Finding } from "../findings"
 import { NAME_RE, lintMarketplaceJson, lintMcpJson, lintPluginJson, lintSkillDepth, type MarketplaceManifest } from "../manifest-lint"
@@ -44,6 +44,7 @@ export function validate(path?: string): void {
   for (const plugin of plugins) {
     lintPlugin(root, plugin, manifest, skills, findings)
   }
+  for (const message of manifestOnlyMessages(root)) findings.push(error(message))
   lintComponentCollisions(root, plugins, findings)
   lintCaseFolds(root, plugins, findings)
   for (const message of lintCrossTool(root)) findings.push(warning(message))

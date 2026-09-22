@@ -6,7 +6,11 @@ import * as core from "../ocm/core.js"
 export default {
   id: "ocm-loader",
   server: async () => {
-    void core.syncAll({ reason: "startup" }).catch(() => {})
+    // environmental failures stay silent so the user's home can never break
+    // opencode's startup; a ReferenceError/TypeError is a defect in ocm and goes loud (brief 39 §5)
+    void core.syncAll({ reason: "startup" }).catch((err) => {
+      if (err instanceof ReferenceError || err instanceof TypeError) throw err
+    })
     return {
       // spec 11: command bodies reference ${OCM_PLUGIN_ROOT}/plugins/<name>/…
       // and Claude Code's ${CLAUDE_PLUGIN_ROOT}; both point at the

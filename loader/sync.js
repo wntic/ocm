@@ -2,6 +2,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { writeJsonAtomic } from "./atomic.js"
 import { digestChanges } from "./digest.js"
+import { rethrowIfDefect } from "./defect.js"
 import { git, isGitRepo, treePluginFiles } from "./git.js"
 import { treeFoldRefusal } from "./limits.js"
 import { tryRegistryLock } from "./lock.js"
@@ -80,7 +81,9 @@ function recordSync(name, value, revision) {
     raw.marketplaces[name].lastSync = value
     if (typeof revision === "string") raw.marketplaces[name].revision = revision
     writeJsonAtomic(REGISTRY_FILE, `${JSON.stringify(raw, null, 2)}\n`)
-  } catch {}
+  } catch (err) {
+    rethrowIfDefect(err)
+  }
 }
 
 // brief 40: the rename half of record reconciliation, before materialize —
@@ -117,7 +120,8 @@ function prepareRecords(name, root) {
       entry: raw.marketplaces[name],
       warnings: [...cycles.map((cycle) => `rename cycle ignored: ${cycle.join(" → ")} → ${cycle[0]}`), ...warnings],
     }
-  } catch {
+  } catch (err) {
+    rethrowIfDefect(err)
     return null
   }
 }
@@ -135,7 +139,9 @@ function deriveRecords(name, outcomes) {
     if (!isRecord(raw) || raw.version !== 2 || !isRecord(raw.marketplaces?.[name])) return
     deriveComponents(raw, name, outcomes)
     saveRegistryIfChanged(raw)
-  } catch {}
+  } catch (err) {
+    rethrowIfDefect(err)
+  }
 }
 
 // spec 08: syncIntervalMs beats OCM_SYNC_INTERVAL_MS beats the 1h default;
@@ -210,7 +216,9 @@ async function runSync(entries, options, result) {
   if (result.ran) {
     try {
       rmSync(STAMP_FILE, { force: true })
-    } catch {}
+    } catch {
+      // best-effort — a stamp that cannot be removed never fails the sync
+    }
   }
   return result
 }
