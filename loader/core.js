@@ -24,6 +24,7 @@ export {
   ROOT_SLUG,
   STAMP_FILE,
 } from "./paths.js"
+export { digestChanges, pluginHashes } from "./digest.js"
 export { dirClashes, discoverPlugins, mcpShapeError, readMcpServers } from "./discovery.js"
 export { displacedRecords, displayPath, restoreDisplaced } from "./displaced.js"
 export { git, isGitRepo } from "./git.js"

@@ -110,6 +110,8 @@ export interface CoreMarketplacePlugin {
   installedAt: string | null
   version: string | null
   manifest: CorePluginManifest
+  // spec 30: content digests by plugin-relative path, local marketplaces only
+  hashes?: Record<string, string>
 }
 
 export interface CoreMarketplaceEntry {
@@ -367,6 +369,14 @@ export declare function marketplaceManifestFile(marketplaceDir: string): string
 export declare function componentRoot(entry: CoreMarketplaceEntry): string
 export declare function incumbentMarketplace(registry: CoreRegistry, self: string, pluginName: string): string | undefined
 export declare function registerPlugins(registry: CoreRegistry, name: string, plugins: CoreManifestPlugin[]): void
+export declare function pluginHashes(plugin: CoreManifestPlugin): Record<string, string>
+// brief 30 §2: the recorded digests diffed against the current ones — the
+// shared comparison behind the CLI's local report and the loader's startup
+// changed-set
+export declare function digestChanges(
+  hashes: Record<string, string>,
+  plugin: CoreManifestPlugin,
+): { mark: "+" | "~" | "-"; path: string }[]
 export declare function deriveComponents(registry: CoreRegistry, name: string, outcomes: CoreOutcome[]): void
 export declare function reconcilePluginRecords(
   registry: CoreRegistry,
