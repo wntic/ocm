@@ -508,6 +508,169 @@ phase("7. an old-layout cache no registry references is reported and left alone"
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# user command\n")
 })
 
+// brief 39 §6: a home whose marketplaces are all local. Every registry dir is
+// the user's own source directory, outside the cache, so the dir-prefix
+// predicate never fired — the old-layout links and displaced trees stayed put
+// forever while reportUnreferencedOldCache wrongly called them another root's.
+// Migration is needed when the registry holds a name with an old-layout links
+// tree or a displaced record; the same machinery moves them and the warning
+// stops. A tree no registry holds keeps warning.
+
+// An all-local home: one local marketplace whose source directory sits
+// outside the cache, plus this root's old-layout trees. `skill` false builds
+// the commands-only shape with no links tree; `displaced` false leaves the
+// old layout empty entirely.
+function buildLocalHome(home, { skill = true, displaced = true } = {}) {
+  const source = join(home, "src-mp")
+  const adw = { commands: { "commit.md": "---\ndescription: commit helper\n---\n\nBody.\n" } }
+  if (skill) adw.skills = { "python-style": { "SKILL.md": SKILL("python-style") } }
+  writeTree(source, { plugins: { adw } })
+  const dir = realpathSync(source)
+  const components = skill ? { command: ["commit.md"], skill: ["python-style"] } : { command: ["commit.md"] }
+  const oldCache = join(home, ".cache", "ocm")
+  const oldSkills = join(oldCache, "links", MP, "skills")
+  const paths = [join(home, "my-skills")]
+  if (skill) {
+    writeTree(join(oldSkills, "adw--python-style"), {
+      "SKILL.md": `---\nname: "adw:python-style"\ndescription: python-style guidance\n---\n\n# python-style\n\nUse the house style.\n<!-- ocm: rendered from plugins/adw/skills/python-style/SKILL.md @ 0000000 -->\n`,
+    })
+    paths.unshift(oldSkills)
+  }
+  const dest = join(cfg(home), "agents", "adw:reviewer.md")
+  if (displaced) {
+    const oldDisplaced = join(oldCache, "displaced", TS)
+    mkdirSync(dirname(join(oldDisplaced, dest)), { recursive: true })
+    writeFileSync(join(oldDisplaced, dest), "# my own reviewer\n")
+    writeTree(oldCache, {
+      "displaced-records.json": `${JSON.stringify([{ marketplace: MP, plugin: "adw", dest, dir: oldDisplaced }], null, 2)}\n`,
+    })
+  }
+  writeTree(cfg(home), {
+    ocm: { "registry.json": `${JSON.stringify(localRegistry(dir, components), null, 2)}\n` },
+    "opencode.json": `${JSON.stringify({ model: "claude-sonnet-4-6", skills: { paths } }, null, 2)}\n`,
+    commands: { "mine.md": "# user command\n" },
+  })
+  symlinkSync(join(dir, "plugins", "adw", "commands", "commit.md"), join(cfg(home), "commands", "adw:commit.md"))
+  return { dir, oldCache, oldSkills, dest }
+}
+
+// the v2 registry shape with a local marketplace: url and dir are the user's
+// source directory, stored post-realpath the way a real add stores them
+function localRegistry(dir, components) {
+  return {
+    version: 2,
+    marketplaces: {
+      [MP]: {
+        url: dir, dir, local: true, addedAt: ADDED_AT, mode: "auto",
+        ref: null, revision: null, syncIntervalMs: null,
+        trust: { code: "granted" }, lastSync: null,
+        plugins: {
+          adw: {
+            source: "plugins/adw", components,
+            enabled: true, installedAt: ADDED_AT, version: null, manifest: {},
+          },
+        },
+      },
+    },
+  }
+}
+
+phase("8. an all-local home's old-layout links and displaced trees migrate into the namespace, and the cross-root warning stops", async (home) => {
+  const { dir, oldCache, oldSkills, dest } = buildLocalHome(home)
+  const ns = rootCacheDir(home)
+  const result = ocm(home, "list")
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 0) throw new Error(`ocm list exited ${result.status} on the all-local home:\n${output}`)
+
+  // the old layout left ~/.cache/ocm/ and lives in the namespace: the links
+  // mirror, the displaced copy and the records file
+  for (const item of ["links", "displaced", "displaced-records.json"]) assertAbsent(join(oldCache, item))
+  const mirror = join(ns, "links", MP, "skills", "adw--python-style", "SKILL.md")
+  assertFileExists(mirror)
+  expect(readFileSync(mirror, "utf8")).toContain('name: "adw:python-style"')
+  assertFileExists(join(ns, "displaced", TS, dest))
+  expect(readFileSync(join(ns, "displaced", TS, dest), "utf8")).toBe("# my own reviewer\n")
+  expect(JSON.parse(readFileSync(join(ns, "displaced-records.json"), "utf8"))).toEqual([
+    { marketplace: MP, plugin: "adw", dest, dir: join(ns, "displaced", TS) },
+  ])
+
+  // skills.paths rewritten to the namespace entry; the user's key and path survive
+  const config = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
+  const nsSkills = join(ns, "links", MP, "skills")
+  if (config.skills.paths.includes(oldSkills)) throw new Error(`skills.paths still holds the old-layout path ${oldSkills}: ${JSON.stringify(config.skills.paths)}`)
+  if (config.skills.paths.filter((p) => p === nsSkills).length !== 1) {
+    throw new Error(`expected skills.paths to hold ${nsSkills} exactly once: ${JSON.stringify(config.skills.paths)}`)
+  }
+  expect(config.skills.paths).toContain(join(home, "my-skills"))
+  expect(config.model).toBe("claude-sonnet-4-6")
+
+  // the local marketplace is not rewritten: its dir stays the user's source
+  const registry = JSON.parse(readFileSync(registryFile(home), "utf8"))
+  expect(registry.marketplaces[MP].dir).toBe(dir)
+  expect(registry.marketplaces[MP].local).toBe(true)
+
+  // the command link still points into the source directory and resolves
+  expect(realpathSync(join(cfg(home), "commands", "adw:commit.md"))).toBe(
+    realpathSync(join(dir, "plugins", "adw", "commands", "commit.md")),
+  )
+
+  // no unreferenced-old-cache warning: these trees were this root's
+  if (/another config root/.test(output)) throw new Error(`the migrated trees were reported as another root's:\n${output}`)
+  for (const line of result.stderr.split("\n")) {
+    if (line.includes(join(oldCache, "links")) || line.includes(join(oldCache, "displaced"))) {
+      throw new Error(`a warning still names an old-layout path as left in place:\n${line}`)
+    }
+  }
+
+  // ownership: the user's hand-written command survives byte-identical
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# user command\n")
+})
+
+phase("9. an all-local home with only displaced trees at the old layout still migrates them", async (home) => {
+  const { oldCache, dest } = buildLocalHome(home, { skill: false })
+  const ns = rootCacheDir(home)
+  const result = ocm(home, "list")
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 0) throw new Error(`ocm list exited ${result.status} on the displaced-only home:\n${output}`)
+
+  // the displaced copy and the records file moved into the namespace, with
+  // the record's dir rewritten (its dest points into the config dir and stays)
+  for (const item of ["displaced", "displaced-records.json"]) assertAbsent(join(oldCache, item))
+  assertFileExists(join(ns, "displaced", TS, dest))
+  expect(JSON.parse(readFileSync(join(ns, "displaced-records.json"), "utf8"))).toEqual([
+    { marketplace: MP, plugin: "adw", dest, dir: join(ns, "displaced", TS) },
+  ])
+
+  // the warning does not fire: the displaced trees were this root's
+  if (/another config root/.test(output)) throw new Error(`the migrated displaced trees were reported as another root's:\n${output}`)
+
+  // ownership: the user's hand-written command survives byte-identical
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# user command\n")
+})
+
+phase("10. an old-layout links tree the registry does not hold is left in place and still warns", async (home) => {
+  buildLocalHome(home, { skill: false, displaced: false })
+  const oldCache = join(home, ".cache", "ocm")
+  const strangerLinks = join(oldCache, "links", "stranger-mp", "skills")
+  writeTree(strangerLinks, { "notes.md": "# a stranger's links tree\n" })
+  const result = ocm(home, "list")
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 0) throw new Error(`ocm list exited ${result.status}:\n${output}`)
+  // nothing moved, nothing deleted: the stranger tree byte-identical at its
+  // old path, and no namespace was created for it
+  expect(readFileSync(join(strangerLinks, "notes.md"), "utf8")).toBe("# a stranger's links tree\n")
+  assertAbsent(rootCacheDir(home))
+  // the warning still fires, naming the old-layout links path and the
+  // reasoning: it may belong to a root this invocation cannot see
+  const line = result.stderr.split("\n").find((l) => l.includes(join(oldCache, "links")))
+  if (!line) throw new Error(`expected a stderr line naming ${join(oldCache, "links")}:\n${result.stderr}`)
+  if (!/left (?:alone|in place)|another config root/i.test(line)) {
+    throw new Error(`the line does not say the tree was left alone / may belong to another config root:\n${line}`)
+  }
+  // ownership: the user's hand-written command survives byte-identical
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# user command\n")
+})
+
 test("3. ocm/core.js imports nothing outside node:* (static check)", () => {
   // walk every module ocm/core.js pulls in: a bare specifier must be a node:*
   // builtin, a relative one must stay inside loader/ (no src/ imports)

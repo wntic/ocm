@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync } from "node:fs"
 import { basename } from "node:path"
-import { registryWriterVersion, versionCompare, withRegistryLock } from "../loader/core.js"
+import { parseRegistryStrict, registryWriterVersion, versionCompare, withRegistryLock } from "../loader/core.js"
 import { installLoader, loaderStatus, migrateLegacyLayout, packageVersion, reportTuiPlugin, uninstallLoader } from "./loader"
 import { migrateInstallation, migrationNeeded } from "./migrate"
 import { migrateLegacyCache, reportUnreferencedOldCache } from "./migrate-cache"
@@ -181,6 +181,10 @@ export async function main(argv: string[]): Promise<void> {
       case "init":
         reportStrandedNotice()
         preflightWritable([OPENCODE_TUI_CONFIG])
+        // brief 27 §1.6b/§5: init is in the mutating set but never loads the
+        // registry, so the corrupt-registry refusal must happen here, before
+        // the lock and any write
+        parseRegistryStrict()
         await mutating("ocm init", () => {
           if (installLoader()) reportTuiPlugin()
         })

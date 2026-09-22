@@ -1,6 +1,7 @@
 // The per-plugin flows of the /ocm TUI dialog (specs 10b, 22): the plugin
 // menu, install/uninstall, and the details view.
 import { componentRoot, executableComponents, readRegistry, setEnabled, withRegistryLock } from "./core.js"
+import { rethrowIfDefect } from "./defect.js"
 import { NOTICE, backView, componentSummary, fit, message, pushView, select, toast } from "./ui-dialog.js"
 import { confirm } from "./ui-modals.js"
 import { updateFlow } from "./ui-marketplaces.js"
@@ -15,7 +16,8 @@ export function blocked(name, record, entry) {
   // marker reads the tree — the same list the trust prompt offers
   try {
     return executableComponents(componentRoot(entry), entry).some((c) => c.plugin === name)
-  } catch {
+  } catch (err) {
+    rethrowIfDefect(err)
     return false
   }
 }

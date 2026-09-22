@@ -12,7 +12,9 @@ function applyMcpKeys(desired, prefixes) {
   let raw
   try {
     raw = readFileSync(OPENCODE_CONFIG_FILE, "utf8")
-  } catch {}
+  } catch {
+    // a missing config reads as empty
+  }
   let config = {}
   if (raw !== undefined) {
     try {
@@ -147,6 +149,7 @@ function removeOwnedMcp(matches) {
   try {
     raw = readFileSync(OPENCODE_CONFIG_FILE, "utf8")
   } catch {
+    // a missing config has no keys to remove
     return { outcomes: [], warning: null }
   }
   let config

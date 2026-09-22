@@ -113,7 +113,11 @@ marketplace is any git repo with `plugins/<name>/`. Every directory under
 `plugins/` with at least one component is a plugin — plugin.json is required
 in every one of them, with a non-empty `description`; a plugin without it
 is refused by `ocm add`, `ocm update` and `ocm validate` (already-installed
-plugins keep working; `ocm doctor` tells you which need a manifest).
+plugins keep working; `ocm doctor` tells you which need a manifest). A
+directory whose only content is a `plugin.json` is not a plugin and nothing
+installs from it, but `ocm validate` reports it — either the manifest is
+wrong or the components are missing — and `ocm add` names it when refusing
+the tree.
 
 `command`/`commands`, `agent`/`agents`, `skill`/`skills` and `plugin`/`plugins`
 are all accepted (singular matches opencode's own globs); a name clash between

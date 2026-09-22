@@ -5,7 +5,7 @@ import { setSkillsPath } from "./config.js"
 import { discoverPlugins, PLUGIN_NAME_RE } from "./discovery.js"
 import { gcTargets, isRenderedFile, isRenderedFrom, link, mirror, render } from "./links.js"
 import { pluginRefusal, refusalOutcomes } from "./gate.js"
-import { foldedComponentGroups } from "./limits.js"
+import { foldedComponentGroups, foldedDirPairs } from "./limits.js"
 import { pluginGateFindings } from "./manifest-gate.js"
 import { syncMcp } from "./mcp.js"
 import { LINKS_DIR, DISPLACED_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "./paths.js"
@@ -25,7 +25,9 @@ function gitRevision(dir) {
   try {
     const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, timeout: 5000, encoding: "utf8" })
     if (result.status === 0) return result.stdout.trim()
-  } catch {}
+  } catch {
+    // a failed git spawn reads as no revision — "unknown" below
+  }
   return "unknown"
 }
 
@@ -160,12 +162,16 @@ export function materialize(name, dir, options = {}) {
     let body
     try {
       body = readFileSync(source, "utf8")
-    } catch {}
+    } catch {
+      // an unreadable body means no rooted render — the caller links instead
+    }
     if (!body || !rootTokens.some((token) => body.includes(token))) return null
     let existing
     try {
       existing = readlinkSync(dest)
-    } catch {}
+    } catch {
+      // not a symlink — no symlink→rendered transition to make
+    }
     // the symlink→rendered transition: dest is unambiguously ours by the
     // same proof link() uses for "ok", so remove it — render() would
     // otherwise displace it as unowned
@@ -195,6 +201,12 @@ export function materialize(name, dir, options = {}) {
   mkdirSync(OPENCODE_PLUGINS_DIR, { recursive: true })
 
   const discovered = discoverPlugins(dir)
+  // brief 28 §3.3: a folded directory pair is refused here as reconcile
+  // refuses it — a plugin whose record the update dropped must not keep
+  // its links (F128)
+  const foldedDirs = new Map(
+    foldedDirPairs(discovered.map((plugin) => basename(plugin.dir))).flatMap((pair) => pair.map((dirName) => [dirName, pair])),
+  )
   // the `only` filter matches discovered names; the alias then renames the
   // plugin to the name its record kept, so every dest and outcome below
   // uses it
@@ -209,6 +221,17 @@ export function materialize(name, dir, options = {}) {
     if (enabled !== null && !enabled.has(plugin.name)) continue
     if (!PLUGIN_NAME_RE.test(plugin.name)) {
       warnings.push(`skipped plugin "${plugin.name}": name must match ${PLUGIN_NAME_RE}`)
+      continue
+    }
+    // brief 28 §3.3: both members of a folded directory pair are skipped,
+    // never grandfathered — the same refusal reconcile applies to the
+    // record, so the dropped plugin's links and mcp keys go too
+    const foldedPair = foldedDirs.get(basename(plugin.dir))
+    if (foldedPair) {
+      refused.add(plugin.name)
+      const reason = `plugins/${foldedPair[0]} and plugins/${foldedPair[1]} differ only in case — plugin "${plugin.name}" skipped; ask the author to rename one and update again`
+      outcomes.push(...refusalOutcomes(plugin, reason, skillsDir))
+      warnings.push(reason)
       continue
     }
     // brief 31 §4: a plugin the registry refuses is a plugin the
@@ -267,7 +290,9 @@ export function materialize(name, dir, options = {}) {
       let transformed = null
       try {
         transformed = renderSkillMd(readFileSync(skillMd, "utf8"), plugin.name)
-      } catch {}
+      } catch {
+        // an unreadable SKILL.md reads as no frontmatter name — skipped below
+      }
       const mirrorName = `${plugin.name}--${rel.split("/").join("-")}`
       const mirrorDir = join(skillsDir, mirrorName)
       if (transformed === null) {
@@ -383,8 +408,13 @@ export function enabledPlugins(entry, dir) {
     for (const other of Object.values(readRegistry().marketplaces ?? {})) {
       if (isRecord(other?.plugins)) for (const name of Object.keys(other.plugins)) taken.add(name)
     }
-    for (const plugin of discoverPlugins(dir)) {
+    const discovered = discoverPlugins(dir)
+    // brief 28 §3.3: a folded directory pair is never auto-installed —
+    // reconcile drops its record and the materializer refuses its links
+    const folded = new Set(foldedDirPairs(discovered.map((plugin) => basename(plugin.dir))).flat())
+    for (const plugin of discovered) {
       if (plugin.name in registered || taken.has(plugin.name)) continue
+      if (folded.has(basename(plugin.dir))) continue
       // brief 29: a plugin the manifest gate refuses is never auto-installed;
       // registered ones are grandfathered via the registry branch above
       if (pluginGateFindings(dir, plugin).length > 0) continue
@@ -432,6 +462,8 @@ export function removeLinksFor(name, marketplaceDir) {
   try {
     rmdirSync(skillsDir)
     rmdirSync(dirname(skillsDir))
-  } catch {}
+  } catch {
+    // a non-empty dir is kept — the refused rmdir is what leaves it
+  }
   return { marketplace: name, outcomes, warnings }
 }

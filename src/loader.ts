@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { writeJsonAtomic } from "../loader/core.js"
+import { normalizeRegistry, parseRegistryStrict, writeJsonAtomic } from "../loader/core.js"
 import { queueNotice } from "./report"
 import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OPENCODE_PLUGINS_DIR, OPENCODE_TUI_CONFIG as TUI_CONFIG_FILE } from "./paths"
 
@@ -194,6 +194,13 @@ export function reportTuiPlugin(): void {
 }
 
 export function uninstallLoader(): void {
+  // brief 39 §3 (F127): the teardown deletes the registry with ocm/, so it
+  // must know what it is removing — a registry that does not parse refuses
+  const registry = normalizeRegistry(parseRegistryStrict())
+  for (const [name, entry] of Object.entries(registry.marketplaces)) {
+    const plugins = Object.keys(entry.plugins ?? {})
+    console.log(`removing marketplace record "${name}"${plugins.length ? ` (${plugins.join(", ")})` : ""}`)
+  }
   for (const name of [OCM_LOADER_NAME, ...LEGACY_PLUGIN_FILES]) {
     rmSync(join(OPENCODE_PLUGINS_DIR, name), { force: true })
   }

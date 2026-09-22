@@ -3,9 +3,9 @@
 
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { expect, test } from "bun:test"
 import { assertAbsent, opencodeProbe, rootCacheDir, withFakeHome, withFakeOpencode } from "./harness.mjs"
 
@@ -620,31 +620,91 @@ phase("a folded plugins pair appearing upstream stops that marketplace's update 
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
 }, 240_000)
 
-phase("a local marketplace gaining a folded plugins pair between add and update skips the pair with a warning and keeps the installed link", async (home) => {
-  const mp = join(home, "mp-local")
-  writeTree(mp, { plugins: { "case-Kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } } })
-  const added = ocm(home, "add", mp)
-  if (added.status !== 0) throw new Error(`ocm add mp-local exited ${added.status}: ${added.stderr}`)
-  assertResolves(commandLink(home, "case-kit", "run.md"), join(mp, "plugins", "case-Kit", "commands", "run.md"))
-  // the sibling appears on disk between add and update
-  writeTree(join(mp, "plugins"), { "case-kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } })
-  // a case-insensitive host folds the pair onto one directory; the skip is
-  // only observable where both names really exist
-  const shipped = readdirSync(join(mp, "plugins"))
-  if (!shipped.includes("case-Kit") || !shipped.includes("case-kit")) return
-  const updated = ocm(home, "update", "mp-local")
-  if (updated.status !== 0) {
-    throw new Error(`the local update must succeed with the folded pair skipped, got exit ${updated.status}:\n${updated.stdout}\n${updated.stderr}`)
+// F128: the fold is observable only where both spellings really exist — a
+// case-insensitive host merges them onto one directory, which is exactly how
+// the bug shipped unnoticed. When the host folds names, the marketplace moves
+// onto a case-sensitive APFS volume (the e2e rounds' hdiutil trick); a host
+// that already keeps case (Linux) gets a plain directory under the home.
+function foldedPairMarketplace(home) {
+  const probe = join(home, "fold-probe")
+  writeTree(probe, { "case-Kit": { "x": "" }, "case-kit": { "x": "" } })
+  const keepsCase = readdirSync(probe).includes("case-Kit") && readdirSync(probe).includes("case-kit")
+  rmSync(probe, { recursive: true, force: true })
+  if (keepsCase) return { dir: join(home, "mp"), detach: null }
+  const volname = `ocm-cs-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
+  const attach = spawnSync("hdiutil", ["create", "-size", "32m", "-fs", "Case-sensitive APFS", "-volname", volname, "-attach", join(home, `${volname}.dmg`)], { encoding: "utf8", timeout: 120_000 })
+  const mount = `/Volumes/${volname}`
+  if (attach.status !== 0 || !existsSync(mount)) {
+    throw new Error(`cannot mount a case-sensitive volume at ${mount} for the folded-pair fixture (hdiutil exit ${attach.status}): ${attach.stderr}`)
   }
-  const output = `${updated.stdout}\n${updated.stderr}`
-  const skipped = output.split("\n").find((l) => l.includes("skipped"))
-  if (!skipped) throw new Error(`expected a skipped warning naming the folded pair in:\n${output}`)
-  for (const name of ["case-Kit", "case-kit"]) {
-    if (!skipped.includes(name)) throw new Error(`the skipped warning must name plugins/${name}:\n${skipped}`)
+  return { dir: join(mount, "mp"), detach: mount }
+}
+
+phase("a local marketplace gaining a folded plugins pair between add and update skips the pair with a warning and unlinks what it drops", async (home) => {
+  writeTree(cfg(home), { "opencode.json": json({ mcp: { "user-server": { type: "local", command: ["echo"] } } }) })
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" }) // ownership probe file
+  const { dir: mp, detach } = foldedPairMarketplace(home)
+  try {
+    writeTree(mp, { plugins: { "case-Kit": {
+      "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND },
+      plugin: { "notify.js": JS_PLUGIN }, "mcp.json": mcpJson(MCP),
+    } } })
+    const added = ocm(home, "add", mp, "--trust")
+    if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+    assertResolves(commandLink(home, "case-kit", "run.md"), join(mp, "plugins", "case-Kit", "commands", "run.md"))
+    assertResolves(join(cfg(home), "plugins", "ocm--case-kit--notify.js"), join(mp, "plugins", "case-Kit", "plugin", "notify.js"))
+    expect(mcpKeys(home)["ocm--case-kit--db"]).toEqual(MCP.db)
+    // the sibling appears on disk between add and update — no executable
+    // components, so the trust fingerprint does not drift when it does
+    writeTree(join(mp, "plugins"), { "case-kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } })
+    const shipped = readdirSync(join(mp, "plugins"))
+    for (const spelling of ["case-Kit", "case-kit"]) {
+      if (!shipped.includes(spelling)) throw new Error(`fixture error: plugins/ in ${mp} must hold both spellings, got ${JSON.stringify(shipped)}`)
+    }
+    const updated = ocm(home, "update", "mp")
+    if (updated.status !== 0) {
+      throw new Error(`the local update must succeed with the folded pair skipped, got exit ${updated.status}:\n${updated.stdout}\n${updated.stderr}`)
+    }
+    const output = `${updated.stdout}\n${updated.stderr}`
+    const skipped = output.split("\n").find((l) => l.includes("skipped"))
+    if (!skipped) throw new Error(`expected a skipped warning naming the folded pair in:\n${output}`)
+    for (const name of ["case-Kit", "case-kit"]) {
+      if (!skipped.includes(name)) throw new Error(`the skipped warning must name plugins/${name}:\n${skipped}`)
+    }
+    // the skip drops the whole plugin: record, links and MCP keys (F128)
+    const plugins = readRegistry(home).marketplaces.mp.plugins
+    if (plugins["case-kit"]) throw new Error(`expected no case-kit record in ${registryFile(home)} after the skip, got ${JSON.stringify(plugins["case-kit"])}`)
+    assertAbsent(commandLink(home, "case-kit", "run.md"))
+    assertAbsent(join(cfg(home), "plugins", "ocm--case-kit--notify.js"))
+    for (const key of Object.keys(mcpKeys(home))) {
+      if (key.startsWith("ocm--case-kit--")) throw new Error(`expected no ${key} in ${join(cfg(home), "opencode.json")} after the skip`)
+    }
+    expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] }) // invariant: config safety
+    // nothing on disk points into either folded directory's files
+    const folded = ["case-Kit", "case-kit"].map((spelling) => realpathSync(join(mp, "plugins", spelling)))
+    const walk = (dir) => {
+      if (!existsSync(dir)) return
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isSymbolicLink()) {
+          const target = readlinkSync(path)
+          const resolved = existsSync(path) ? realpathSync(path) : target
+          if (folded.some((root) => resolved === root || resolved.startsWith(`${root}/`))) {
+            throw new Error(`expected no link into the folded pair, found ${path} -> ${target}`)
+          }
+        } else if (entry.isDirectory()) walk(path)
+      }
+    }
+    for (const root of [join(cfg(home), "commands"), join(cfg(home), "agents"), join(cfg(home), "plugins"), join(rootCacheDir(home), "links", "mp", "skills")]) walk(root)
+    expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+    const diagnosed = spawnSync(process.execPath, [OCM_BIN, "doctor"], {
+      env: withFakeOpencode({ ...process.env, HOME: home }), encoding: "utf8", timeout: 300_000,
+    })
+    if (diagnosed.status !== 0) throw new Error(`ocm doctor exited ${diagnosed.status} after the skip:\n${diagnosed.stdout}\n${diagnosed.stderr}`)
+  } finally {
+    if (detach) spawnSync("hdiutil", ["detach", detach, "-force"], { encoding: "utf8", timeout: 60_000 })
   }
-  // the previously-installed plugin's link survives the skip untouched
-  assertResolves(commandLink(home, "case-kit", "run.md"), join(mp, "plugins", "case-Kit", "commands", "run.md"))
-})
+}, 240_000)
 }
 
 // update hygiene: an unchanged update writes nothing — absorbed from test/phase26-update-hygiene.mjs
@@ -2486,6 +2546,81 @@ phase("9. an unchanged due startup pass on a local marketplace leaves the regist
   if (JSON.stringify(after.plugins.kit.hashes) !== JSON.stringify(before.plugins.kit.hashes)) {
     throw new Error(`the unchanged pass must not touch kit.hashes in ${registryFile(home)}: ${JSON.stringify(after.plugins.kit.hashes)}`)
   }
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+}, 240_000)
+}
+
+// brief 39 §5: the record-refresh catches in loader/sync.js are silent so an
+// environmental failure never breaks opencode's startup — but they must not
+// swallow a programming error. The brief-31 defect (a registerPlugins call
+// with no import) lived for a day exactly because the catch ate the
+// ReferenceError after the config was pruned and before the registry was
+// saved. The two tests below pin both halves of the narrowed catch.
+{
+const LOADER_DIR = fileURLToPath(new URL("../loader", import.meta.url))
+
+// the brief-31 defect as a fixture: a scratch copy of the loader whose
+// marketplace.js re-exports the real one and throws from registerPlugins,
+// so sync.js's own import of ./marketplace.js resolves to the shim
+function defectSync(home) {
+  const scratch = join(home, "loader-scratch")
+  cpSync(LOADER_DIR, scratch, { recursive: true })
+  const real = pathToFileURL(join(LOADER_DIR, "marketplace.js")).href
+  writeFileSync(join(scratch, "marketplace.js"), `import { componentRoot, deriveComponents, addRefusalChain, addMarketplace, removeMarketplace, pinMarketplace } from ${JSON.stringify(real)}
+export { componentRoot, deriveComponents, addRefusalChain, addMarketplace, removeMarketplace, pinMarketplace }
+export function registerPlugins() {
+  throw new ReferenceError("registerPlugins is not defined (brief 39 §5 fixture)")
+}
+`)
+  const runner = join(home, "defect-runner.mjs")
+  writeFileSync(runner, 'const mod = await import(process.argv[2]); await mod.syncAll({ force: true })\n')
+  const result = spawnSync(process.execPath, [runner, join(scratch, "sync.js")], {
+    env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 120_000,
+  })
+  return { status: result.status, stderr: result.stderr ?? "" }
+}
+
+phase("brief 39 §5: a ReferenceError inside the sync's record refresh propagates out of syncAll instead of being swallowed by the silent catch", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const defect = defectSync(home)
+  if (defect.status === 0) {
+    throw new Error(`a ReferenceError inside the sync body must escape syncAll (brief 39 §5), but the runner over ${join(home, "loader-scratch", "sync.js")} exited 0 — the silent catch swallowed it`)
+  }
+  if (!defect.stderr.includes("ReferenceError")) {
+    throw new Error(`expected a ReferenceError on stderr from ${join(home, "loader-scratch", "sync.js")}, got:\n${defect.stderr}`)
+  }
+  // invariant: the aborted pass leaves no partial write — the registry is
+  // byte-identical to what add wrote, so it cannot silently disagree with
+  // the config the way the brief-31 defect let it
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
+}, 240_000)
+
+phase("brief 39 §5: an environmental failure inside the sync's record refresh stays silent — a v1 home without the v2 registry file syncs and links", async (home) => {
+  // invariants: config safety and ownership — the user's keys and command
+  // predate the pass and must survive it
+  writeTree(cfg(home), {
+    "opencode.json": json({ mcp: { "user-server": { type: "local", command: ["echo"] } } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  // a legacy home: readRegistry falls back to the v1 file, so the sync runs,
+  // but the record-refresh path's own reads of the v2 file hit ENOENT
+  mkdirSync(join(cfg(home), "plugins"), { recursive: true })
+  writeFileSync(join(cfg(home), "plugins", "ocm-registry.json"), json({
+    version: 1,
+    marketplaces: { mp: { url: "local", dir: mp, plugins: { adw: { source: "mp/plugins/adw", components: { command: ["commit.md"] } } } } },
+  }))
+  const synced = loaderSync(home) // a v1 entry has lastSync: null — due now
+  if (synced.status !== 0) throw new Error(`the sync over a legacy home must stay silent and exit 0, but it exited ${synced.status}: ${synced.stderr}`)
+  const link = commandLink(home, "adw", "commit.md")
+  if (!existsSync(link)) throw new Error(`expected the command link at ${link} — the sync must run through the record path, not exit 0 vacuously`)
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes) // invariant: config safety
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
 }, 240_000)
 }

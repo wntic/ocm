@@ -1,5 +1,6 @@
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs"
 import { join } from "node:path"
+import { rethrowIfDefect } from "./defect.js"
 import { OCM_DIR } from "./paths.js"
 
 // beside the registry, never in the cache: the cache is reconstructible and
@@ -38,6 +39,7 @@ function readHolder() {
       command: typeof parsed.command === "string" ? parsed.command : "ocm",
     }
   } catch {
+    // unparseable record — stale-on-sight, per the design comment above
     return null
   }
 }
@@ -142,7 +144,8 @@ export async function tryRegistryLock(fn) {
   let release
   try {
     release = await acquire("ocm sync", false)
-  } catch {
+  } catch (err) {
+    rethrowIfDefect(err)
     return { skipped: true }
   }
   if (!release) return { skipped: true }

@@ -61,6 +61,7 @@ export function isRenderedFrom(path, source, dir) {
   try {
     return readFileSync(path, "utf8").includes(`<!-- ${RENDERED_MARKER}${relative(dir, source)} @ `)
   } catch {
+    // an unreadable path was rendered from nothing
     return false
   }
 }
@@ -69,6 +70,7 @@ export function isRenderedFile(path) {
   try {
     return readFileSync(path, "utf8").includes(RENDERED_MARKER)
   } catch {
+    // an unreadable path is not a rendered file
     return false
   }
 }
@@ -79,12 +81,16 @@ export function link(source, dest, ctx, plugin, component) {
   let existing
   try {
     existing = readlinkSync(dest)
-  } catch {}
+  } catch {
+    // not a symlink (or gone) — no target to compare
+  }
   if (existing === source) return "ok"
   let stat
   try {
     stat = lstatSync(dest)
-  } catch {}
+  } catch {
+    // no dest — nothing to take over
+  }
   if (stat && !stat.isSymbolicLink()) {
     if (!takeOver(dest, ctx, plugin)) return "skipped"
   }
@@ -102,7 +108,9 @@ export function link(source, dest, ctx, plugin, component) {
   if (stat) {
     try {
       rmSync(dest, { force: true, recursive: true })
-    } catch {}
+    } catch {
+      // an unremovable dest fails the symlink create below, which warns
+    }
   }
   try {
     symlinkSync(source, dest)
@@ -130,7 +138,9 @@ export function render(source, dest, transform, ctx, plugin) {
   let stat
   try {
     stat = lstatSync(dest)
-  } catch {}
+  } catch {
+    // no dest — a fresh render
+  }
   if (stat) {
     if (stat.isSymbolicLink()) {
       if (existsSync(dest)) {
@@ -138,14 +148,18 @@ export function render(source, dest, transform, ctx, plugin) {
       }
       try {
         rmSync(dest, { force: true })
-      } catch {}
+      } catch {
+        // an unremovable symlink fails the write below, which warns
+      }
     } else if (!stat.isFile()) {
       if (!takeOver(dest, ctx, plugin)) return "skipped"
     } else {
       let current
       try {
         current = readFileSync(dest, "utf8")
-      } catch {}
+      } catch {
+        // an unreadable dest reads as unknown content — takeOver decides below
+      }
       if (current === output) return "ok"
       // brief 31 §2: a trailer-only difference (the revision moved, the
       // body did not) is rewritten silently and still counts as current
@@ -175,6 +189,7 @@ export function gcTargets(dir, desired, ctx, extra, scope) {
   try {
     entries = readdirSync(dir)
   } catch {
+    // a missing or unreadable dir holds nothing to gc
     return removed
   }
   for (const entry of entries) {
@@ -184,13 +199,17 @@ export function gcTargets(dir, desired, ctx, extra, scope) {
     let target
     try {
       target = readlinkSync(path)
-    } catch {}
+    } catch {
+      // not a symlink — the extra proof below decides
+    }
     const owned = target !== undefined ? insideDir(target, ctx.dir) : extra ? extra(path) : false
     if (!owned) continue
     try {
       rmSync(path, { force: true, recursive: true })
       removed.push(entry)
-    } catch {}
+    } catch {
+      // an unremovable entry stays — it is not counted as removed
+    }
   }
   return removed
 }
@@ -206,6 +225,7 @@ export function mirror(sourceDir, destDir, plan, ctx, plugin, component) {
   try {
     entries = readdirSync(sourceDir)
   } catch {
+    // an unreadable source dir mirrors nothing
     entries = []
   }
   const desired = new Set()

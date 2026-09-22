@@ -3,7 +3,7 @@ import { join, relative } from "node:path"
 import { writeJsonAtomic } from "./atomic.js"
 import { setSkillsPath } from "./config.js"
 import { collisionError, incumbentMarketplace } from "./collisions.js"
-import { discoverPlugins } from "./discovery.js"
+import { discoverPlugins, manifestOnlyMessages } from "./discovery.js"
 import { restoreDisplaced } from "./displaced.js"
 import { pluginHashes } from "./digest.js"
 import { git, treePluginFiles } from "./git.js"
@@ -141,8 +141,11 @@ export async function addMarketplace(source, options = {}) {
   const discovered = discoverMarketplace(root)
   const plugins = [...discovered.plugins.values()]
   if (!plugins.length) {
+    // brief 39 §4: name the manifest-only directories the bare refusal hid
+    const manifestOnly = manifestOnlyMessages(root).map((message) => `  ${message}`)
     addRefusal(
       `no plugins found in ${parsed.url}\n` +
+        (manifestOnly.length ? `${manifestOnly.join("\n")}\n` : "") +
         `  expected plugins/<name>/{commands,agents,skills}/ at the repository root\n` +
         `  run \`ocm scan ${parsed.url}\` to see what was found`,
       discovered.warnings, parsed, dir,

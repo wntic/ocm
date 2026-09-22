@@ -56,8 +56,26 @@ export function cacheMigrationNeeded(): boolean {
   // It must not widen further: an old-layout cache *no* registry references
   // may belong to another config root, and moving it is the cross-root harm
   // this brief exists to end. reportUnreferencedOldCache handles that case.
+  //
+  // brief 39 §6: the dir prefix alone is not enough — a local marketplace's
+  // dir is the user's own source directory and never sits under the cache,
+  // so an all-local home never migrated and was warned about forever. The
+  // registry-named trees are asked about directly instead: a links/<name>
+  // it holds, or a displaced record naming one of its marketplaces.
+  const marketplaces = readRegistry().marketplaces
   const prefix = `${join(OCM_CACHE_DIR, "marketplaces")}/`
-  return Object.values(readRegistry().marketplaces).some((entry) => entry.dir.startsWith(prefix))
+  if (Object.values(marketplaces).some((entry) => entry.dir.startsWith(prefix))) return true
+  if (Object.keys(marketplaces).some((name) => existsSync(join(OCM_CACHE_DIR, "links", name)))) return true
+  let records: unknown
+  try {
+    records = JSON.parse(readFileSync(join(OCM_CACHE_DIR, "displaced-records.json"), "utf8"))
+  } catch {
+    return false
+  }
+  if (!Array.isArray(records)) return false
+  return records.some(
+    (record) => isRecord(record) && typeof record.marketplace === "string" && record.marketplace in marketplaces,
+  )
 }
 
 // a pre-spec-03 whole-dir skill symlink under the old links tree. It is an

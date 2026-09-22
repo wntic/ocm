@@ -67,7 +67,9 @@ export function pluginGateFindings(marketplaceDir, plugin) {
     try {
       manifest = JSON.parse(readFileSync(file, "utf8"))
       parsed = true
-    } catch {}
+    } catch {
+      // a read or parse failure becomes the manifest-unreadable finding below
+    }
     if (!parsed) {
       add(manifestPath, "manifest-unreadable", `${manifestPath}: not valid JSON — fix it or remove it; ocm requires this file to be readable`)
     } else if (!isRecord(manifest)) {

@@ -454,6 +454,7 @@ phase("6. the README states every rule validate enforces (the documented contrac
     ["singular and plural", "component dir clash (validate.ts, dirClashes)"],
     ["inside the plugin directory", "mcpServers containment (spec 24 §2)"],
     ["fix it or remove it", "malformed plugin.json error (spec 24 §2)"],
+    ["only content is a `plugin.json`", "manifest-only directory reported (brief 39 §4)"],
     // warning-class authoring rules
     ["portable subset", "non-portable skill frontmatter (loader/lint.js via validate)"],
     ["typo", "likely-typo files and dir pairs (validate.ts)"],
@@ -629,6 +630,115 @@ phase("5. a native mcp.json with type \"stdio\" or a string command is a validat
   const header = `${ok.stdout}\n${ok.stderr}`.trim()
   if (header !== `validate ${ap}` && header !== `validate ${realpathSync(ap)}`) {
     throw new Error(`expected only the header "validate ${ap}", got:\n${header}`)
+  }
+})
+}
+
+// brief 39 §4: discovery reaches a plugin only through a component file, so
+// a directory under plugins/ whose only content is a plugin.json was
+// invisible — validate exited 0 clean while add refused with a bare
+// "no plugins found". Both boundaries now name the directory and what is
+// wrong, with the same shared sentences (manifestOnlyMessages), and nothing
+// becomes installable: the fix is diagnostic only
+{
+function ocm(home, ...args) {
+  const result = spawnSync(process.execPath, [OCM_BIN, ...args], {
+    env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 120_000,
+  })
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
+}
+
+// a finding line in the spec 12 format: "  error   plugins/foo/...: message"
+function finding(output, severity, ...needles) {
+  const line = output.split("\n").find((l) => new RegExp(`^\\s*${severity}\\b`).test(l) && needles.every((n) => l.includes(n)))
+  if (!line) throw new Error(`expected a ${severity} finding containing ${JSON.stringify(needles)}:\n${output}`)
+  return line
+}
+
+// the shared manifestOnlyMessages sentences for a manifest-only plugins/p1 —
+// the same constants asserted at validate and at add, which is the
+// matchability proof: a reader can carry one output to the other
+const BROKEN_MANIFEST = "plugins/p1/plugin.json: not valid JSON — fix it or remove it; ocm requires this file to be readable"
+const NO_COMPONENTS = "plugins/p1 has no components — nothing installs, so users are unaffected"
+const EITHER_OR = "plugins/p1: has a plugin.json but no components — either the manifest is wrong or the components are missing"
+
+phase("1. a plugin directory whose only content is a broken plugin.json is a validate error, not a clean pass", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { p1: { "plugin.json": "{ not json\n" } } })
+  const result = ocm(home, "validate", mp)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 1) {
+    throw new Error(`validate ${mp} exited ${result.status}, expected 1 — a manifest-only broken plugin must not read as an all-good:\n${output}`)
+  }
+  finding(output, "error", BROKEN_MANIFEST)
+  if (!output.includes(NO_COMPONENTS)) {
+    throw new Error(`the finding must carry the diagnostic line "${NO_COMPONENTS}":\n${output}`)
+  }
+})
+
+phase("2. add on the manifest-only broken tree refuses with validate's sentences and registers nothing", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { p1: { "plugin.json": "{ not json\n" } } })
+  const added = ocm(home, "add", mp)
+  const output = `${added.stdout}\n${added.stderr}`
+  if (added.status !== 1) {
+    throw new Error(`ocm add ${mp} exited ${added.status} — a manifest-only plugin is still not installable:\n${output}`)
+  }
+  if (!output.includes("no plugins found")) {
+    throw new Error(`the refusal keeps its "no plugins found" headline:\n${output}`)
+  }
+  for (const sentence of [BROKEN_MANIFEST, NO_COMPONENTS]) {
+    if (!output.includes(sentence)) {
+      throw new Error(`add's refusal must carry the sentence validate reports ("${sentence}") so a reader can match the two:\n${output}`)
+    }
+  }
+  const registry = existsSync(registryFile(home)) ? readRegistry(home) : { marketplaces: {} }
+  if (registry.marketplaces.mp) {
+    throw new Error(`a refused add registers nothing, but "mp" is in ${registryFile(home)}`)
+  }
+})
+
+phase("3. a valid plugin.json with no components is a validate error naming both possibilities, and add still refuses with the shared sentence", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { p1: { "plugin.json": json({ description: "demo plugin" }) } } })
+  const validated = ocm(home, "validate", mp)
+  const validateOutput = `${validated.stdout}\n${validated.stderr}`
+  if (validated.status !== 1) {
+    throw new Error(`validate ${mp} exited ${validated.status}, expected 1 — a manifest-only plugin with no components is worth a finding:\n${validateOutput}`)
+  }
+  const line = finding(validateOutput, "error", "plugins/p1", "no components")
+  // the wording covers both possibilities, not just one
+  for (const word of ["manifest", "components"]) {
+    if (!line.includes(word)) throw new Error(`the finding must name the possibility "${word}":\n${line}`)
+  }
+  // and says plainly that this is diagnostic: nothing installs, users unaffected
+  for (const fragment of ["nothing installs", "users are unaffected"]) {
+    if (!validateOutput.includes(fragment)) {
+      throw new Error(`the finding must say users are unaffected ("${fragment}"):\n${validateOutput}`)
+    }
+  }
+  // still not installable: add refuses with the same shared sentence
+  const added = ocm(home, "add", mp)
+  const addOutput = `${added.stdout}\n${added.stderr}`
+  if (added.status !== 1) {
+    throw new Error(`ocm add ${mp} exited ${added.status} — a valid manifest alone installs nothing:\n${addOutput}`)
+  }
+  if (!addOutput.includes(EITHER_OR)) {
+    throw new Error(`add's refusal must carry the shared sentence "${EITHER_OR}":\n${addOutput}`)
+  }
+})
+
+phase("4. a directory under plugins/ with neither manifest nor components is still ignored", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { stray: { "README.md": "# not a plugin\n" } } })
+  const result = ocm(home, "validate", mp)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 0) {
+    throw new Error(`validate ${mp} exited ${result.status} — a directory with neither a plugin.json nor components is not a plugin (brief 19):\n${output}`)
+  }
+  const header = output.trim()
+  if (header !== `validate ${mp}` && header !== `validate ${realpathSync(mp)}`) {
+    throw new Error(`expected only the header "validate ${mp}" — the stray directory produces no finding:\n${header}`)
   }
 })
 }
