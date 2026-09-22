@@ -1,6 +1,7 @@
 import { relative } from "node:path"
 import { git } from "../git"
 import { queueFact, reportMutationWarnings } from "../report"
+import { componentRoot, digestChanges } from "../../loader/core.js"
 import type { CoreOutcome } from "../../loader/core.js"
 import type { DiscoveredPlugin, MarketplaceEntry, MarketplacePlugin } from "../types"
 
@@ -38,23 +39,28 @@ export interface MarketplaceReport {
   plugins: PluginReport[]
   warnings: string[]
   outcomes: CoreOutcome[] | null
+  // brief 30 §4: local plugins whose recorded digests were absent this pass —
+  // unknown, not unchanged; null when the digest comparison never ran (git)
+  digestsAbsent: string[] | null
 }
 
 // spec 08: the per-plugin file list is git's own answer — diff the revision
 // pair and filter to the plugin's source prefix. Brief 31 §3: the diff also
 // yields the changed set (component-root-relative, ancestors included — a
 // skill matches on its source directory), which the materializer turns into
-// `refreshed` outcomes
+// `refreshed` outcomes. Brief 30 §1: a local marketplace has no revision
+// pair — the recorded digests answer behind the same signature
 export function pluginFileChanges(
   entry: MarketplaceEntry,
   before: string | null,
   after: string | null,
   plugins: DiscoveredPlugin[],
-): { changes: Map<string, FileChange[]>; paths: Set<string> | null } {
+): { changes: Map<string, FileChange[]>; paths: Set<string> | null; digestsAbsent: string[] | null } {
   const changes = new Map<string, FileChange[]>()
-  if (!before || !after || before === after) return { changes, paths: null }
+  if (entry.local === true) return localFileChanges(entry, plugins)
+  if (!before || !after || before === after) return { changes, paths: null, digestsAbsent: null }
   const diff = git(["diff", "--name-status", before, after], entry.dir)
-  if (!diff.ok) return { changes, paths: null }
+  if (!diff.ok) return { changes, paths: null, digestsAbsent: null }
   const paths = new Set<string>()
   const subdir = entry.subdir ? `${entry.subdir}/` : ""
   for (const line of diff.stdout.split("\n")) {
@@ -76,7 +82,42 @@ export function pluginFileChanges(
       }
     }
   }
-  return { changes, paths }
+  return { changes, paths, digestsAbsent: null }
+}
+
+// brief 30 §2 §4: a local marketplace's changed-set — the record's digests
+// diffed against the current ones, keyed by plugin-relative path. A record
+// without digests is unknown, never an empty previous state, so it cannot
+// render as a change flood or end a grandfather; a plugin with no record
+// (fresh, or renamed a moment ago) is simply not compared
+function localFileChanges(
+  entry: MarketplaceEntry,
+  plugins: DiscoveredPlugin[],
+): { changes: Map<string, FileChange[]>; paths: Set<string>; digestsAbsent: string[] } {
+  const changes = new Map<string, FileChange[]>()
+  const paths = new Set<string>()
+  const digestsAbsent: string[] = []
+  const root = componentRoot(entry)
+  for (const plugin of plugins) {
+    const record = entry.plugins[plugin.name]
+    if (!record) continue
+    if (!record.hashes) {
+      digestsAbsent.push(plugin.name)
+      continue
+    }
+    const list: FileChange[] = digestChanges(record.hashes, plugin)
+    if (!list.length) continue
+    changes.set(plugin.name, list)
+    // the git path's shape: component-root-relative with all ancestors, so
+    // the materializer promotes a changed component to `refreshed` and a
+    // skill matches on its source directory
+    const prefix = relative(root, plugin.dir)
+    for (const change of list) {
+      const parts = `${prefix}/${change.path}`.split("/")
+      for (let i = 1; i <= parts.length; i++) paths.add(parts.slice(0, i).join("/"))
+    }
+  }
+  return { changes, paths, digestsAbsent }
 }
 
 // brief 31 §3: a diff path joins an outcome by the outcome's source — exact
@@ -87,7 +128,9 @@ function outcomeMatches(outcome: CoreOutcome, pluginDir: string, path: string): 
   if (outcome.type === "mcp") return false
   if (outcome.source !== null) {
     const rel = relative(pluginDir, outcome.source)
-    return outcome.type === "skill" ? path.startsWith(`${rel}/`) : path === rel
+    // brief 30 §2: a local digest keys a skill by its directory, the git
+    // diff by the files inside it — both match here
+    return outcome.type === "skill" ? path === rel || path.startsWith(`${rel}/`) : path === rel
   }
   const dirs =
     outcome.type === "command" ? ["commands", "command"]
@@ -168,6 +211,22 @@ function versionDetail(plugin: PluginReport, marketplace: string): string | null
   return `${plugin.from} → ${plugin.to}`
 }
 
+// spec 08: with no revision pair the materializer's own counts are the
+// report; an all-zero line says nothing (spec 23 §7). Brief 30 §4 keeps them
+// as the fallback for a re-clone and for a local pass whose recorded digests
+// were absent
+function renderOutcomeCounts(report: MarketplaceReport): void {
+  const counts = { created: 0, removed: 0, skipped: 0 }
+  for (const outcome of report.outcomes ?? []) {
+    if (outcome.state === "created") counts.created += 1
+    else if (outcome.state === "removed") counts.removed += 1
+    else if (outcome.state !== "current" && outcome.state !== "refreshed") counts.skipped += 1
+  }
+  if (counts.created || counts.removed || counts.skipped) {
+    console.log(`  ${counts.created} created, ${counts.removed} removed, ${counts.skipped} skipped`)
+  }
+}
+
 export function renderMarketplace(report: MarketplaceReport, quiet: boolean, headerPrinted = false): void {
   if (quiet && report.ok && !report.changed) return
   if (!headerPrinted) console.log(`updating ${report.name}...`)
@@ -186,18 +245,17 @@ export function renderMarketplace(report: MarketplaceReport, quiet: boolean, hea
   }
   if (report.before && report.after) {
     console.log(report.before === report.after ? "  already up to date" : `  ${report.before.slice(0, 7)} → ${report.after.slice(0, 7)}`)
+  } else if (report.digestsAbsent !== null) {
+    // brief 30 §4: a local marketplace has no revision pair — the recorded
+    // digests answer, and an absent baseline is unknown, never unchanged
+    if (report.digestsAbsent.length > 0) {
+      console.log("  change tracking initialized — this pass reports no per-plugin changes")
+      renderOutcomeCounts(report)
+    } else if (!report.changed) {
+      console.log("  already up to date")
+    }
   } else if (report.outcomes?.length) {
-    // no revision pair (local marketplace, re-clone): the materializer's own
-    // counts are the report (spec 08); an all-zero line says nothing (spec 23 §7)
-    const counts = { created: 0, removed: 0, skipped: 0 }
-    for (const outcome of report.outcomes) {
-      if (outcome.state === "created") counts.created += 1
-      else if (outcome.state === "removed") counts.removed += 1
-      else if (outcome.state !== "current" && outcome.state !== "refreshed") counts.skipped += 1
-    }
-    if (counts.created || counts.removed || counts.skipped) {
-      console.log(`  ${counts.created} created, ${counts.removed} removed, ${counts.skipped} skipped`)
-    }
+    renderOutcomeCounts(report)
   }
   for (const rename of report.renamed) {
     if (rename.net === "renamed") console.log(`  renamed ${rename.from} → ${rename.to}`)

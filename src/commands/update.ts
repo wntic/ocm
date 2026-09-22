@@ -114,6 +114,7 @@ async function updateOne(registry: Registry, name: string, trust?: boolean): Pro
   const report: MarketplaceReport = {
     name, ok: true, error: null, note: null, before: null, after: null, changed: false,
     renamed: [], removed: [], pruned: [], dropped: [], refused: [], plugins: [], warnings: [], outcomes: null,
+    digestsAbsent: null,
   }
   try {
     await pullMarketplace(entry, name, report)
@@ -215,7 +216,13 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport):
   const renames = readRenames(root, plugins)
   const { resolved, cycles } = resolveChains(renames)
   for (const cycle of cycles) report.warnings.push(`rename cycle ignored: ${cycle.join(" → ")} → ${cycle[0]}`)
+  // brief 30 §3: the digest comparison must run before
+  // reconcilePluginRecords/registerPlugins — registration re-baselines a
+  // local record's hashes (loader/marketplace.js), so after it the diff
+  // would always be empty. It also sees the records pre-rename, so a
+  // renamed plugin's new name has no record yet and holds its grandfather
   const fileViews = pluginFileChanges(entry, report.before, report.after, plugins)
+  report.digestsAbsent = fileViews.digestsAbsent
   const changed = new Set([...fileViews.changes].filter(([, files]) => files.length > 0).map(([pluginName]) => pluginName))
   const { warnings, pruned, dropped, renamed, removed, refused, kept, registrable } = reconcilePluginRecords(registry, name, root, {
     discovered: plugins, resolved, changed,

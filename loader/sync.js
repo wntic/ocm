@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { writeJsonAtomic } from "./atomic.js"
+import { digestChanges } from "./digest.js"
 import { git, isGitRepo, treePluginFiles } from "./git.js"
 import { treeFoldRefusal } from "./limits.js"
 import { tryRegistryLock } from "./lock.js"
@@ -92,9 +93,20 @@ function prepareRecords(name, root) {
   try {
     const raw = JSON.parse(readFileSync(REGISTRY_FILE, "utf8"))
     if (!isRecord(raw) || raw.version !== 2 || !isRecord(raw.marketplaces?.[name])) return null
+    const entry = raw.marketplaces[name]
     const plugins = [...discoverMarketplace(root).plugins.values()]
     const { resolved, cycles } = resolveChains(readRenames(root, plugins))
-    const { pruned, removed, renamed, kept, registrable } = reconcilePluginRecords(raw, name, root, { discovered: plugins, resolved })
+    // brief 30 §3: the digests are read before registration re-baselines
+    // them; a record without hashes is unknown, never changed (§4), so an
+    // upgrade pass cannot end a grandfather at startup
+    const changed = new Set()
+    if (entry.local === true) {
+      for (const plugin of plugins) {
+        const record = entry.plugins[plugin.name]
+        if (record?.hashes && digestChanges(record.hashes, plugin).length) changed.add(plugin.name)
+      }
+    }
+    const { warnings, pruned, removed, renamed, kept, registrable } = reconcilePluginRecords(raw, name, root, { discovered: plugins, resolved, changed })
     registerPlugins(raw, name, registrable)
     // registration replaces the plugins map wholesale, so the records a
     // refused rename kept go back after it
@@ -103,7 +115,7 @@ function prepareRecords(name, root) {
     removeMcpKeys([...removed, ...renamed.map((rename) => rename.from), ...pruned])
     return {
       entry: raw.marketplaces[name],
-      warnings: cycles.map((cycle) => `rename cycle ignored: ${cycle.join(" → ")} → ${cycle[0]}`),
+      warnings: [...cycles.map((cycle) => `rename cycle ignored: ${cycle.join(" → ")} → ${cycle[0]}`), ...warnings],
     }
   } catch {
     return null
@@ -179,14 +191,16 @@ async function runSync(entries, options, result) {
     // discovery roots at the subdir when the source was a tree url (spec 05);
     // git operations above ran against the clone root
     const root = entry.subdir ? join(entry.dir, entry.subdir) : entry.dir
-    const prepared = pulled ? prepareRecords(name, root) : null
+    // brief 30 §5: a local entry never pulls, but its records reconcile too
+    const refresh = pulled || entry.local === true
+    const prepared = refresh ? prepareRecords(name, root) : null
     const links = materialize(name, root, { enabled: enabledPlugins(prepared?.entry ?? entry, root) })
     if (links.warnings.length) result.warnings = [...(result.warnings ?? []), ...links.warnings.map((w) => `${name}: ${w}`)]
     if (prepared?.warnings.length) result.warnings = [...(result.warnings ?? []), ...prepared.warnings.map((w) => `${name}: ${w}`)]
     // brief 31 §3: what changed is what the outcomes say moved — a pull
     // that changed nothing on disk is not a change
     if (links.outcomes.some((o) => o.state === "created" || o.state === "removed" || o.state === "refreshed")) result.changed = true
-    if (pulled) deriveRecords(name, links.outcomes)
+    if (refresh) deriveRecords(name, links.outcomes)
     // brief 40: the prepared entry carries a refusal recorded this pass —
     // without it the fingerprint would be computed pre-refusal and drift
     markDriftedTrust(name, prepared?.entry ?? entry, root)

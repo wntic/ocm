@@ -2,7 +2,8 @@
 // writing nothing when nothing changed.
 
 import { spawnSync } from "node:child_process"
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
@@ -1818,4 +1819,673 @@ phase("6. a recorded refusal clears when the incumbent marketplace is removed: t
   expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] })
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
 }, 420_000)
+}
+
+// brief 30 §2–§3: content digests for local marketplaces — what is hashed
+// (the shipped components, keyed by plugin-relative path, one entry per
+// skill subtree, nothing else in the plugin directory) and where the
+// previous state lives (the plugin record's optional `hashes`)
+{
+const sha256 = (data) => createHash("sha256").update(data).digest("hex")
+
+phase("1. a local add records content digests: exactly the shipped components keyed by plugin-relative path, with plugin.json and README.md excluded", async (home) => {
+  // invariant: config safety — the user's mcp key predates the add and survives it
+  writeTree(cfg(home), { "opencode.json": json({ mcp: { "user-server": { type: "local", command: ["echo"] } } }) })
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: {
+    adw: {
+      "plugin.json": PLUGIN_JSON,
+      "README.md": "# adw\n",
+      commands: { "review.md": COMMAND },
+      skills: { "code-review": { "SKILL.md": SKILL, "examples.md": "# examples\n" } },
+      plugin: { "hello.js": JS_PLUGIN },
+      "mcp.json": mcpJson(MCP),
+    },
+    plain: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } },
+  } })
+  const added = ocm(home, "add", mp, "--trust")
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  const plugins = readRegistry(home).marketplaces.mp.plugins
+  const hashes = plugins.adw.hashes
+  if (!hashes) throw new Error(`expected adw.hashes recorded in ${registryFile(home)} — a local add must baseline its digests (brief 30 §3)`)
+  expect(Object.keys(hashes).sort()).toEqual(["commands/review.md", "mcp.json", "plugin/hello.js", "skills/code-review"])
+  const file = (rel) => sha256(readFileSync(join(mp, "plugins", "adw", rel)))
+  expect(hashes["commands/review.md"]).toBe(file("commands/review.md"))
+  expect(hashes["plugin/hello.js"]).toBe(file("plugin/hello.js"))
+  expect(hashes["mcp.json"]).toBe(file("mcp.json"))
+  if (!/^[0-9a-f]{64}$/.test(hashes["skills/code-review"])) {
+    throw new Error(`the skill is one entry — a single sha256 over its whole subtree — got ${JSON.stringify(hashes["skills/code-review"])} in ${registryFile(home)}`)
+  }
+  expect(plugins.plain.hashes).toEqual({ "commands/work.md": sha256(COMMAND) })
+  expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] })
+})
+
+phase("2. identical content yields byte-identical digests: the same tree added again under another name records the same hashes", async (home) => {
+  const tree = { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "review.md": COMMAND },
+    skills: { "code-review": { "SKILL.md": SKILL, "examples.md": "# examples\n" } },
+  } } }
+  writeTree(join(home, "mp"), tree)
+  const first = ocm(home, "add", join(home, "mp"))
+  if (first.status !== 0) throw new Error(`ocm add mp exited ${first.status}: ${first.stderr}`)
+  const digests = JSON.stringify(readRegistry(home).marketplaces.mp.plugins.adw.hashes)
+  if (digests === undefined) throw new Error(`expected adw.hashes recorded in ${registryFile(home)}`)
+  // plugin names are globally unique (spec 18), so the twin can only be
+  // added once the first marketplace is gone — the point is determinism of
+  // the digests, not coexistence of the marketplaces
+  expect(ocm(home, "remove", "mp").status).toBe(0)
+  writeTree(join(home, "twin"), tree)
+  const second = ocm(home, "add", join(home, "twin"))
+  if (second.status !== 0) throw new Error(`ocm add twin exited ${second.status}: ${second.stderr}`)
+  expect(JSON.stringify(readRegistry(home).marketplaces.twin.plugins.adw.hashes)).toBe(digests)
+})
+
+phase("3. pluginHashes: a file added inside a skill directory changes that skill's one entry; an mtime-only change changes nothing; singular source dirs key by their actual path", async (home) => {
+  const { pluginHashes } = await import("../loader/digest.js")
+  const dir = join(home, "unit-plugin")
+  writeTree(dir, { commands: { "x.md": COMMAND }, skills: { guide: { "SKILL.md": SKILL } } })
+  const plugin = { name: "unit-plugin", dir, components: { command: ["x.md"], skill: ["guide"] } }
+  const before = pluginHashes(plugin)
+  writeFileSync(join(dir, "skills", "guide", "examples.md"), "# examples\n")
+  const after = pluginHashes(plugin)
+  if (after["skills/guide"] === before["skills/guide"]) {
+    throw new Error(`a file added inside ${join(dir, "skills", "guide")} must change the skill's single digest entry (brief 30 §2)`)
+  }
+  expect(after["commands/x.md"]).toBe(before["commands/x.md"]) // the untouched command's entry is unchanged
+  expect(Object.keys(after).sort()).toEqual(["commands/x.md", "skills/guide"]) // the skill stays one entry
+
+  // mtime moved, contents identical: content, not stat, decides
+  const frozen = JSON.stringify(after)
+  const later = new Date(Date.now() + 60_000)
+  for (const rel of ["commands/x.md", "skills/guide/SKILL.md", "skills/guide/examples.md"]) {
+    utimesSync(join(dir, rel), later, later)
+  }
+  expect(JSON.stringify(pluginHashes(plugin))).toBe(frozen)
+
+  // `command`, `agent` and `skill` are legal singular source dirs: the keys
+  // follow the directories that actually hold the files
+  const singular = join(home, "singular-plugin")
+  writeTree(singular, {
+    command: { "x.md": COMMAND },
+    agent: { "y.md": "---\ndescription: reviewer\n---\n\nReviews.\n" },
+    skill: { z: { "SKILL.md": SKILL } },
+  })
+  const singularHashes = pluginHashes({ name: "singular-plugin", dir: singular, components: { command: ["x.md"], agent: ["y.md"], skill: ["z"] } })
+  expect(Object.keys(singularHashes).sort()).toEqual(["agent/y.md", "command/x.md", "skill/z"])
+})
+
+phase("4. a git marketplace's plugin records carry no hashes — the revision pair is its changed-set", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: {
+    tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } },
+    extra: { "plugin.json": PLUGIN_JSON, commands: { "more.md": COMMAND } },
+  } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  for (const [name, record] of Object.entries(readRegistry(home).marketplaces.mp.plugins)) {
+    if (record.hashes !== undefined) {
+      throw new Error(`expected no hashes on ${name}'s record in ${registryFile(home)} — a git marketplace's changed-set is the revision pair (brief 30 §3)`)
+    }
+  }
+})
+
+phase("5. an unreadable component drops out of the digest with a warning naming it; the add completes and the sibling plugin's digests are intact", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: {
+    broken: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND, "ok.md": COMMAND } },
+    fine: { "plugin.json": PLUGIN_JSON, commands: { "y.md": COMMAND } },
+  } })
+  const unreadable = join(mp, "plugins", "broken", "commands", "x.md")
+  // a local source is stored realpath'd (source.js), and macOS temp homes
+  // sit behind /var -> /private/var, so the warned path is the resolved one;
+  // resolve before the chmod — lstat on a 0o000 file throws EACCES here too
+  const shown = realpathSync(unreadable)
+  chmodSync(unreadable, 0o000)
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status} — one unreadable component must not fail the add:\n${added.stderr}`)
+  if (!added.stderr.includes(shown)) throw new Error(`the warning must name ${shown}:\n${added.stderr}`)
+  if (!/warning/i.test(added.stderr)) throw new Error(`the unreadable component must be warned about, not silent:\n${added.stderr}`)
+  const plugins = readRegistry(home).marketplaces.mp.plugins
+  if (plugins.broken.hashes?.["commands/x.md"] !== undefined) {
+    throw new Error(`the unreadable commands/x.md must drop out of broken's hashes in ${registryFile(home)}, got ${JSON.stringify(plugins.broken.hashes)}`)
+  }
+  expect(plugins.broken.hashes).toEqual({ "commands/ok.md": sha256(COMMAND) })
+  expect(plugins.fine.hashes).toEqual({ "commands/y.md": sha256(COMMAND) })
+})
+
+phase("6. an update refreshes the digests: an edited command's hash follows its new contents through the shared registerPlugins path", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  const NEW_COMMAND = `${COMMAND}<!-- v2 -->\n`
+  writeFileSync(join(mp, "plugins", "tool", "commands", "x.md"), NEW_COMMAND)
+  const updated = ocm(home, "update", "mp")
+  if (updated.status !== 0) throw new Error(`ocm update mp exited ${updated.status}: ${updated.stderr}`)
+  const record = readRegistry(home).marketplaces.mp.plugins.tool
+  if (!record.hashes) throw new Error(`expected tool.hashes maintained by the update in ${registryFile(home)} — update passes through registerPlugins too (brief 30 §3)`)
+  expect(record.hashes["commands/x.md"]).toBe(sha256(NEW_COMMAND))
+  // invariant: idempotence — a second update leaves the digests byte-identical
+  const settled = JSON.stringify(record.hashes)
+  const again = ocm(home, "update", "mp")
+  if (again.status !== 0) throw new Error(`second ocm update mp exited ${again.status}: ${again.stderr}`)
+  expect(JSON.stringify(readRegistry(home).marketplaces.mp.plugins.tool.hashes)).toBe(settled)
+})
+}
+
+// brief 30 §1 §4–§5: the local changed-set — pluginFileChanges answers for
+// a local marketplace from the recorded digests behind its existing
+// signature, `digestsAbsent` names the plugins whose comparison could not
+// run (never "everything changed"), and the manifest grandfather ends on a
+// local marketplace exactly as it does on a git one
+{
+// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
+function assertResolves(dest, source) {
+  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
+  expect(realpathSync(dest)).toBe(realpathSync(source))
+}
+
+// a home from before digests, local-flavoured: the registry was written
+// before `hashes` existed, so legacy-tool is legitimately installed without
+// a plugin.json and without a baseline, and the links a real install would
+// have left behind are pre-created
+function preGateLocalHome(home) {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: {
+    "legacy-tool": { commands: { "tool.md": COMMAND } },
+    "fresh-tool": { "plugin.json": PLUGIN_JSON, commands: { "fresh.md": COMMAND } },
+  } })
+  const dir = realpathSync(mp)
+  const at = "2026-01-01T00:00:00.000Z"
+  mkdirSync(join(cfg(home), "ocm"), { recursive: true })
+  writeFileSync(registryFile(home), json({
+    version: 2,
+    marketplaces: {
+      mp: {
+        url: dir, dir, local: true, addedAt: at, mode: "auto", ref: null,
+        subdir: null, revision: null, syncIntervalMs: null,
+        trust: { code: "none" }, lastSync: null,
+        plugins: {
+          "legacy-tool": { source: "plugins/legacy-tool", components: { command: ["tool.md"] }, enabled: true, installedAt: at, version: null, manifest: {} },
+          "fresh-tool": { source: "plugins/fresh-tool", components: { command: ["fresh.md"] }, enabled: true, installedAt: at, version: null, manifest: { description: "demo plugin" } },
+        },
+      },
+    },
+  }))
+  mkdirSync(join(cfg(home), "commands"), { recursive: true })
+  symlinkSync(join(dir, "plugins", "legacy-tool", "commands", "tool.md"), commandLink(home, "legacy-tool", "tool.md"))
+  symlinkSync(join(dir, "plugins", "fresh-tool", "commands", "fresh.md"), commandLink(home, "fresh-tool", "fresh.md"))
+  return mp
+}
+
+phase("2. a local marketplace's edited command prints ~ commands/x.md under its plugin; the untouched sibling is silent", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: {
+    tool: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } },
+    other: { "plugin.json": PLUGIN_JSON, commands: { "y.md": COMMAND } },
+  } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  writeFileSync(join(mp, "plugins", "tool", "commands", "x.md"), `${COMMAND}<!-- v2 -->\n`)
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  const lines = output.split("\n").filter((l) => /^    [+~!-] /.test(l))
+  if (!lines.includes("    ~ commands/x.md")) {
+    throw new Error(`expected a "~ commands/x.md" file line under tool — the local changed-set is the recorded digests (brief 30 §1):\n${output}`)
+  }
+  if (output.split("\n").some((l) => /^  other\b/.test(l))) {
+    throw new Error(`the untouched sibling must be silent — version unchanged and no file changes:\n${output}`)
+  }
+  assertResolves(commandLink(home, "tool", "x.md"), join(mp, "plugins", "tool", "commands", "x.md"))
+}, 240_000)
+
+phase("3. add, edit and delete across one local pass print + ~ -; a file added inside a skill directory renders as ~ skills/<name>", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { kit: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "a.md": COMMAND, "b.md": COMMAND },
+    skills: { guide: { "SKILL.md": SKILL } },
+  } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  writeFileSync(join(mp, "plugins", "kit", "commands", "new.md"), COMMAND)
+  writeFileSync(join(mp, "plugins", "kit", "commands", "a.md"), `${COMMAND}<!-- v2 -->\n`)
+  rmSync(join(mp, "plugins", "kit", "commands", "b.md"))
+  writeFileSync(join(mp, "plugins", "kit", "skills", "guide", "examples.md"), "# examples\n")
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  const lines = output.split("\n").filter((l) => /^    [+~!-] /.test(l))
+  for (const expected of ["    + commands/new.md", "    ~ commands/a.md", "    - commands/b.md", "    ~ skills/guide"]) {
+    if (!lines.includes(expected)) {
+      throw new Error(`expected ${JSON.stringify(expected)} among the file lines (brief 30 §2 — a skill is one subtree entry):\n${output}`)
+    }
+  }
+}, 240_000)
+
+test("4. the grandfather ends on a local marketplace: a pre-digest install is baselined on the first pass and uninstalled when it then changes; untouched, it holds", async () => {
+  // the twin: nothing touched between the passes — the grandfather holds
+  await withFakeHome(async (home) => {
+    const mp = preGateLocalHome(home)
+    for (let pass = 1; pass <= 2; pass++) {
+      const result = ocm(home, "update", "mp")
+      if (result.status !== 0) throw new Error(`ocm update mp #${pass} exited ${result.status}: ${result.stderr}`)
+      if (`${result.stdout}\n${result.stderr}`.includes("uninstalled")) {
+        throw new Error(`an unchanged grandfathered plugin must not be uninstalled (pass ${pass}):\n${result.stdout}\n${result.stderr}`)
+      }
+    }
+    const record = readRegistry(home).marketplaces.mp.plugins["legacy-tool"]
+    if (!record || record.enabled !== true) {
+      throw new Error(`expected legacy-tool still enabled in ${registryFile(home)}, got ${JSON.stringify(record)}`)
+    }
+    assertResolves(commandLink(home, "legacy-tool", "tool.md"), join(mp, "plugins", "legacy-tool", "commands", "tool.md"))
+  })
+  await withFakeHome(async (home) => {
+    const mp = preGateLocalHome(home)
+    writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" }) // ownership probe file
+    const first = ocm(home, "update", "mp")
+    if (first.status !== 0) throw new Error(`first ocm update mp exited ${first.status}: ${first.stderr}`)
+    const output1 = `${first.stdout}\n${first.stderr}`
+    if (output1.includes("uninstalled")) throw new Error(`absent digests must not end the grandfather on the first pass:\n${output1}`)
+    const baselined = readRegistry(home).marketplaces.mp.plugins["legacy-tool"]?.hashes
+    if (!baselined || JSON.stringify(Object.keys(baselined)) !== JSON.stringify(["commands/tool.md"])) {
+      throw new Error(`expected legacy-tool.hashes baselined by the first pass in ${registryFile(home)}, got ${JSON.stringify(baselined)}`)
+    }
+    assertResolves(commandLink(home, "legacy-tool", "tool.md"), join(mp, "plugins", "legacy-tool", "commands", "tool.md"))
+
+    writeFileSync(join(mp, "plugins", "legacy-tool", "commands", "tool.md"), `${COMMAND}<!-- v2 -->\n`)
+    const second = ocm(home, "update", "mp")
+    if (second.status !== 0) throw new Error(`second ocm update mp exited ${second.status}: ${second.stderr}`)
+    for (const needle of [
+      'plugin "legacy-tool": changed upstream and still has no plugin.json — uninstalled',
+      "it predates the plugin.json requirement and kept working until it changed",
+      'add plugins/legacy-tool/plugin.json ({ "description": "…" }) and run ocm update to reinstall it',
+    ]) {
+      if (!second.stderr.includes(needle)) throw new Error(`stderr must contain the grandfather-end line ${JSON.stringify(needle)}:\n${second.stderr}`)
+    }
+    const uninstalled = second.stdout.split("\n").filter((l) => l.includes("uninstalled"))
+    if (uninstalled.length !== 1 || !uninstalled[0].includes("legacy-tool   uninstalled — plugin.json required now that it changed")) {
+      throw new Error(`expected one "legacy-tool   uninstalled — plugin.json required now that it changed" report line:\n${second.stdout}`)
+    }
+    if (readRegistry(home).marketplaces.mp.plugins["legacy-tool"]) {
+      throw new Error(`expected legacy-tool's record gone from ${registryFile(home)}`)
+    }
+    assertAbsent(commandLink(home, "legacy-tool", "tool.md"))
+    // failure isolation: the manifest-bearing sibling keeps its link
+    assertResolves(commandLink(home, "fresh-tool", "fresh.md"), join(mp, "plugins", "fresh-tool", "commands", "fresh.md"))
+    expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+  })
+}, 480_000)
+
+phase("5. a manifest-less grandfathered plugin renamed in a local marketplace keeps its grandfather: the record migrates, the links move, the rename is reported, and it stays installed", async (home) => {
+  const mp = preGateLocalHome(home)
+  renameSync(join(mp, "plugins", "legacy-tool"), join(mp, "plugins", "renamed-tool"))
+  writeFileSync(join(mp, "marketplace.json"), renames({ "legacy-tool": "renamed-tool" }))
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (!/renamed[^\n]*legacy-tool[^\n]*renamed-tool/.test(output)) {
+    throw new Error(`expected the rename reported — applied and reported, not silent (brief 30 test 5):\n${output}`)
+  }
+  if (output.includes("uninstalled")) {
+    throw new Error(`the grandfather must hold through the rename — the new name has no recorded digests at comparison time, so it is not in the changed set:\n${output}`)
+  }
+  const plugins = readRegistry(home).marketplaces.mp.plugins
+  if (!plugins["renamed-tool"] || plugins["renamed-tool"].enabled !== true) {
+    throw new Error(`expected the record migrated to renamed-tool and still enabled in ${registryFile(home)}, got ${JSON.stringify(plugins)}`)
+  }
+  expect(plugins["legacy-tool"]).toBeUndefined()
+  assertResolves(commandLink(home, "renamed-tool", "tool.md"), join(mp, "plugins", "renamed-tool", "commands", "tool.md"))
+  assertAbsent(commandLink(home, "legacy-tool", "tool.md"))
+}, 240_000)
+
+phase("8. a git marketplace still reports from the revision pair: the same + ~ - marks and version arrow, no hashes on its records, and digestsAbsent is null", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { tool: {
+    "plugin.json": json({ version: "0.1.0", description: "demo plugin" }),
+    commands: { "base.md": COMMAND, "gone.md": "# obsolete command\n" },
+  } } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  // distinct contents: git's rename detection would pair an added file with
+  // a deleted one of identical content and report R (~) instead of A/D
+  writeFileSync(join(remote, "plugins", "tool", "commands", "new.md"), `${COMMAND}<!-- added -->\n`)
+  writeFileSync(join(remote, "plugins", "tool", "commands", "base.md"), `${COMMAND}<!-- v2 -->\n`)
+  rmSync(join(remote, "plugins", "tool", "commands", "gone.md"))
+  writeFileSync(join(remote, "plugins", "tool", "plugin.json"), json({ version: "0.2.0", description: "demo plugin" }))
+  commitAll(remote, "advance")
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (!/tool[^\n]*0\.1\.0[^\n]*→[^\n]*0\.2\.0/.test(output)) {
+    throw new Error(`expected the version arrow 0.1.0 → 0.2.0 under tool:\n${output}`)
+  }
+  const lines = output.split("\n").filter((l) => /^    [+~!-] /.test(l))
+  for (const expected of ["    + commands/new.md", "    ~ commands/base.md", "    - commands/gone.md"]) {
+    if (!lines.includes(expected)) throw new Error(`expected ${JSON.stringify(expected)} among the file lines:\n${output}`)
+  }
+  for (const [name, record] of Object.entries(readRegistry(home).marketplaces.mp.plugins)) {
+    if (record.hashes !== undefined) {
+      throw new Error(`expected no hashes on ${name}'s record in ${registryFile(home)} — a git marketplace's changed-set is the revision pair`)
+    }
+  }
+  const asJson = ocm(home, "update", "mp", "--json")
+  if (asJson.status !== 0) throw new Error(`ocm update mp --json exited ${asJson.status}: ${asJson.stderr}`)
+  const mpReport = JSON.parse(asJson.stdout).marketplaces[0]
+  if (mpReport.digestsAbsent !== null) {
+    throw new Error(`expected digestsAbsent null on a git marketplace's report — the digest comparison never ran — got ${JSON.stringify(mpReport.digestsAbsent)}`)
+  }
+}, 300_000)
+
+phase("10. update --json carries the local changed-set in plugins[].files in the git shape, and digestsAbsent is [] once every known plugin has digests", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  writeFileSync(join(mp, "plugins", "tool", "commands", "x.md"), `${COMMAND}<!-- v2 -->\n`)
+  const asJson = ocm(home, "update", "mp", "--json")
+  if (asJson.status !== 0) throw new Error(`ocm update mp --json exited ${asJson.status}: ${asJson.stderr}`)
+  const mpReport = JSON.parse(asJson.stdout).marketplaces[0]
+  if (mpReport.digestsAbsent === undefined) {
+    throw new Error(`expected digestsAbsent on the local report (brief 30 §4) — the TUI needs no source-type branch`)
+  }
+  expect(mpReport.digestsAbsent).toEqual([])
+  const tool = mpReport.plugins.find((p) => p.name === "tool")
+  if (!tool) throw new Error(`expected tool's plugin report in the --json output: ${JSON.stringify(mpReport.plugins)}`)
+  expect(tool.files).toEqual([{ mark: "~", path: "commands/x.md" }])
+}, 240_000)
+
+phase("a local record whose hashes were lost mid-life is never treated as everything-changed: no file lines, still installed, digests re-baselined, and the loss reported as digestsAbsent", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  editRegistry(home, (registry) => {
+    delete registry.marketplaces.mp.plugins.tool.hashes
+  })
+  const asJson = ocm(home, "update", "mp", "--json")
+  if (asJson.status !== 0) throw new Error(`ocm update mp --json exited ${asJson.status}: ${asJson.stderr}`)
+  const mpReport = JSON.parse(asJson.stdout).marketplaces[0]
+  expect(mpReport.digestsAbsent).toEqual(["tool"])
+  const marks = mpReport.plugins.flatMap((p) => p.files.map((f) => f.mark))
+  if (marks.length) {
+    throw new Error(`absent digests must not render as a change flood — unknown is never "everything changed" (brief 30 §4):\n${JSON.stringify(mpReport.plugins)}`)
+  }
+  assertResolves(commandLink(home, "tool", "x.md"), join(mp, "plugins", "tool", "commands", "x.md"))
+  const record = readRegistry(home).marketplaces.mp.plugins.tool
+  if (!record.hashes?.["commands/x.md"]) {
+    throw new Error(`expected tool.hashes re-baselined by the pass in ${registryFile(home)}, got ${JSON.stringify(record.hashes)}`)
+  }
+}, 240_000)
+
+phase("1. a local marketplace with nothing touched prints already up to date like the git path, and the registry is unchanged apart from the spec-26 lastSync stamp", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  const before = readRegistry(home).marketplaces.mp
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (!output.split("\n").includes("  already up to date")) {
+    throw new Error(`expected the exact line "  already up to date" — digests known and nothing changed is the same fact the git path reports (brief 30 §4):\n${output}`)
+  }
+  if (output.includes("change tracking initialized")) {
+    throw new Error(`digests are known — the initialization line must not print:\n${output}`)
+  }
+  if (/\d+ created, \d+ removed, \d+ skipped/.test(output)) {
+    throw new Error(`a known-digest no-change pass must not fall back to the materializer counts:\n${output}`)
+  }
+  // the brief's edge table promises a byte-identical registry, but the CLI
+  // update path unconditionally advances lastSync.at (spec 26 §3 — F41 was
+  // rejected; pinned by the hygiene test "4. a no-op update still writes
+  // the registry"). Everything except that stamp is deep-equal: no record
+  // churn, no hash re-baselining noise.
+  const after = readRegistry(home).marketplaces.mp
+  if (before.lastSync !== null) throw new Error(`a local add leaves lastSync null in ${registryFile(home)}, got ${JSON.stringify(before.lastSync)}`)
+  if (typeof after.lastSync?.at !== "string") throw new Error(`the pass must stamp lastSync.at in ${registryFile(home)}, got ${JSON.stringify(after.lastSync)}`)
+  delete before.lastSync
+  delete after.lastSync
+  expect(after).toEqual(before)
+  assertResolves(commandLink(home, "tool", "x.md"), join(mp, "plugins", "tool", "commands", "x.md")) // invariant: idempotence
+}, 240_000)
+
+phase("6. the upgrade path: a pre-digest local registry's first pass prints the initialization line, ends no grandfather and writes the baseline; the second pass reports normally", async (home) => {
+  const mp = preGateLocalHome(home)
+  const first = ocm(home, "update", "mp")
+  if (first.status !== 0) throw new Error(`first ocm update mp exited ${first.status}: ${first.stderr}`)
+  const output1 = `${first.stdout}\n${first.stderr}`
+  if (!output1.split("\n").includes("  change tracking initialized — this pass reports no per-plugin changes")) {
+    throw new Error(`expected the exact initialization line — absent digests are unknown, never unchanged (brief 30 §4):\n${output1}`)
+  }
+  if (output1.includes("uninstalled")) {
+    throw new Error(`the first pass after upgrade must end no grandfather:\n${output1}`)
+  }
+  const plugins = readRegistry(home).marketplaces.mp.plugins
+  expect(Object.keys(plugins["legacy-tool"].hashes)).toEqual(["commands/tool.md"])
+  expect(Object.keys(plugins["fresh-tool"].hashes)).toEqual(["commands/fresh.md"])
+  assertResolves(commandLink(home, "legacy-tool", "tool.md"), join(mp, "plugins", "legacy-tool", "commands", "tool.md"))
+
+  const second = ocm(home, "update", "mp")
+  if (second.status !== 0) throw new Error(`second ocm update mp exited ${second.status}: ${second.stderr}`)
+  const output2 = `${second.stdout}\n${second.stderr}`
+  if (!output2.split("\n").includes("  already up to date")) {
+    throw new Error(`expected "  already up to date" on the second pass — the baseline exists now (brief 30 §4):\n${output2}`)
+  }
+  if (output2.includes("change tracking initialized")) {
+    throw new Error(`the baseline was written by the first pass — the second must not re-initialize:\n${output2}`)
+  }
+  if (/^    [+~!-] /m.test(output2)) {
+    throw new Error(`nothing was touched between the passes — no per-plugin file lines:\n${output2}`)
+  }
+}, 240_000)
+
+phase("pin: a git marketplace with no upstream movement still prints already up to date — the local rendering must not disturb the git path", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  const result = ocm(home, "update", "mp")
+  if (result.status !== 0) throw new Error(`ocm update mp exited ${result.status}: ${result.stderr}`)
+  const output = `${result.stdout}\n${result.stderr}`
+  if (!output.split("\n").includes("  already up to date")) {
+    throw new Error(`expected the exact line "  already up to date" from the git path:\n${output}`)
+  }
+  if (output.includes("change tracking initialized")) {
+    throw new Error(`the initialization line is local-only — it must not leak into the git path:\n${output}`)
+  }
+  if (/\d+ created, \d+ removed, \d+ skipped/.test(output)) {
+    throw new Error(`a revision pair exists — no materializer-counts fallback:\n${output}`)
+  }
+}, 240_000)
+
+// F94, local half: with a truthful files list, the existing suppression in
+// pluginReports (unchanged version + no file changes) makes the bogus
+// "0.1.0 → ?" line stop after the first pass — no formatter change (spec
+// 31 §6 owns how an unknown transition renders when the line is warranted)
+phase("pin: a local plugin whose manifest vanishes prints no version arrow and appears once; from the second pass on it is silent — the F94 local half", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { "legacy-tool": {
+    "plugin.json": json({ version: "0.1.0", description: "demo plugin" }),
+    commands: { "x.md": COMMAND },
+  } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  rmSync(join(mp, "plugins", "legacy-tool", "plugin.json"))
+  const first = ocm(home, "update", "mp")
+  if (first.status !== 0) throw new Error(`first ocm update mp exited ${first.status}: ${first.stderr}`)
+  const output1 = `${first.stdout}\n${first.stderr}`
+  if (output1.includes("→ ?")) throw new Error(`an unknown transition must not render as an arrow (spec 31 §6):\n${output1}`)
+  if (/^  legacy-tool\b.*→/m.test(output1)) {
+    throw new Error(`no version arrow for legacy-tool — the manifest is gone, the version is unknown:\n${output1}`)
+  }
+  const mentions = output1.split("\n").filter((l) => /^  legacy-tool\b/.test(l))
+  if (mentions.length > 1) throw new Error(`legacy-tool's report line must appear at most once, got ${mentions.length}:\n${output1}`)
+  const second = ocm(home, "update", "mp")
+  if (second.status !== 0) throw new Error(`second ocm update mp exited ${second.status}: ${second.stderr}`)
+  const output2 = `${second.stdout}\n${second.stderr}`
+  if (/^  legacy-tool\b/m.test(output2)) {
+    throw new Error(`unchanged version and no file changes must suppress legacy-tool's line on the second pass:\n${output2}`)
+  }
+  if (!output2.split("\n").includes("  already up to date")) {
+    throw new Error(`expected "  already up to date" on the second pass:\n${output2}`)
+  }
+  assertResolves(commandLink(home, "legacy-tool", "x.md"), join(mp, "plugins", "legacy-tool", "commands", "x.md"))
+}, 240_000)
+
+// the loader's sync with the syncAll result printed: ocm-loader.js discards
+// it, so the sync's own warnings are only observable through a runner like
+// this
+const REPORT_RUNNER = 'const mod = await import(process.argv[2]); const result = await mod.syncAll({ reason: "startup" }); console.log(JSON.stringify(result))\n'
+
+function loaderSyncReport(home, env = {}) {
+  const runner = join(home, "sync-report-runner.mjs")
+  writeFileSync(runner, REPORT_RUNNER)
+  const result = spawnSync(process.execPath, [runner, CORE_MODULE], {
+    env: { ...process.env, HOME: home, ...env }, encoding: "utf8", timeout: 120_000,
+  })
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
+}
+
+// brief 30 §5, second boundary: the loader's startup sync reconciles local
+// records exactly as `ocm update` does — the grandfather, the prune, and an
+// unchanged pass that writes nothing but the lastSync stamp
+test("9. the loader's startup sync honours the local grandfather: a pre-digest install is baselined by the first due pass and uninstalled when it then changes; untouched, it holds", async () => {
+  // twin A: nothing touched between the passes — the grandfather holds at startup
+  await withFakeHome(async (home) => {
+    const mp = preGateLocalHome(home)
+    for (let pass = 1; pass <= 2; pass++) {
+      const synced = loaderSyncReport(home, { OCM_SYNC_INTERVAL_MS: "0" }) // interval 0: the pass is due now
+      if (synced.status !== 0) throw new Error(`loader sync #${pass} exited ${synced.status}: ${synced.stderr}`)
+      const warnings = JSON.parse(synced.stdout).warnings ?? []
+      if (warnings.some((w) => w.includes("uninstalled"))) {
+        throw new Error(`an unchanged grandfathered plugin must not be uninstalled at startup (pass ${pass}): ${JSON.stringify(warnings)}`)
+      }
+    }
+    const record = readRegistry(home).marketplaces.mp.plugins["legacy-tool"]
+    if (!record || record.enabled !== true) {
+      throw new Error(`expected legacy-tool still enabled in ${registryFile(home)}, got ${JSON.stringify(record)}`)
+    }
+    assertResolves(commandLink(home, "legacy-tool", "tool.md"), join(mp, "plugins", "legacy-tool", "commands", "tool.md"))
+  })
+  // twin B: the first pass baselines the digests; the edit ends the grandfather on the second
+  await withFakeHome(async (home) => {
+    const mp = preGateLocalHome(home)
+    writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" }) // ownership probe file
+    const first = loaderSyncReport(home, { OCM_SYNC_INTERVAL_MS: "0" })
+    if (first.status !== 0) throw new Error(`first loader sync exited ${first.status}: ${first.stderr}`)
+    const warnings1 = JSON.parse(first.stdout).warnings ?? []
+    if (warnings1.some((w) => w.includes("uninstalled"))) {
+      throw new Error(`absent digests must not end the grandfather on the first startup pass (brief 30 §4): ${JSON.stringify(warnings1)}`)
+    }
+    const baselined = readRegistry(home).marketplaces.mp.plugins["legacy-tool"]?.hashes
+    if (!baselined || JSON.stringify(Object.keys(baselined)) !== JSON.stringify(["commands/tool.md"])) {
+      throw new Error(`expected legacy-tool.hashes baselined by the first startup pass in ${registryFile(home)}, got ${JSON.stringify(baselined)}`)
+    }
+    assertResolves(commandLink(home, "legacy-tool", "tool.md"), join(mp, "plugins", "legacy-tool", "commands", "tool.md"))
+
+    writeFileSync(join(mp, "plugins", "legacy-tool", "commands", "tool.md"), `${COMMAND}<!-- v2 -->\n`)
+    const second = loaderSyncReport(home, { OCM_SYNC_INTERVAL_MS: "0" })
+    if (second.status !== 0) throw new Error(`second loader sync exited ${second.status}: ${second.stderr}`)
+    const warnings2 = JSON.parse(second.stdout).warnings ?? []
+    const grandfatherEnd = warnings2.find((w) => w.includes("uninstalled"))
+    if (!grandfatherEnd) {
+      throw new Error(`expected the brief-29 §3 grandfather-end warning in the sync result's warnings: ${JSON.stringify(warnings2)}`)
+    }
+    for (const needle of [
+      'mp: plugin "legacy-tool": changed upstream and still has no plugin.json — uninstalled',
+      "it predates the plugin.json requirement and kept working until it changed",
+      'add plugins/legacy-tool/plugin.json ({ "description": "…" }) and run ocm update to reinstall it',
+    ]) {
+      if (!grandfatherEnd.includes(needle)) {
+        throw new Error(`the grandfather-end warning must contain ${JSON.stringify(needle)}: ${JSON.stringify(grandfatherEnd)}`)
+      }
+    }
+    if (readRegistry(home).marketplaces.mp.plugins["legacy-tool"]) {
+      throw new Error(`expected legacy-tool's record gone from ${registryFile(home)}`)
+    }
+    assertAbsent(commandLink(home, "legacy-tool", "tool.md"))
+    // failure isolation: the manifest-bearing sibling keeps its record and link
+    const fresh = readRegistry(home).marketplaces.mp.plugins["fresh-tool"]
+    if (!fresh || fresh.enabled !== true) {
+      throw new Error(`expected fresh-tool still enabled in ${registryFile(home)}, got ${JSON.stringify(fresh)}`)
+    }
+    assertResolves(commandLink(home, "fresh-tool", "fresh.md"), join(mp, "plugins", "fresh-tool", "commands", "fresh.md"))
+    expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+  })
+}, 480_000)
+
+phase("9. the loader's startup sync prunes a local record whose plugin directory was deleted from the marketplace; the surviving sibling's record and link are unchanged", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: {
+    gone: { "plugin.json": PLUGIN_JSON, commands: { "x.md": COMMAND } },
+    kept: { "plugin.json": PLUGIN_JSON, commands: { "keep.md": COMMAND } },
+  } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" }) // ownership probe file
+  const keptBefore = readRegistry(home).marketplaces.mp.plugins.kept
+  const keptIno = lstatSync(commandLink(home, "kept", "keep.md")).ino
+  rmSync(join(mp, "plugins", "gone"), { recursive: true })
+
+  const synced = loaderSync(home, { OCM_SYNC_INTERVAL_MS: "0" }) // interval 0: the pass is due now
+  if (synced.status !== 0) throw new Error(`loader sync exited ${synced.status}: ${synced.stderr}`)
+  const plugins = readRegistry(home).marketplaces.mp.plugins
+  if (plugins.gone) {
+    throw new Error(`expected gone's record pruned by the startup pass in ${registryFile(home)} (brief 30 §5), still present: ${JSON.stringify(plugins.gone)}`)
+  }
+  expect(plugins.kept).toEqual(keptBefore)
+  expect(lstatSync(commandLink(home, "kept", "keep.md")).ino).toBe(keptIno) // invariant: idempotence — the sibling's link is not re-created
+  assertAbsent(commandLink(home, "gone", "x.md"))
+  assertResolves(commandLink(home, "kept", "keep.md"), join(mp, "plugins", "kept", "commands", "keep.md"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+}, 240_000)
+
+phase("9. an unchanged due startup pass on a local marketplace leaves the registry stable modulo the lastSync stamp, and the record stays outcome-derived — a frontmatter-less skill is not recorded", async (home) => {
+  // invariants: config safety and ownership — the user's keys and command
+  // predate the pass and must survive it outside ocm's owned keys
+  writeTree(cfg(home), {
+    "opencode.json": json({ mcp: { "user-server": { type: "local", command: ["echo"] } } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { kit: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "work.md": COMMAND },
+    skills: {
+      good: { "SKILL.md": SKILL },
+      bad: { "SKILL.md": "# No frontmatter\n\nBody.\n" }, // discovered, but no outcome supports it
+    },
+  } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  const before = readRegistry(home).marketplaces.mp
+  expect(before.plugins.kit.components.skill).toEqual(["good"]) // add derives records from outcomes
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+  const linkIno = lstatSync(commandLink(home, "kit", "work.md")).ino
+
+  const synced = loaderSync(home, { OCM_SYNC_INTERVAL_MS: "0" }) // interval 0: the pass is due now
+  if (synced.status !== 0) throw new Error(`loader sync exited ${synced.status}: ${synced.stderr}`)
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes) // invariant: config safety
+  expect(lstatSync(commandLink(home, "kit", "work.md")).ino).toBe(linkIno) // invariant: idempotence — no link re-created
+  // the brief's edge table promises a byte-identical registry, but the
+  // loader's recordSync stamps lastSync.at unconditionally on every due
+  // pass (pinned by the brief-40 test "a due sync over a marketplace with
+  // no renames leaves the plugins record unchanged while lastSync.at
+  // advances"). Everything except that stamp is deep-equal: no record
+  // churn, no components churn, no hash re-baselining noise.
+  const after = readRegistry(home).marketplaces.mp
+  if (before.lastSync !== null) throw new Error(`a local add leaves lastSync null in ${registryFile(home)}, got ${JSON.stringify(before.lastSync)}`)
+  if (typeof after.lastSync?.at !== "string") throw new Error(`the due pass must stamp lastSync.at in ${registryFile(home)}, got ${JSON.stringify(after.lastSync)}`)
+  delete before.lastSync
+  delete after.lastSync
+  expect(after).toEqual(before)
+  expect(after.plugins.kit.components.skill).toEqual(["good"]) // the pass derives from outcomes too — registering without deriving would write ["good","bad"]
+  if (JSON.stringify(after.plugins.kit.hashes) !== JSON.stringify(before.plugins.kit.hashes)) {
+    throw new Error(`the unchanged pass must not touch kit.hashes in ${registryFile(home)}: ${JSON.stringify(after.plugins.kit.hashes)}`)
+  }
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+}, 240_000)
 }

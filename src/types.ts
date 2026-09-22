@@ -35,6 +35,10 @@ export interface MarketplacePlugin {
   installedAt: string | null
   version: string | null
   manifest: PluginManifest
+  // spec 30: content digests for the components this record names, by
+  // plugin-relative path. Local marketplaces compute their changed-set
+  // from these; absent means "not yet recorded" (§4), never "unchanged".
+  hashes?: Record<string, string>
 }
 
 export interface MarketplaceEntry {

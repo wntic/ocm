@@ -5,6 +5,7 @@ import { setSkillsPath } from "./config.js"
 import { collisionError, incumbentMarketplace } from "./collisions.js"
 import { discoverPlugins } from "./discovery.js"
 import { restoreDisplaced } from "./displaced.js"
+import { pluginHashes } from "./digest.js"
 import { git, treePluginFiles } from "./git.js"
 import { marketplaceGateFindings } from "./manifest-gate.js"
 import { discoverMarketplace, discoveryError, readManifest } from "./manifest.js"
@@ -52,6 +53,9 @@ export function registerPlugins(registry, name, plugins) {
       manifest: plugin.manifest,
     }
     if (incumbent && !chosen) record.collision = incumbent
+    // brief 30 §3: a local marketplace's changed-set baseline; a git
+    // entry's is its revision pair
+    if (entry.local) record.hashes = pluginHashes(plugin)
     updated[plugin.name] = record
   }
   entry.plugins = updated
