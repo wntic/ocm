@@ -5,7 +5,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { mcpShapeError, removeMcpKeys, removeMcpKeysExact, setSkillsPath } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
-import { OCM_LINKS_DIR, OPENCODE_GLOBAL_CONFIG } from "../paths"
+import { OCM_LINKS_DIR, OCM_REGISTRY_FILE, OPENCODE_GLOBAL_CONFIG } from "../paths"
 import { error, fixed, warning, type Finding } from "../findings"
 
 // undefined: no config file (normal); null: present but unusable
@@ -33,7 +33,7 @@ export function checkConfig(findings: Finding[], registry: CoreRegistry, fix: bo
   }
   if (config === undefined) return
   checkSkillsPaths(config, findings, fix)
-  checkMcpKeys(config, registry, findings, fix && registryUsable)
+  checkMcpKeys(config, registry, findings, fix && registryUsable, registryUsable)
 }
 
 // only entries under ocm's links dir are ocm's to remove; a user's orphaned
@@ -53,7 +53,7 @@ function checkSkillsPaths(config: Record<string, unknown>, findings: Finding[], 
   }
 }
 
-function checkMcpKeys(config: Record<string, unknown>, registry: CoreRegistry, findings: Finding[], fix: boolean): void {
+function checkMcpKeys(config: Record<string, unknown>, registry: CoreRegistry, findings: Finding[], fix: boolean, registryUsable: boolean): void {
   const mcp = config.mcp
   if (typeof mcp !== "object" || mcp === null || Array.isArray(mcp)) return
   const known = new Set<string>()
@@ -77,7 +77,12 @@ function checkMcpKeys(config: Record<string, unknown>, registry: CoreRegistry, f
       findings.push(error(`${key}: orphaned MCP key — plugin "${plugin}" is not in the registry`))
     }
     for (const { key, plugin, server, shapeError } of invalid) {
-      findings.push(error(`${key}: invalid MCP entry — plugin "${plugin}", server "${server}" ${shapeError}; opencode would refuse to start (ocm doctor --fix)`))
+      // the entry is invalid whoever owns it — only the removal waits on
+      // the registry, so the diagnosis stays and the remedy changes
+      const invalid = `${key}: invalid MCP entry — plugin "${plugin}", server "${server}" ${shapeError}; opencode would refuse to start`
+      findings.push(error(registryUsable
+        ? `${invalid} (ocm doctor --fix)`
+        : `${invalid}\n    cannot verify ownership — the registry is unreadable; fix ${OCM_REGISTRY_FILE}, then run ocm doctor --fix`))
     }
     return
   }
