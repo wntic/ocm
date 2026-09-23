@@ -10,7 +10,7 @@ import { materializeLinks } from "../install"
 import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OCM_REGISTRY_FILE, OCM_ROOT_CACHE_DIR, OCM_ROOT_SLUG } from "../paths"
 import { error, fixed, reportFindings, warning, type Finding } from "../findings"
 import { ocmPluginErrors } from "../probe"
-import { relativeXdgWarning, strandedMessage, strandedRoots } from "../stranded"
+import { activeRootHoldsRegistry, relativeXdgWarning, strandedMessage, strandedRoots } from "../stranded"
 import { checkConfig } from "./doctor-config"
 import { checkBrokenLinks, checkFoldedRecords, checkForbiddenPaths, checkMaterialized, checkStaleRecords } from "./doctor-links"
 import { checkDisplaced, checkOrphanMirrors, checkStrays } from "./doctor-orphans"
@@ -38,13 +38,20 @@ export function doctor(fix: boolean): void {
   console.log("doctor")
   const findings: Finding[] = []
   if (relative) findings.push(warning(relative))
-  for (const s of stranded) findings.push(error(strandedMessage(s)))
+  // two live installs are a user decision, not a stranding — same condition
+  // as reportStrandedNotice
+  if (!activeRootHoldsRegistry()) {
+    for (const s of stranded) findings.push(error(strandedMessage(s)))
+  }
   const registry = readRegistry()
   checkWriterVersion(findings)
   checkGitPath(findings)
   checkLoader(findings, fix)
-  // brief 38: name the cache namespace so a user can find their own
-  console.log(`  cache   ${OCM_ROOT_SLUG} (${OCM_ROOT_CACHE_DIR})`)
+  // brief 38: name the cache namespace so a user can find their own — only
+  // when it exists, or the line names a directory that is not there
+  if (existsSync(OCM_ROOT_CACHE_DIR)) {
+    console.log(`  cache   ${OCM_ROOT_SLUG} (${OCM_ROOT_CACHE_DIR})`)
+  }
   // a registry that cannot be honored must never be read as "nothing owns
   // these files": the stray and MCP fixes stay report-only until it is
   // fixed, or --fix would uninstall everything at once

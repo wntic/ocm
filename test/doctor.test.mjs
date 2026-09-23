@@ -717,7 +717,10 @@ phase("16. no other root with a marketplace keeps the old sentence: after ocm re
   if (diagnosed.output.includes("stranded")) throw new Error(`an other root with zero marketplaces must not be reported as stranded:\n${diagnosed.output}`)
 }, 600_000)
 
-phase("17. both roots hold a registry: doctor reports the non-active root as stranded in both directions and writes nothing", async (home) => {
+// brief 42 §3 (F210/F248): two live installs are a user decision, not a
+// stranding — when the active root holds a registry, doctor must stay as
+// quiet as reportStrandedNotice, in both directions
+phase("17. both roots hold a registry: doctor reports no stranded install in either direction, exits 0, and writes nothing", async (home) => {
   expect(ocm(home, ["init"]).status).toBe(0)
   expect(ocm(home, ["add", localMp(home, "mp-one")]).status).toBe(0)
   const xdg = join(home, "xdg")
@@ -727,13 +730,63 @@ phase("17. both roots hold a registry: doctor reports the non-active root as str
   const registries = [registryFile(home), join(xdg, "opencode", "ocm", "registry.json")]
   const before = registries.map((p) => readFileSync(p, "utf8"))
   const withVariable = ocm(home, ["doctor"], 300_000, { env })
-  if (withVariable.status !== 1) throw new Error(`ocm doctor exited ${withVariable.status}, expected 1 with the default root stranded:\n${withVariable.output}`)
-  expectStranded(withVariable.output, cfg(home), join(xdg, "opencode"), true)
+  if (withVariable.status !== 0) throw new Error(`ocm doctor exited ${withVariable.status}, expected 0 when both roots hold a registry (XDG_CONFIG_HOME=${xdg}):\n${withVariable.output}`)
+  if (withVariable.output.includes("stranded")) throw new Error(`doctor must not report a stranded install while the active root holds a registry:\n${withVariable.output}`)
   const withoutVariable = ocm(home, ["doctor"], 300_000)
-  if (withoutVariable.status !== 1) throw new Error(`ocm doctor exited ${withoutVariable.status}, expected 1 with the xdg root stranded:\n${withoutVariable.output}`)
-  expectStranded(withoutVariable.output, join(xdg, "opencode"), cfg(home), false)
+  if (withoutVariable.status !== 0) throw new Error(`ocm doctor exited ${withoutVariable.status}, expected 0 when both roots hold a registry (XDG_CONFIG_HOME unset):\n${withoutVariable.output}`)
+  if (withoutVariable.output.includes("stranded")) throw new Error(`doctor must not report a stranded install while the active root holds a registry:\n${withoutVariable.output}`)
   expect(registries.map((p) => readFileSync(p, "utf8"))).toEqual(before) // no automatic reconciliation
 }, 900_000)
+
+// brief 42 §3, test 6: the stranded error must survive on the findings path —
+// the active root holds OCM_DIR but no registry.json, the exact state
+// reportStrandedNotice treats as stranded. Phases 13/13b/14 pin the
+// early-exit branch (no OCM_DIR at all); this one pins the predicate here
+phase("17b. the active root has OCM_DIR but no registry.json: the stranded error still fires through the findings path, exit 1", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  expect(ocm(home, ["add", localMp(home)]).status).toBe(0)
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const xdg = join(home, "xdg")
+  const env = { XDG_CONFIG_HOME: xdg }
+  expect(ocm(home, ["init"], 120_000, { env }).status).toBe(0)
+  const xdgRegistry = join(xdg, "opencode", "ocm", "registry.json")
+  rmSync(xdgRegistry, { force: true })
+  const diagnosed = ocm(home, ["doctor"], 300_000, { env })
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with the active root holding no registry:\n${diagnosed.output}`)
+  expectStranded(diagnosed.output, cfg(home), join(xdg, "opencode"), true)
+  assertAbsent(xdgRegistry) // doctor never recreates a registry it found missing
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes) // the other root's registry is untouched
+}, 600_000)
+
+// brief 42 §3 (F249): the cache line exists so a user can find their own
+// cache — it must name a directory that exists, or say nothing. init alone
+// creates no namespace dir (src/loader.ts writes only the plugins dir and
+// OCM_DIR); the first skill-bearing add creates it via the links tree
+phase("17c. the cache line names a directory that exists: no line after init alone, a truthful line once the links tree exists", async (home) => {
+  const cachePath = (output) => {
+    const line = output.split("\n").find((l) => /^\s*cache\s+\S+\s+\((.+)\)\s*$/.test(l))
+    return line ? line.match(/\((.+)\)/)[1] : null
+  }
+  expect(ocm(home, ["init"]).status).toBe(0)
+  assertAbsent(rootCacheDir(home)) // the premise: init alone creates no cache namespace dir
+  const initOnly = ocm(home, ["doctor"], 300_000)
+  if (initOnly.status !== 0) throw new Error(`ocm doctor exited ${initOnly.status} on an init-only home:\n${initOnly.output}`)
+  const named = cachePath(initOnly.output)
+  if (named !== null && !existsSync(named)) {
+    throw new Error(`the cache line names ${named}, which does not exist:\n${initOnly.output}`)
+  }
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { style: { "SKILL.md": SKILL } } } } })
+  expect(ocm(home, ["add", mp]).status).toBe(0)
+  assertFileExists(join(rootCacheDir(home), "links", "mp", "skills")) // the premise: the add wrote the links tree
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const withAdd = ocm(home, ["doctor"], 300_000)
+  if (withAdd.status !== 0) throw new Error(`ocm doctor exited ${withAdd.status} after an add:\n${withAdd.output}`)
+  const path = cachePath(withAdd.output)
+  if (path === null) throw new Error(`expected a cache line once the namespace dir exists:\n${withAdd.output}`)
+  if (!existsSync(path)) throw new Error(`the cache line names ${path}, which does not exist:\n${withAdd.output}`)
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes) // doctor writes nothing
+}, 600_000)
 
 // brief 28 §4 edge: a marketplace installed by an older ocm whose registry
 // records a folded component pair — doctor reports the pair as an error
@@ -947,16 +1000,17 @@ phase("23. doctor --fix under root A with root B installed: B's links and config
   const bConfigBefore = readFileSync(bConfigFile, "utf8")
   const bMirror = join(rootCacheDir(home, xdg), "links", "mp-b", "skills", "beta--lint")
   const fixed = ocm(home, ["doctor", "--fix"], 300_000) // root A: no XDG variable
-  // exit 1 is expected, not a failure: root B holds a marketplace, so doctor
-  // under root A reports it as a stranded install — an error finding that
-  // sets the exit code even though the fixes ran (src/commands/doctor.ts
-  // pushes strandedRoots() as errors before reportFindings)
-  if (fixed.status !== 1) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 1 with root B stranded:\n${fixed.output}`)
-  const errors = fixed.output.split("\n").filter((l) => /^\s*error\b/.test(l))
-  if (errors.length !== 1 || !errors[0].includes("an ocm install is stranded in another config root")) {
-    throw new Error(`expected exactly one error finding, the stranded root B — anything else means the exit code is 1 for the wrong reason:\n${fixed.output}`)
+  // brief 42 §3: two live installs are a user decision, not a stranding —
+  // root A holds a registry, so doctor --fix stays as quiet as
+  // reportStrandedNotice about root B and exits 0 with the fixes applied
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 0 when both roots hold a registry:\n${fixed.output}`)
+  if (fixed.output.includes("an ocm install is stranded in another config root")) {
+    throw new Error(`doctor must not report root B as stranded while root A holds a registry:\n${fixed.output}`)
   }
-  if (!fixed.output.includes(`installed at: ${join(xdg, "opencode")}`)) throw new Error(`the stranded finding must name root B:\n${fixed.output}`)
+  const errors = fixed.output.split("\n").filter((l) => /^\s*error\b/.test(l))
+  if (errors.length) {
+    throw new Error(`expected no error findings on this healthy home — the exit code must be 0 for the right reason:\n${fixed.output}`)
+  }
   // root B is untouched: its link tree, its config bytes, its own entry
   assertFileExists(join(bMirror, "SKILL.md"))
   expect(readFileSync(bConfigFile, "utf8")).toBe(bConfigBefore)

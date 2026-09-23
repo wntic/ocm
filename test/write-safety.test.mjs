@@ -502,7 +502,8 @@ phase("a missing displacement copy reports nothing-to-restore exactly once acros
 // ---------------------------------------------------------------------------
 // §4 — an older binary refuses a newer home (F118). The guard is forward-only:
 // these tests stamp a *newer* version ("9.9.9") into the registry; they never
-// imply the published-0.2.0 F118 transcript now passes.
+// imply the published-0.2.0 F118 transcript now passes. The loader refresh
+// skips such a home too (F232): a stale loader is left stale, with a warning.
 
 const SELF_VERSION = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8")).version
 
@@ -530,6 +531,36 @@ phase("a newer-written home refuses mutating commands before any write: exit 1, 
   const removed = ocm(home, "remove", "mp")
   if (removed.status !== 1) throw new Error(`ocm remove mp under a newer-stamped ${registryPath} exited ${removed.status}, expected 1:\n${removed.output}`)
   expect(removed.stderr).toContain(`error: this installation was last written by ocm 9.9.9; you are running ${SELF_VERSION}`)
+  expect(readFileSync(registryPath, "utf8")).toBe(bytes)
+  expect(existsSync(lockFile(home))).toBe(false)
+})
+
+phase("a newer-written home's stale loader is not refreshed by ocm list: exit 0, a stderr warning naming both versions, every loader file and the registry byte-identical, no lock", async (home) => {
+  seedMarketplace(home)
+  // the shape an upgrade leaves: an old stamp in core.js, lock.js absent —
+  // at least one file non-missing and non-current, so the refresh would fire
+  const core = join(cfg(home), "ocm", "core.js")
+  writeFileSync(core, readFileSync(core, "utf8").replace(/\/\/ ocm-version: [^\n]*/, "// ocm-version: 0.0.1 deadbeef"))
+  rmSync(join(cfg(home), "ocm", "lock.js"), { force: true })
+  const bytes = stampRegistry(home, "9.9.9")
+  const registryPath = join(cfg(home), "ocm", "registry.json")
+  // snapshot every installed loader file: ocm-loader.js -> plugins/, the rest -> ocm/
+  const loaderDir = fileURLToPath(new URL("../loader", import.meta.url))
+  const installed = readdirSync(loaderDir)
+    .filter((name) => /\.(js|d\.ts)$/.test(name))
+    .map((name) => (name === "ocm-loader.js" ? join(cfg(home), "plugins", name) : join(cfg(home), "ocm", name)))
+  const snapshot = installed.filter(existsSync).map((path) => [path, readFileSync(path, "utf8")])
+  const listed = ocm(home, "list")
+  if (listed.status !== 0) throw new Error(`ocm list on a newer-stamped ${registryPath} with a stale loader exited ${listed.status}, expected 0:\n${listed.output}`)
+  // the skip is explained, not silent: a warning on stderr names both versions
+  expect(listed.stderr).toContain("9.9.9")
+  expect(listed.stderr).toContain(SELF_VERSION)
+  expect(listed.stdout).not.toContain("refreshed")
+  for (const [path, content] of snapshot) {
+    if (readFileSync(path, "utf8") !== content) throw new Error(`the loader file ${path} was rewritten by ocm list on a newer-written home`)
+  }
+  // the missing loader file stays missing — nothing is recreated either
+  expect(existsSync(join(cfg(home), "ocm", "lock.js"))).toBe(false)
   expect(readFileSync(registryPath, "utf8")).toBe(bytes)
   expect(existsSync(lockFile(home))).toBe(false)
 })
