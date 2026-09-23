@@ -5,7 +5,7 @@
 // removed as stray, even when the records lag (F8).
 import { existsSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { displacedRecords, setSkillsPath } from "../../loader/core.js"
+import { displacedRecords, isRenderedFile, setSkillsPath } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { OCM_DISPLACED_DIR, OCM_DISPLACED_RECORD_FILE, OCM_LINKS_DIR, OCM_LOADER_NAME, OCM_REGISTRY_FILE, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "../paths"
 import { error, fixed, warning, type Finding } from "../findings"
@@ -13,7 +13,7 @@ import { insideRegisteredRoot, ocmOwned, removePath } from "./doctor-links"
 
 // brief 33 §2 (F85): a run that cannot read the registry must not promise a
 // removal it would not perform — the finding names the registry repair instead
-function cannotVerifyOwnership(path: string, findings: Finding[]): void {
+export function cannotVerifyOwnership(path: string, findings: Finding[]): void {
   findings.push(
     error(
       `${path}: cannot verify ownership — the registry is unreadable (see the error above)\n` +
@@ -76,7 +76,8 @@ export function checkStrays(registry: CoreRegistry, findings: Finding[], fix: bo
 
 // brief 33 §1 change 2: the orphan sweep for <plugin>:<file> links in
 // commands/ and agents/ — live links no verb can remove once the registry
-// record is gone. Only symlinks enter; broken ones are checkBrokenLinks's
+// record is gone. Symlinks and rendered files enter; broken links are
+// checkBrokenLinks's
 export function checkOrphanLinks(registry: CoreRegistry, findings: Finding[], fix: boolean, registryUsable: boolean): void {
   const claimed = new Set<string>()
   for (const entry of Object.values(registry.marketplaces)) {
@@ -93,21 +94,25 @@ export function checkOrphanLinks(registry: CoreRegistry, findings: Finding[], fi
       const colon = name.indexOf(":")
       if (colon <= 0 || colon === name.length - 1) continue
       const path = join(dir, name)
-      let target: string
+      let target: string | null
       try {
         target = readlinkSync(path)
       } catch {
-        continue
+        // brief 41: a body referencing a plugin-root variable renders to a
+        // regular file; with the marker it is ocm's, without it the user's
+        if (!isRenderedFile(path)) continue
+        target = null
       }
-      if (!existsSync(path)) continue
+      if (target !== null && !existsSync(path)) continue
       if (claimed.has(name.slice(0, colon))) continue
       // change 5: a link into a registered marketplace's root is never an
       // orphan, whatever the per-plugin records say
-      if (insideRegisteredRoot(target, registry)) {
+      if (target !== null && insideRegisteredRoot(target, registry)) {
         findings.push(error(`${path}: registry records are stale — run ocm update`))
       } else if (ocmOwned(path, target, registry)) {
         if (!registryUsable) cannotVerifyOwnership(path, findings)
         else if (fix) removePath(path, findings)
+        else if (target === null) findings.push(error(`${path}: no marketplace owns this file — ocm doctor --fix removes it`))
         else findings.push(error(`${path}: no marketplace owns this link → ${target} — ocm doctor --fix removes it`))
       } else {
         findings.push(error(`${path}: symlink → ${target} ; no marketplace owns it and the target is not ocm's — remove it by hand, or re-add the marketplace`))

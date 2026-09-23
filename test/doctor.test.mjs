@@ -1784,4 +1784,213 @@ phase("39. a stale collision record naming a removed marketplace: the stale find
   }
   if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
 }, 600_000)
+
+// brief 46 §1, state 3: with an unreadable registry the invalid-MCP finding
+// must not promise a removal the run would not perform — it says ownership
+// cannot be verified and names the registry repair, reusing the
+// cannotVerifyOwnership wording from doctor-orphans.ts (states 1 and 2 are
+// phase 19's)
+phase("40. an unreadable registry plus a shape-invalid ocm-- MCP key: doctor --fix prints the cannot-verify wording instead of a removal promise, removes nothing, and the config bytes are unchanged", async (home) => {
+  // config safety: the user's keys predate every ocm write
+  const userConfig = { model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }
+  writeTree(cfg(home), { "opencode.json": json(userConfig) })
+  expect(ocm(home, ["init"]).status).toBe(0)
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "commit.md": COMMAND },
+    "mcp.json": json({ db: { type: "local", command: ["npx", "-y", "@acme/db-mcp"], enabled: true } }),
+  } } })
+  expect(ocm(home, ["add", mp, "--trust"]).status).toBe(0)
+  const configPath = configFile(home)
+  const before = JSON.parse(readFileSync(configPath, "utf8"))
+  if (before.mcp?.["ocm--adw--db"] === undefined) {
+    throw new Error(`expected ocm--adw--db in ${configPath} after the add:\n${JSON.stringify(before.mcp ?? null)}`)
+  }
+  // the pre-1.18 shape v0.5.0 wrote: no "type", a string command
+  before.mcp["ocm--adw--legacy"] = { command: "node", args: ["server.js"] }
+  writeFileSync(configPath, json(before))
+  const configBytes = readFileSync(configPath, "utf8")
+  // the registry becomes unreadable — the fix path is gated off
+  writeFileSync(registryFile(home), "{\n")
+
+  const fixRun = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixRun.status !== 1) throw new Error(`ocm doctor --fix exited ${fixRun.status}, expected 1 with an unreadable registry:\n${fixRun.output}`)
+  const lines = fixRun.output.split("\n")
+  for (const line of lines) {
+    if (line.includes("ocm--adw--legacy") && line.includes("opencode would refuse to start")) {
+      throw new Error(`a run that removes nothing must not promise the removal for ocm--adw--legacy:\n${line}`)
+    }
+  }
+  if (!lines.some((l) => l.includes("ocm--adw--legacy") && l.includes("cannot verify ownership") && l.includes("the registry is unreadable"))) {
+    throw new Error(`expected a cannot-verify finding naming ocm--adw--legacy:\n${fixRun.output}`)
+  }
+  if (!lines.some((l) => l.includes(registryFile(home)) && l.includes("then run ocm doctor --fix"))) {
+    throw new Error(`expected a recovery line naming ${registryFile(home)}:\n${fixRun.output}`)
+  }
+  // nothing removed, nothing "repaired"
+  expect(readFileSync(configPath, "utf8")).toBe(configBytes)
+  expect(readFileSync(registryFile(home), "utf8")).toBe("{\n")
+  const after = JSON.parse(readFileSync(configPath, "utf8"))
+  expect(after.mcp["ocm--adw--legacy"]).toBeDefined() // the invalid key survives
+  expect(JSON.stringify(after.mcp["user-server"])).toBe(JSON.stringify(userConfig.mcp["user-server"])) // the user's own entry
+
+  // state 3 is not --fix-specific: the plain run prints the same wording
+  const plain = ocm(home, ["doctor"], 300_000)
+  if (plain.status !== 1) throw new Error(`ocm doctor exited ${plain.status}, expected 1 with an unreadable registry:\n${plain.output}`)
+  const plainLines = plain.output.split("\n")
+  for (const line of plainLines) {
+    if (line.includes("ocm--adw--legacy") && line.includes("opencode would refuse to start")) {
+      throw new Error(`the plain run must not promise the removal for ocm--adw--legacy:\n${line}`)
+    }
+  }
+  if (!plainLines.some((l) => l.includes("ocm--adw--legacy") && l.includes("cannot verify ownership") && l.includes("the registry is unreadable"))) {
+    throw new Error(`expected a cannot-verify finding naming ocm--adw--legacy in the plain run:\n${plain.output}`)
+  }
+}, 600_000)
+
+// brief 46 §2: since brief 41 a command body referencing a plugin-root
+// variable materializes as a regular file carrying the rendered marker, so
+// an orphaned one — its marketplace's record gone — was invisible to the
+// orphan sweep. A rendered file is an orphan by the same rules as a link;
+// a regular file without the marker is the user's and is never touched
+const ROOTED_COMMAND = "---\ndescription: rooted helper\n---\n\npython3 \"${OCM_PLUGIN_ROOT}/plugins/greet-kit/scripts/greet.sh\"\n"
+
+phase("41. a hand-removed registry record with a rendered command file present: doctor reports it as an orphan, and --fix removes the rendered file but not the clone", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { "greet-kit": { "plugin.json": PLUGIN_JSON, commands: { "greet.md": ROOTED_COMMAND } } } })
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp"]).status).toBe(0)
+  const rendered = join(cfg(home), "commands", "greet-kit:greet.md")
+  const stat = lstatSync(rendered)
+  if (stat.isSymbolicLink()) throw new Error(`expected a regular rendered file at ${rendered}, found a symlink — the fixture does not exercise the rendered path`)
+  if (!stat.isFile()) throw new Error(`expected a regular file at ${rendered}`)
+  if (!readFileSync(rendered, "utf8").includes("ocm: rendered from ")) {
+    throw new Error(`the file at ${rendered} lacks the rendered marker — the fixture does not exercise the rendered path`)
+  }
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const registry = readRegistry(home)
+  delete registry.marketplaces.mp
+  writeFileSync(registryFile(home), json(registry))
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with an orphaned rendered file:\n${diagnosed.output}`)
+  const lines = diagnosed.output.split("\n").filter((l) => l.includes("greet-kit:greet.md"))
+  if (lines.length !== 1) throw new Error(`expected exactly one finding line for greet-kit:greet.md, found ${lines.length}:\n${diagnosed.output}`)
+  if (!lines[0].includes("no marketplace owns this file") || !lines[0].includes("ocm doctor --fix removes it")) {
+    throw new Error(`the orphan finding for greet-kit:greet.md lacks the rendered-file wording:\n${lines[0]}`)
+  }
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 0 after removing the rendered file:\n${fixed.output}`)
+  assertAbsent(rendered)
+  assertFileExists(join(cloneDir(home), "plugins", "greet-kit", "commands", "greet.md")) // doctor removes materializations, never clones
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief test 3: the invariant §2 must not weaken — a regular file with the
+// <plugin>:<file> shape but no rendered marker is the user's, so a live
+// registry's sweep skips it entirely; passes against current code
+phase("42. a hand-written regular file named like a rendered command, with no marker and no record: not reported, and untouched by --fix", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  writeTree(join(home, "mp-a"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocm(home, ["add", join(home, "mp-a")]).status).toBe(0) // a live registry exists; nothing in it names greet-kit
+  const body = "---\ndescription: my own helper\n---\n\nMy own body.\n"
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n", "greet-kit:greet.md": body })
+  const handWritten = join(cfg(home), "commands", "greet-kit:greet.md")
+  if (!lstatSync(handWritten).isFile()) throw new Error(`expected a regular file at ${handWritten}`)
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 0) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 0 — an unmarked regular file is the user's:\n${diagnosed.output}`)
+  if (diagnosed.output.includes("greet-kit:greet.md")) throw new Error(`a hand-written file named greet-kit:greet.md must go unreported:\n${diagnosed.output}`)
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 0:\n${fixed.output}`)
+  expect(readFileSync(handWritten, "utf8")).toBe(body) // ownership
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief 46 §3: an unregistered marketplace's whole links tree is ocm's, not
+// only its skills/ subdir — before brief 33 change 4 a tree with no skills
+// dir at all was invisible to the orphan sweep, so a stale tree holding only
+// commands sat in the cache unreported and untouched by --fix
+phase("43. an unregistered links tree with no skills dir: doctor reports the tree itself as an orphan, --fix removes the whole tree, and a registered marketplace's tree beside it is byte-identical afterwards", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  writeTree(join(home, "mp"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, skills: { style: { "SKILL.md": SKILL("style") } } } } })
+  expect(ocm(home, ["add", join(home, "mp")]).status).toBe(0)
+  // byte-for-byte snapshot of the registered tree beside the orphan: entry
+  // kind per relative path, file bytes, symlink targets (mirrors are regular
+  // files today — captured anyway so the comparison is honest)
+  const { readlinkSync } = await import("node:fs")
+  const snapshot = (dir) => readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : 1))
+    .map((entry) => {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) return [entry.name, "dir", snapshot(path)]
+      if (entry.isSymbolicLink()) return [entry.name, "link", readlinkSync(path)]
+      return [entry.name, "file", readFileSync(path, "utf8")]
+    })
+  const registered = join(rootCacheDir(home), "links", "mp")
+  const mirror = join(registered, "skills", "adw--style", "SKILL.md")
+  if (!existsSync(mirror)) throw new Error(`expected the registered skill mirror at ${mirror} — the fixture does not exercise a populated links tree`)
+  const before = snapshot(registered)
+  // the orphan: a non-skills entry and no skills/ dir; nothing named "ghost"
+  // exists in the registry or any config
+  const ghost = join(rootCacheDir(home), "links", "ghost")
+  writeTree(ghost, { commands: { "greet.md": COMMAND } })
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with an orphaned links tree:\n${diagnosed.output}`)
+  const treeLines = diagnosed.output.split("\n").filter((l) => l.includes(ghost))
+  if (treeLines.length !== 1) throw new Error(`expected exactly one finding line naming the ghost tree ${ghost}, found ${treeLines.length}:\n${diagnosed.output}`)
+  if (!treeLines[0].includes("no marketplace owns this link") || !treeLines[0].includes("ocm doctor --fix removes it")) {
+    throw new Error(`the orphan finding for ${ghost} lacks the tree wording:\n${treeLines[0]}`)
+  }
+  if (diagnosed.output.includes(join(ghost, "commands"))) {
+    throw new Error(`the tree is reported once, as the tree — nothing inside ${ghost} may be named separately:\n${diagnosed.output}`)
+  }
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 0 after removing the ghost tree:\n${fixed.output}`)
+  assertAbsent(ghost)
+  if (!fixedLines(fixed.output).some((l) => l.includes(ghost))) {
+    throw new Error(`expected a fixed line naming the removed tree ${ghost}:\n${fixed.output}`)
+  }
+  const after = snapshot(registered)
+  if (JSON.stringify(after) !== JSON.stringify(before)) {
+    throw new Error(`the registered tree ${registered} changed across the orphan's removal:\nbefore: ${JSON.stringify(before)}\nafter:  ${JSON.stringify(after)}`)
+  }
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
 }
