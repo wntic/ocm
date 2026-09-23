@@ -26,6 +26,9 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.6.1 | brief 38 §0 — the TUI freeze at zero columns, and a stale loader after upgrade | published 2026-09-20 |
 | v0.7.0 | briefs 30, 31, 38, 39, 40, 41 — outcome-derived reports, per-root cache, renames in the loader, local changed-set, plugin-root substitution, small correctness | published 2026-09-22 |
 | v0.7.1 | briefs 42, 43 — a read-only command writes nothing; the cache migration is resumable and moves only what it owns | published 2026-09-23 |
+| v0.8.0 | briefs 32, 33, 44, 45, 46 — error classification, doctor ownership, the materializer split, outcome-derived headlines | in progress |
+| v0.9.0 | brief 36 — display & TUI, and a voice for the loader's startup sync | planned |
+| v1.0.0 | no new scope — the first release to meet the bar below after v0.9.0 | planned |
 
 Rules:
 
@@ -46,6 +49,22 @@ Rules:
 - `npm publish` runs only from `main`, only on a commit tagged
   `vX.Y.Z`. The tag is the release record; the version in
   `package.json` never lies about what is published.
+
+## Scope freeze (2026-09-23)
+
+Rounds 3–5 found 62, 13 and 24 findings, and round 5's high and medium
+findings all sat in code new in that release: every fix to an older
+finding held. The old surface has converged; new defects now come from new
+code. So the finish line is set by scope, not by a clean round:
+
+- **The scope is frozen** at briefs 45 and 46 (v0.8.0) and 36 (v0.9.0).
+  A new brief is written only for a **high** finding.
+- **Round 6, before v0.8.0, is the last broad e2e round.** After it, a
+  round covers only the surface its release changed.
+- **The release bar:** a release ships when its round finds no high and no
+  medium. Low findings go to a backlog and do not generate briefs.
+- **v1.0.0** is the first release after v0.9.0 that meets the bar. It adds
+  nothing.
 
 ## Branches
 
@@ -73,6 +92,14 @@ Argued when they were made; changing one is a decision, not an edit.
 | Cross-tool | portable `SKILL.md` subset + per-target command/agent dirs; no neutral schema compiler | 11 |
 | Trust | per-marketplace at add, re-prompt when an update introduces new executable code | 07 |
 | Auto-sync | throttled, 1h default, per-marketplace override | 08 |
+
+## Accepted risks
+
+Known, understood, and deliberately not fixed.
+
+| Risk | Why it is accepted |
+|---|---|
+| **Lock-steal race** (brief 37, closed 2026-09-23). Two processes that both judge the same registry lock stale can both break it and both hold it, and the later write clobbers the earlier. | It needs two ocm processes to reach the stale-lock path within one interleaving window — reproducible by construction (round 5 built it deliberately as the setup for A7-24) but never observed in use. Its visible residue, links orphaned by the lost write (F233), is now reported and repaired by `ocm doctor` (brief 33). Closing the window properly means a compare-and-swap on the lock file, and the scope is frozen. |
 
 ## Non-goals
 
