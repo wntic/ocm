@@ -153,15 +153,14 @@ export function remove(name: string): void {
   const result = removeMarketplace(name)
   reportWarnings(result.warnings)
   reportUpgrade(result.wasV1)
-  console.log(`removed marketplace "${result.name}"`)
-  for (const plugin of result.owned) {
-    const parts: string[] = []
-    if (plugin.components.agent) parts.push(`${plugin.components.agent.length} agents`)
-    if (plugin.components.command) parts.push(`${plugin.components.command.length} commands`)
-    if (plugin.components.skill) parts.push(`${plugin.components.skill.length} skills`)
-    if (plugin.components.plugin) parts.push(`${plugin.components.plugin.length} plugins`)
-    if (plugin.components.mcp) parts.push(`${plugin.components.mcp.length} mcp servers`)
-    console.log(`  ${plugin.name}: ${parts.join(", ")} removed`)
+  // brief 47 §2 (F273): the counts come from the teardown's outcomes, not
+  // the records — a marketplace added --explicit with nothing installed must
+  // not report deletions that never happened
+  const removed = result.report.outcomes.filter((o) => o.state === "removed")
+  console.log(`removed marketplace "${result.name}"${removed.length ? "" : " — nothing was installed"}`)
+  for (const plugin of [...new Set(removed.map((o) => o.plugin))]) {
+    const summary = componentSummary(outcomeComponents(removed.filter((o) => o.plugin === plugin), ["removed"]))
+    console.log(`  ${plugin}: ${summary} removed`)
   }
   // brief 33 §3 (F70): one line per freed name — no restart notice,
   // nothing on disk changed
