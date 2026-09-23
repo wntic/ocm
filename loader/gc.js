@@ -27,9 +27,6 @@ export function gcComponents(st) {
   // plugin names cannot contain ":", "--" or uppercase (PLUGIN_NAME_RE),
   // so a name prefix never spans another plugin's entries
   const scope = st.only === null ? undefined : `${st.only}:`
-  // built before the gc loops: their `entry` loop variable shadows the
-  // registry entry inside the loop head, where the argument would be a TDZ
-  // reference
   const ownedCommand = renderedComponentOwned(st.entry, "command")
   const ownedAgent = renderedComponentOwned(st.entry, "agent")
   for (const entry of gcTargets(OPENCODE_COMMANDS_DIR, st.desiredCommands, st.ctx, ownedCommand, scope)) {
