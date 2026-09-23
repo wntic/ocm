@@ -179,3 +179,21 @@ and no medium — the bar fails on both; whether F273's pre-existing status
 changes the ship call is the human's judgement, not this report's.
 
 v0.8.0 bar: NOT MET — F270 (medium: doctor --fix remove/re-materialize loop on a rendered orphan), F273 (medium: ocm remove reports counts for never-installed plugins; pre-existing in 0.7.1)
+
+---
+
+## Resolution (owner, 2026-09-24)
+
+- **F270** (medium) — fixed in brief 47: a rendered file whose source still
+  exists under a registered marketplace is stale records, not an orphan.
+  Re-verified on home `b-7`: two `doctor --fix` runs print the same
+  stale-records finding and remove nothing; `ocm update` then leaves doctor
+  at exit 0 with 0 errors.
+- **F273** (medium, pre-existing) — fixed in brief 47: `ocm remove` derives
+  its lines from the teardown's removed outcomes.
+- **F271** — by design, not a defect: a link into a local directory cannot
+  be proven ocm's, so it is reported and never removed (brief 33). The plan
+  over-stated brief 33.
+- **F272, F274** — low; backlog.
+
+**v0.8.0 bar: MET** after brief 47.
