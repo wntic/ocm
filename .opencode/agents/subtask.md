@@ -48,6 +48,14 @@ you noticed something nearby.
    At most **three** implement attempts. Still failing after the third → report
    FAIL with all three verdicts; do not try a fourth.
 
+**A behaviour-preserving brief skips step 1.** When the brief says no file
+under `test/` may change — a split, a move, a rename — there is no new
+behaviour to write a failing test for: the existing suite is the
+specification. Go straight to step 2 with "the full suite passes, unchanged"
+as the target, and tell the verifier to check first that
+`git diff --stat main -- test/` prints nothing. A test that fails is a
+behaviour change: report it, never route it to `test-author`.
+
 ## Rules
 
 - **Never ask; report.** You have no `question` tool, by design: a dialog
