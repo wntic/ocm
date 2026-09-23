@@ -1137,4 +1137,41 @@ phase("26. an interrupted-migration home: doctor labels ocm's own broken command
   assertResolves(link, join(cloneDir(home), "plugins", "adw", "commands", "commit.md"))
   if (!lstatSync(foreign).isSymbolicLink()) throw new Error(`the foreign broken link at ${foreign} must survive --fix untouched`)
 }, 600_000)
+
+// brief 32 §4 (F97): the re-clone's progress line was the one actionable
+// line with no prefix, among findings — doctor --fix must render it as a
+// fixed finding, and nothing between the header and the summary may reach
+// stdout except through reportFindings (the loader and cache info lines
+// share the finding format)
+phase("27. doctor --fix re-clone: every line between the header and the summary is a finding, and the re-clone is a fixed finding naming the url", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  const url = `file://${remote}`
+  expect(ocm(home, ["add", url, "--name", "mp"]).status).toBe(0)
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" }) // ownership probe file
+  rmSync(cloneDir(home), { recursive: true, force: true }) // the cache loss doctor --fix repairs
+
+  const fixedRun = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixedRun.status !== 0) throw new Error(`ocm doctor --fix exited ${fixedRun.status}, expected 0 for a fully repaired home:\n${fixedRun.output}`)
+  const lines = fixedRun.stdout.split("\n").filter((l) => l !== "")
+  const header = lines.indexOf("doctor")
+  if (header === -1) throw new Error(`expected a "doctor" header line in stdout:\n${fixedRun.stdout}`)
+  const summary = lines.findIndex((l) => /^\d+ errors?, \d+ warnings?$/.test(l))
+  const body = lines.slice(header + 1, summary === -1 ? lines.length : summary)
+  const bad = body.filter((l) => !/^  [a-z][a-z ]{7}\S/.test(l))
+  if (bad.length) {
+    throw new Error(
+      `every line between doctor's header and its summary must be a finding (2-space indent, severity padded to 8) — ${bad.length} are not:\n` +
+        bad.map((l) => `  ${JSON.stringify(l)}`).join("\n"),
+    )
+  }
+  const reclone = body.find((l) => /^  fixed\s/.test(l) && l.includes("re-cloned from"))
+  if (!reclone) throw new Error(`expected a fixed finding for the re-clone naming the url:\n${fixedRun.stdout}`)
+  for (const needle of [`marketplace "mp"`, "clone directory missing", "re-cloned from", url]) {
+    if (!reclone.includes(needle)) throw new Error(`the re-clone finding must contain ${JSON.stringify(needle)}:\n${reclone}`)
+  }
+  assertResolves(join(cfg(home), "commands", "tool:work.md"), join(cloneDir(home), "plugins", "tool", "commands", "work.md"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+}, 600_000)
 }

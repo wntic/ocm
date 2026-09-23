@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import { pullRepo, readRenames, reconcilePluginRecords, registerPlugins, resolveChains } from "../../loader/core.js"
+import { errorMessage, pullRepo, readRenames, reconcilePluginRecords, registerPlugins, resolveChains } from "../../loader/core.js"
 import { componentRoot, deriveComponents, materializeLinks, removeMcpKeys } from "../install"
 import { discoverMarketplace } from "../discovery"
-import { clone, git } from "../git"
+import { clone, git, requireGit } from "../git"
 import { loadRegistryForWrite, saveRegistry, saveRegistryIfChanged } from "../registry"
 import { installLoader, reportTuiPlugin } from "../loader"
 import { reportUpgrade } from "../report"
@@ -50,6 +50,9 @@ export async function update(target?: string, options: UpdateOptions = {}): Prom
     return
   }
   const reports: MarketplaceReport[] = []
+  // brief 32 §1: git is probed once, before the first pull — git off PATH
+  // stops the run once instead of failing every marketplace
+  if (names.some((name) => !registry.marketplaces[name]!.local)) requireGit()
   // before any prompt: the loader files do not depend on the trust decision,
   // so an interrupt at a re-prompt cannot skip them (spec 16). A no-op
   // reports nothing for the loader (spec 23 §2); the TUI line is a notice
@@ -74,13 +77,15 @@ export async function update(target?: string, options: UpdateOptions = {}): Prom
 
 // spec 20: the re-clone behind both `ocm update` and `ocm doctor --fix` —
 // one code path, so a missing cache is repaired the same way everywhere
-export function recloneMarketplace(entry: MarketplaceEntry): string {
+export function recloneMarketplace(entry: MarketplaceEntry): { revision: string; event: string } {
   if (!entry.url) throw new Error(`clone directory missing (${entry.dir}) and no url recorded; remove and re-add the marketplace`)
-  // spec 23 §7: an event of the report, not a warning
-  console.log(`clone directory missing, re-clone from ${entry.url}...`)
   mkdirSync(dirname(entry.dir), { recursive: true })
   clone(entry.url, entry.dir, entry.ref)
-  return git(["rev-parse", "HEAD"], entry.dir).stdout
+  // spec 23 §7: an event of the report, not a warning
+  return {
+    revision: git(["rev-parse", "HEAD"], entry.dir).stdout,
+    event: `clone directory missing, re-clone from ${entry.url}...`,
+  }
 }
 
 // pull, or re-clone a cleared cache (spec 08 edge cases); the revision
@@ -100,10 +105,17 @@ async function pullMarketplace(entry: MarketplaceEntry, name: string, report: Ma
     if (pull.localChanges > 0) discarded.push(`${pull.localChanges} local change${pull.localChanges === 1 ? "" : "s"}`)
     if (pull.untracked > 0) discarded.push(`${pull.untracked} untracked file${pull.untracked === 1 ? "" : "s"}`)
     if (discarded.length > 0) {
-      report.warnings.push(`${entry.dir} has local changes; discarded ${discarded.join(" and ")} (the cache is not an editing surface)`)
+      // brief 32 §4 (F99): the paths sit beneath the count sentence — git
+      // clean -fd makes them unrecoverable after the fact
+      const lines = [`${entry.dir} has local changes; discarded ${discarded.join(" and ")} (the cache is not an editing surface)`]
+      for (const path of pull.paths.slice(0, 10)) lines.push(`    ${path}`)
+      if (pull.paths.length > 10) lines.push(`    … and ${pull.paths.length - 10} more`)
+      report.warnings.push(lines.join("\n"))
     }
   } else {
-    report.after = recloneMarketplace(entry)
+    const { revision, event } = recloneMarketplace(entry)
+    report.after = revision
+    report.recloned = event
   }
 }
 
@@ -114,7 +126,7 @@ async function updateOne(registry: Registry, name: string, trust?: boolean): Pro
   const report: MarketplaceReport = {
     name, ok: true, error: null, note: null, before: null, after: null, changed: false,
     renamed: [], removed: [], pruned: [], dropped: [], refused: [], plugins: [], warnings: [], outcomes: null,
-    digestsAbsent: null,
+    digestsAbsent: null, recloned: null,
   }
   try {
     await pullMarketplace(entry, name, report)
@@ -183,7 +195,7 @@ async function updateOne(registry: Registry, name: string, trust?: boolean): Pro
     }
   } catch (err) {
     report.ok = false
-    report.error = err instanceof Error ? err.message : String(err)
+    report.error = errorMessage(err)
     entry.lastSync = { at: new Date().toISOString(), ok: false, error: report.error }
     try {
       saveRegistry(registry)

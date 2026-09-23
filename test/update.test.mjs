@@ -843,6 +843,91 @@ phase("5. the README's auto-sync section documents the fire-and-forget sync (F40
     )
   }
 })
+
+// brief 32 §4 (F99): the discard warning must name the paths it discarded,
+// not just the counts — git clean -fd makes the names unrecoverable after
+// the fact. The paths sit beneath the warning, one per line, 4-space
+// indented, spelled as porcelain reports them (relative to the clone root),
+// capped at 10 with a final "… and N more" line.
+const listedLines = (output, warningLine) => {
+  const lines = output.split("\n")
+  const at = lines.indexOf(warningLine)
+  const listed = []
+  for (let i = at + 1; i < lines.length && /^    \S/.test(lines[i] ?? ""); i++) listed.push(lines[i])
+  return listed
+}
+
+// the fixture behind both F99 items: three tracked files, so a dirty cache
+// can carry three local changes at once (addGitMp's plugin has two)
+function addGitMpThreeTracked(home) {
+  gitRepo(join(home, "remote"), { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND, "extra.md": COMMAND } } } })
+  const added = ocm(home, ["add", `file://${join(home, "remote")}`, "--name", "mp"])
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.output}`)
+}
+
+phase("6. a dirty cache with 3 local changes and 2 untracked files: the warning keeps the counts and names all five paths beneath them", async (home) => {
+  addGitMpThreeTracked(home)
+  const tool = join(cloneDir(home), "plugins", "tool")
+  writeFileSync(join(tool, "plugin.json"), "# dirty\n")
+  writeFileSync(join(tool, "commands", "work.md"), "# dirty edit\n")
+  writeFileSync(join(tool, "commands", "extra.md"), "# dirty edit\n")
+  writeFileSync(join(tool, "scratch-01.txt"), "# not part of the marketplace\n")
+  writeFileSync(join(tool, "scratch-02.txt"), "# not part of the marketplace\n")
+
+  const first = ocm(home, ["update", "mp"])
+  if (first.status !== 0) throw new Error(`ocm update mp exited ${first.status}: ${first.output}`)
+  const warnings = discardedLines(first.output)
+  if (warnings.length !== 1) throw new Error(`expected exactly one discarded-warning line, got ${warnings.length}:\n${first.output}`)
+  if (!warnings[0].includes("discarded 3 local changes and 2 untracked files")) {
+    throw new Error(`the warning must keep the count sentence (spec 26):\n${warnings[0]}`)
+  }
+  const expected = [
+    "plugins/tool/plugin.json",
+    "plugins/tool/commands/work.md",
+    "plugins/tool/commands/extra.md",
+    "plugins/tool/scratch-01.txt",
+    "plugins/tool/scratch-02.txt",
+  ]
+  const listed = listedLines(first.output, warnings[0]).map((l) => l.slice(4))
+  const missing = expected.filter((p) => !listed.includes(p))
+  const extra = listed.filter((p) => !expected.includes(p))
+  if (missing.length || extra.length || listed.length !== expected.length) {
+    throw new Error(
+      "the warning must name all five discarded paths, one per line beneath it, 4-space indented, relative to the clone root:\n" +
+        `  missing: ${missing.join(", ") || "(none)"}\n  unexpected: ${extra.join(", ") || "(none)"}\n${first.output}`,
+    )
+  }
+  assertAbsent(join(tool, "scratch-01.txt")) // "discarded" must stay true
+  assertAbsent(join(tool, "scratch-02.txt"))
+}, 420_000)
+
+phase("6b. twelve untracked files: the warning names ten paths and closes with … and 2 more", async (home) => {
+  addGitMp(home)
+  const tool = join(cloneDir(home), "plugins", "tool")
+  const names = Array.from({ length: 12 }, (_, i) => `scratch-${String(i + 1).padStart(2, "0")}.txt`)
+  for (const name of names) writeFileSync(join(tool, name), "# not part of the marketplace\n")
+
+  const first = ocm(home, ["update", "mp"])
+  if (first.status !== 0) throw new Error(`ocm update mp exited ${first.status}: ${first.output}`)
+  const warnings = discardedLines(first.output)
+  if (warnings.length !== 1) throw new Error(`expected exactly one discarded-warning line, got ${warnings.length}:\n${first.output}`)
+  if (!warnings[0].includes("discarded 12 untracked files")) {
+    throw new Error(`the warning must keep the count sentence (spec 26):\n${warnings[0]}`)
+  }
+  const listed = listedLines(first.output, warnings[0])
+  if (listed.length !== 11) {
+    throw new Error(`expected ten path lines plus the cap line beneath the warning, got ${listed.length}:\n${listed.join("\n")}`)
+  }
+  if (listed[listed.length - 1] !== "    … and 2 more") {
+    throw new Error(`the cap line must be "    … and 2 more":\n${listed[listed.length - 1] ?? "(nothing)"}`)
+  }
+  const paths = listed.slice(0, -1).map((l) => l.slice(4))
+  const expected = names.map((name) => `plugins/tool/${name}`)
+  const unknown = paths.filter((p) => !expected.includes(p))
+  if (unknown.length || new Set(paths).size !== 10) {
+    throw new Error(`the ten named paths must be distinct files from the dirty clone:\n${paths.join("\n")}`)
+  }
+}, 420_000)
 }
 
 // brief 29 §3: the grandfather's end is an event, not a warning — a plugin

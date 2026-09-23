@@ -4,6 +4,7 @@ import { writeJsonAtomic } from "./atomic.js"
 import { digestChanges } from "./digest.js"
 import { rethrowIfDefect } from "./defect.js"
 import { git, isGitRepo, treePluginFiles } from "./git.js"
+import { classifyGitFailure } from "./git-errors.js"
 import { treeFoldRefusal } from "./limits.js"
 import { tryRegistryLock } from "./lock.js"
 import { deriveComponents, registerPlugins } from "./marketplace.js"
@@ -31,11 +32,21 @@ export async function pullRepo(entry, name) {
   const untracked = status.filter((line) => line.startsWith("??")).length
   const localChanges = status.filter((line) => line !== "" && !line.startsWith("??")).length
   const dirty = localChanges > 0 || untracked > 0
+  // brief 32 §4 (F99): the discarded paths, named before git clean -fd makes
+  // them unrecoverable; a rename line keeps only its new side. The shared git
+  // wrapper trims stdout, so a first line with an unstaged " " status loses
+  // that space and its path starts one char early
+  const paths = status.filter((line) => line !== "").map((line) => {
+    let path = line.slice(line[1] === " " && line[2] !== " " ? 2 : 3)
+    if (/[RC]/.test(line.slice(0, 2))) path = path.slice(path.lastIndexOf(" -> ") + 4)
+    if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1)
+    return path
+  })
   const fetch = await git(["fetch", "--depth", "1", "origin", ref || "HEAD"], dir)
   if (!fetch.ok) {
     return {
-      ok: false, changed: false, before, after: before, dirty, localChanges, untracked,
-      output: `cannot access ${entry.url}${ref ? ` (ref "${ref}")` : ""} — the repository is private, unreachable, or the URL is wrong`,
+      ok: false, changed: false, before, after: before, dirty, localChanges, untracked, paths,
+      output: classifyGitFailure({ operation: "fetch", result: fetch, url: entry.url, ref, dir }).message,
     }
   }
   // brief 28 §3: the fetched tree is checked before the working tree moves —
@@ -45,19 +56,19 @@ export async function pullRepo(entry, name) {
   const files = await treePluginFiles(dir, "FETCH_HEAD", entry.subdir)
   const fold = files ? treeFoldRefusal(name, sha, files) : null
   if (fold) {
-    return { ok: false, changed: false, before, after: before, dirty, localChanges, untracked, output: fold }
+    return { ok: false, changed: false, before, after: before, dirty, localChanges, untracked, paths, output: fold }
   }
   let reset = await git(["reset", "--hard", "FETCH_HEAD"], dir)
   if (!reset.ok) reset = await git(["reset", "--hard", "@{u}"], dir)
-  if (!reset.ok) return { ok: false, changed: false, before, after: before, dirty, localChanges, untracked, output: reset.stderr || reset.stdout }
+  if (!reset.ok) return { ok: false, changed: false, before, after: before, dirty, localChanges, untracked, paths, output: classifyGitFailure({ operation: "fetch", result: reset, url: entry.url, ref, dir }).message }
   // spec 26: reset --hard leaves untracked files behind — clean -fd makes
   // "discarded" true and the next run silent
   if (dirty) {
     const clean = await git(["clean", "-fd"], dir)
-    if (!clean.ok) return { ok: false, changed: false, before, after: before, dirty, localChanges, untracked, output: clean.stderr || clean.stdout }
+    if (!clean.ok) return { ok: false, changed: false, before, after: before, dirty, localChanges, untracked, paths, output: classifyGitFailure({ operation: "fetch", result: clean, url: entry.url, ref, dir }).message }
   }
   const after = (await git(["rev-parse", "HEAD"], dir)).stdout
-  return { ok: true, changed: before !== after, before, after, dirty, localChanges, untracked, output: after }
+  return { ok: true, changed: before !== after, before, after, dirty, localChanges, untracked, paths, output: after }
 }
 
 // the loader never prompts: an unanswered or drifted grant is recorded as

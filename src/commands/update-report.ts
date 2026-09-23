@@ -42,6 +42,9 @@ export interface MarketplaceReport {
   // brief 30 §4: local plugins whose recorded digests were absent this pass —
   // unknown, not unchanged; null when the digest comparison never ran (git)
   digestsAbsent: string[] | null
+  // brief 32 §4 (F97): the re-clone event line, null unless this pass
+  // re-cloned
+  recloned: string | null
 }
 
 // spec 08: the per-plugin file list is git's own answer — diff the revision
@@ -239,6 +242,7 @@ export function renderMarketplace(report: MarketplaceReport, quiet: boolean, hea
     console.log(`marketplace "${report.name}" ${report.note}`)
     return
   }
+  if (report.recloned) console.log(report.recloned)
   if (!report.ok) {
     console.error(`  failed: ${report.error}`)
     return

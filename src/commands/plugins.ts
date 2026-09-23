@@ -6,7 +6,7 @@ import type { CorePluginComponents } from "../../loader/core.js"
 import { OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
 import { discoverMarketplace } from "../discovery"
-import { clone, git } from "../git"
+import { clone, git, requireGit } from "../git"
 import { reportMutationWarnings, reportRestart, reportUpgrade, reportWarnings } from "../report"
 
 function componentSummary(components: CorePluginComponents): string {
@@ -80,6 +80,7 @@ export async function scan(source: string): Promise<void> {
   let dir = parsed.url
   let temp: string | null = null
   if (parsed.isGit) {
+    requireGit()
     // scan never writes outside its temp directory (spec 05): the clone
     // lives in the os temp dir, not the marketplaces store
     temp = mkdtempSync(join(tmpdir(), "ocm-scan-"))

@@ -21,7 +21,7 @@ import {
 } from "node:fs"
 import type { Dirent } from "node:fs"
 import { dirname, join } from "node:path"
-import { isRenderedFile, readRegistry, writeJsonAtomic } from "../loader/core.js"
+import { errorMessage, isRenderedFile, readRegistry, writeJsonAtomic } from "../loader/core.js"
 import { loadRegistryForWrite, saveRegistryIfChanged } from "./registry"
 import {
   OCM_CACHE_DIR,
@@ -372,7 +372,7 @@ function repointSymlinks(): void {
       rmSync(path, { force: true })
       symlinkSync(newPrefix + target.slice(oldPrefix.length), path)
     } catch (err) {
-      console.error(`warning: failed to re-point ${path}: ${err instanceof Error ? err.message : String(err)}`)
+      console.error(`warning: failed to re-point ${path}: ${errorMessage(err)}`)
     }
   }
   const walk = (dir: string): void => {

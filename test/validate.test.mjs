@@ -741,4 +741,48 @@ phase("4. a directory under plugins/ with neither manifest nor components is sti
     throw new Error(`expected only the header "validate ${mp}" — the stray directory produces no finding:\n${header}`)
   }
 })
+
+// brief 32 §6 (F223), the mixed-tree half: the same sentences for a
+// broken-kit beside a valid sibling — asserted at validate and at add, so
+// the two outputs stay matchable
+const BROKEN_KIT_MANIFEST = "plugins/broken-kit/plugin.json: not valid JSON — fix it or remove it; ocm requires this file to be readable"
+const BROKEN_KIT_NO_COMPONENTS = "plugins/broken-kit has no components — nothing installs, so users are unaffected"
+
+phase("5. add on a mixed tree installs the valid sibling, exits 0, and carries validate's broken-manifest sentences as a stderr warning", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: {
+    "broken-kit": { "plugin.json": "{ not json\n" },
+    "good-kit": { "plugin.json": json({ description: "demo plugin", $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json" }), commands: { "work.md": COMMAND } },
+  } })
+  // validate's half must pass first — it proves the fixture produces exactly
+  // the broken-kit finding and nothing else
+  const validated = ocm(home, "validate", mp)
+  const validateOutput = `${validated.stdout}\n${validated.stderr}`
+  if (validated.status !== 1) {
+    throw new Error(`validate ${mp} exited ${validated.status}, expected 1 — the broken manifest is a validate error:\n${validateOutput}`)
+  }
+  finding(validateOutput, "error", BROKEN_KIT_MANIFEST)
+  if (!validateOutput.includes(BROKEN_KIT_NO_COMPONENTS)) {
+    throw new Error(`validate's finding must carry the diagnostic line "${BROKEN_KIT_NO_COMPONENTS}":\n${validateOutput}`)
+  }
+  // add's half: the sibling still installs and the run succeeds
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) {
+    throw new Error(`ocm add ${mp} exited ${added.status} — a broken plugin beside a valid one is the author's defect, not a failed add:\n${added.stdout}\n${added.stderr}`)
+  }
+  for (const sentence of [BROKEN_KIT_MANIFEST, BROKEN_KIT_NO_COMPONENTS]) {
+    if (!added.stderr.includes(sentence)) {
+      throw new Error(`add's stderr must carry the sentence validate reports ("${sentence}"):\n${added.stdout}\n${added.stderr}`)
+    }
+  }
+  if (added.stdout.includes("not valid JSON")) {
+    throw new Error(`warnings belong on stderr — add's stdout must not carry the broken-manifest sentence:\n${added.stdout}`)
+  }
+  const plugins = readRegistry(home).marketplaces.mp.plugins
+  if (!plugins["good-kit"]) throw new Error(`expected good-kit registered under marketplaces.mp in ${registryFile(home)}`)
+  if (plugins["broken-kit"]) throw new Error(`broken-kit must not be registered, but it is in ${registryFile(home)}`)
+  const link = commandLink(home, "good-kit", "work.md")
+  if (!existsSync(link) || !lstatSync(link).isSymbolicLink()) throw new Error(`expected a symlink at ${link}`)
+  expect(realpathSync(link)).toBe(realpathSync(join(mp, "plugins", "good-kit", "commands", "work.md")))
+})
 }

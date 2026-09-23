@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { git } from "./git.js"
+import { classifyGitFailure } from "./git-errors.js"
 import { readManifest } from "./manifest.js"
 import { HOME, MARKETPLACES_DIR } from "./paths.js"
 
@@ -107,12 +108,18 @@ export function duplicateRefusal(registry, parsed, wanted) {
 }
 
 async function clone(url, dir, ref) {
+  // brief 32 §1: a file:// url's local facts are checked before spawning —
+  // a non-repo directory is refused with the plain-path form
+  if (url.startsWith("file://")) {
+    const pre = classifyGitFailure({ operation: "clone", result: { ok: false, stdout: "", stderr: "" }, url, ref: ref ?? null, dir })
+    if (pre.code === "local-missing" || pre.code === "local-not-a-repo") throw new Error(pre.message)
+  }
   const args = ["clone", "--depth", "1"]
   if (ref) args.push("--branch", ref)
   args.push(url, dir)
   const result = await git(args)
   if (!result.ok) {
-    throw new Error(`cannot access ${url} — the repository is private, unreachable, or the URL is wrong`)
+    throw new Error(classifyGitFailure({ operation: "clone", result, url, ref: ref ?? null, dir }).message)
   }
 }
 
@@ -121,6 +128,12 @@ async function clone(url, dir, ref) {
 // step 2). The clone progress line is the CLI's — the core never prints.
 export async function placeClone(parsed, name, ref, registry, named) {
   const dir = marketplaceDir(name)
+  // brief 32 §2: a dir no registry entry claims is the leftover of a killed
+  // add — remove it before cloning or git refuses the non-empty target
+  if (existsSync(dir) && !Object.values(registry.marketplaces ?? {}).some((entry) => entry.dir === dir)) {
+    rmSync(dir, { recursive: true, force: true })
+    process.stderr.write(`warning: removing an incomplete clone at ${dir} left by an interrupted ocm add\n`)
+  }
   mkdirSync(MARKETPLACES_DIR, { recursive: true })
   try {
     await clone(parsed.url, dir, ref)

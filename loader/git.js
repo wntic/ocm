@@ -32,7 +32,7 @@ export function git(args, cwd) {
     }, 120_000)
     child.stdout.on("data", (chunk) => (stdout += chunk))
     child.stderr.on("data", (chunk) => (stderr += chunk))
-    child.on("error", (err) => finish({ ok: false, stdout: "", stderr: String(err) }))
+    child.on("error", (err) => finish({ ok: false, stdout: "", stderr: String(err), error: err }))
     child.on("close", (code) => finish({ ok: code === 0, stdout: stdout.trim(), stderr: stderr.trim() }))
   })
 }
