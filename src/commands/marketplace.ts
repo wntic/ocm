@@ -145,6 +145,11 @@ export function remove(name: string): void {
     if (plugin.components.mcp) parts.push(`${plugin.components.mcp.length} mcp servers`)
     console.log(`  ${plugin.name}: ${parts.join(", ")} removed`)
   }
+  // brief 33 §3 (F70): one line per freed name — no restart notice,
+  // nothing on disk changed
+  for (const item of result.freed) {
+    console.log(`  ${item.plugin}@${item.marketplace}: the name is free again — ocm install ${item.plugin}@${item.marketplace} to enable it`)
+  }
   for (const line of result.restore) console.log(line)
   // brief 31 §6: the notice follows the teardown's outcomes, after the
   // headline and the per-plugin lines

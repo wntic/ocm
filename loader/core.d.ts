@@ -216,11 +216,23 @@ export interface CoreDisplacementRecord {
 export interface CoreRemoveResult {
   name: string
   owned: { name: string; components: CorePluginComponents }[]
+  // brief 33 §3 (F70): collision records that named this marketplace,
+  // cleared in the same save — the plugin stays disabled
+  freed: { plugin: string; marketplace: string }[]
   restore: string[]
   warnings: string[]
   // brief 31 §6: the teardown's outcomes — links and mcp keys removed
   report: CoreMaterializeReport
   wasV1: boolean
+}
+
+// brief 33 §3 (F92): a pre-existing record's collision transition across a
+// registration — rendered by the update report, ignored by the loader's
+// own callers
+export interface CoreCollisionTransition {
+  plugin: string
+  incumbent: string
+  state: "recorded" | "cleared"
 }
 
 export interface CoreSetEnabledResult {
@@ -386,7 +398,7 @@ export declare function readManifest(marketplaceDir: string): { name?: string; d
 export declare function marketplaceManifestFile(marketplaceDir: string): string
 export declare function componentRoot(entry: CoreMarketplaceEntry): string
 export declare function incumbentMarketplace(registry: CoreRegistry, self: string, pluginName: string): string | undefined
-export declare function registerPlugins(registry: CoreRegistry, name: string, plugins: CoreManifestPlugin[]): void
+export declare function registerPlugins(registry: CoreRegistry, name: string, plugins: CoreManifestPlugin[]): { collisions: CoreCollisionTransition[] }
 export declare function pluginHashes(plugin: CoreManifestPlugin): Record<string, string>
 // brief 30 §2: the recorded digests diffed against the current ones — the
 // shared comparison behind the CLI's local report and the loader's startup

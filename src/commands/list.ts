@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs"
 import { loadRegistry } from "../registry"
 import type { MarketplaceEntry } from "../types"
 import { age, pendingExecutables, shippedExecutables } from "./display"
+import { componentRoot } from "../../loader/core.js"
 import type { CoreExecutableComponent } from "../../loader/core.js"
 
 export interface ListOptions {
@@ -10,8 +12,9 @@ export interface ListOptions {
 }
 
 // the marketplace row's parenthesised markers, in print order: mode, pin,
-// awaiting-trust, failed sync (specs 25 §2/§5/§6)
-function rowMarkers(entry: MarketplaceEntry, all: boolean, pending: CoreExecutableComponent[]): string {
+// awaiting-trust, failed sync (specs 25 §2/§5/§6), then the missing-clone
+// marker in the same set (spec 33 §4)
+function rowMarkers(entry: MarketplaceEntry, all: boolean, pending: CoreExecutableComponent[], name: string, cloneMissing: boolean): string {
   const markers: string[] = []
   if (all) markers.push(entry.mode)
   if (entry.ref) markers.push(`pinned @ ${entry.ref}`)
@@ -21,6 +24,13 @@ function rowMarkers(entry: MarketplaceEntry, all: boolean, pending: CoreExecutab
       : "components awaiting trust")
   }
   if (entry.lastSync && !entry.lastSync.ok) markers.push(`! sync failed ${age(entry.lastSync.at)}`)
+  // a local directory is the user's — the remedy is restore-or-remove, not a
+  // re-clone (spec 20 §3, rendered as doctor renders it)
+  if (cloneMissing) {
+    markers.push(entry.local
+      ? `clone missing — restore the directory, or run ocm remove ${name}`
+      : "clone missing — ocm update re-clones")
+  }
   return markers.length ? ` (${markers.join(", ")})` : ""
 }
 
@@ -38,13 +48,16 @@ export function list(options: ListOptions = {}): void {
   }
   for (const [name, entry] of entries) {
     const pending = pendingExecutables(entry)
-    console.log(`${name}${rowMarkers(entry, options.all === true, pending)}`)
+    const cloneMissing = !existsSync(componentRoot(entry))
+    console.log(`${name}${rowMarkers(entry, options.all === true, pending, name, cloneMissing)}`)
     console.log(`  source: ${entry.url}`)
     // display shortens; the registry keeps the full sha (spec 08)
     const short = entry.revision ? entry.revision.slice(0, 7) : null
     if (short) console.log(`  revision: ${short}`)
-    // a local directory never syncs, so it has no age to state (spec 25 §6)
-    if (options.all && !entry.local) {
+    // a local directory never syncs, so it has no age to state (spec 25 §6);
+    // neither does a directory that no longer exists — a sync age for a gone
+    // clone is the lie F112 recorded (spec 33 §4)
+    if (options.all && !entry.local && !cloneMissing) {
       const sync = entry.lastSync
       console.log(`  ${!sync ? "never synced" : sync.ok ? `synced ${age(sync.at)}` : `sync failed ${age(sync.at)}`}`)
     }

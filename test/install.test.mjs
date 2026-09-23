@@ -936,6 +936,45 @@ phase("5. doctor reports a recorded collision with the install remedy and exits 
   expect(readFileSync(registryFile(home), "utf8")).toBe(bytes)
 }, 600_000)
 
+// brief 33 §3 (F70, source side): removing the incumbent closes the stale
+// window at the write — every remaining collision record naming the removed
+// marketplace clears in the same save, the report names each freed plugin,
+// and clearing never enables: a removal elsewhere is not consent to turn
+// something on
+phase("removing the incumbent clears the collider's collision record, reports the freed name, and leaves the plugin disabled", async (home) => {
+  // invariants: config safety and ownership — the user's config and command
+  // predate the collision and must survive the removal
+  writeTree(cfg(home), { "opencode.json": json({ model: "claude-sonnet-4-6" }), commands: { "mine.md": "# my own command\n" } })
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+  colliding(home)
+  const seeded = readRegistry(home).marketplaces.collide.plugins["review-tools"]
+  if (seeded?.collision !== "big") {
+    throw new Error(`expected the fixture to seed collision "big" on review-tools@collide in ${registryFile(home)}, got ${JSON.stringify(seeded)}`)
+  }
+  const removed = ocm(home, ["remove", "big"])
+  if (removed.status !== 0) throw new Error(`ocm remove big exited ${removed.status}:\n${removed.output}`)
+  expect(removed.output).toContain("review-tools@collide: the name is free again — ocm install review-tools@collide to enable it")
+  const registry = readRegistry(home)
+  if (registry.marketplaces.big) throw new Error(`expected big's entry gone from ${registryFile(home)}`)
+  const freed = registry.marketplaces.collide.plugins["review-tools"]
+  if (!freed) throw new Error(`expected review-tools@collide to survive the removal in ${registryFile(home)}`)
+  expect(freed.collision).toBeUndefined() // the record names no removed marketplace
+  expect(freed.enabled).toBe(false) // clearing is not consent to enable
+  // invariants: config safety, ownership, no writes under another tool's dirs
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes)
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 240_000)
+
 phase("6. scan of an uninstalled plugin: every component 'would create', executables '(trust-gated)', zero collision lines; the real install then needs no --force", async (home) => {
   const mp = join(home, "mp")
   writeTree(mp, { plugins: { "review-tools": {

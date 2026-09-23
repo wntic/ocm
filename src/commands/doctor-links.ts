@@ -2,7 +2,7 @@
 // materialization and paths under directories ocm never owns. Every
 // removal proves ownership first; an unowned path is reported, never touched.
 import { existsSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs"
-import { dirname, join, relative } from "node:path"
+import { basename, dirname, join, relative } from "node:path"
 import {
   approvedComponents,
   componentKey,
@@ -11,10 +11,11 @@ import {
   enabledPlugins,
   errorMessage,
   foldedComponentGroups,
+  isRenderedFile,
 } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { materializeLinks } from "../install"
-import { HOME, OCM_CACHE_DIR, OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
+import { HOME, OCM_CACHE_DIR, OCM_LINKS_DIR, OCM_MARKETPLACES_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { error, fixed, type Finding } from "../findings"
 
 function errText(err: unknown): string {
@@ -49,6 +50,12 @@ function managedRoots(registry: CoreRegistry): string[] {
   return Object.values(registry.marketplaces).map((entry) => componentRoot(entry))
 }
 
+// brief 33 §1 change 5: a target resolving inside a registered marketplace's
+// root is never doctor's to remove, whatever the per-plugin records say
+export function insideRegisteredRoot(target: string, registry: CoreRegistry): boolean {
+  return managedRoots(registry).some((root) => resolvesInside(target, root))
+}
+
 export function removePath(path: string, findings: Finding[]): void {
   try {
     rmSync(path, { force: true, recursive: true })
@@ -58,13 +65,44 @@ export function removePath(path: string, findings: Finding[]): void {
   }
 }
 
+// brief 33 §1: the ocm link layout for the directory the path sits in —
+// the name alone is never ownership proof, it only completes a registered
+// target in ocmOwned's clause (b)
+function ocmLayout(path: string): boolean {
+  const dir = dirname(path)
+  const name = basename(path)
+  if (dir === OPENCODE_COMMANDS_DIR || dir === OPENCODE_AGENTS_DIR) {
+    const colon = name.indexOf(":")
+    return colon > 0 && colon < name.length - 1
+  }
+  if (dir === OPENCODE_PLUGINS_DIR) return name.startsWith("ocm--")
+  // <marketplace>/skills directly under the links dir; the leading [^/.]
+  // keeps ../ escapes out
+  return /^[^/.][^/]*\/skills$/.test(relative(OCM_LINKS_DIR, dir)) && name.includes("--")
+}
+
+// brief 33 §1: ownership of a link is a property of where it points and how
+// it is named, not of what the registry still records. F168: the cache
+// clauses compare against THIS root's namespace only, so a target under
+// another root's ~/.cache/ocm/roots/<slug>/ fails them — root A's --fix can
+// never uninstall root B's components
+export function ocmOwned(path: string, target: string | null, registry: CoreRegistry): boolean {
+  if (target !== null) {
+    if (
+      resolvesInside(target, OCM_MARKETPLACES_DIR) ||
+      resolvesInside(target, OCM_LINKS_DIR) ||
+      // the pre-0.7 shared layout, before the cache was namespaced per root
+      resolvesInside(target, join(OCM_CACHE_DIR, "marketplaces")) ||
+      resolvesInside(target, join(OCM_CACHE_DIR, "links"))
+    ) {
+      return true
+    }
+    if (ocmLayout(path) && insideRegisteredRoot(target, registry)) return true
+  }
+  return insideDir(path, OCM_LINKS_DIR) || (target === null && isRenderedFile(path))
+}
+
 export function checkBrokenLinks(registry: CoreRegistry, findings: Finding[], fix: boolean): void {
-  const managed = managedRoots(registry)
-  // brief 43 §4: an interrupted migration leaves links targeting the old
-  // clone path of a marketplace the registry still names — the exact links
-  // repointSymlinks re-points. They are ocm's for the label, but --fix
-  // repairs them through re-materialization, not removal.
-  const oldLayout = Object.keys(registry.marketplaces).map((name) => join(OCM_CACHE_DIR, "marketplaces", name))
   for (const dir of [OPENCODE_COMMANDS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_PLUGINS_DIR]) {
     let entries: string[]
     try {
@@ -81,14 +119,12 @@ export function checkBrokenLinks(registry: CoreRegistry, findings: Finding[], fi
         continue
       }
       if (existsSync(path)) continue
-      const ocms = managed.some((root) => resolvesInside(target, root))
-      const moved = oldLayout.some((root) => insideDir(target, root))
-      if (!ocms && !moved) {
+      if (!ocmOwned(path, target, registry)) {
         findings.push(error(`${path}: broken symlink → ${target} (not ocm's, left in place)`))
-      } else if (ocms && fix) {
+      } else if (fix) {
         removePath(path, findings)
       } else {
-        findings.push(error(`${path}: broken symlink → ${target}`))
+        findings.push(error(`${path}: broken symlink → ${target} — ocm doctor --fix removes it`))
       }
     }
   }

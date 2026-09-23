@@ -691,4 +691,79 @@ phase("10. a granted marketplace is marked by neither surface, a denied one by b
   // the denied marker carries the remedy, as it already did (no regression)
   expect(lineWith(listed.stdout, "plugins: alert.js")).toContain("(blocked \u2014 ocm trust mp-deny)")
 }, 420_000)
+
+phase("11. a deleted clone: list --all marks the row and drops the sync age; info states the cause once; both --json forms are unchanged", async (home) => {
+  // invariants: config safety and ownership — the user's keys and their own
+  // command predate the add and must survive the renders
+  writeTree(cfg(home), {
+    "opencode.json": json({ model: "claude-sonnet-4-6", permission: { edit: "allow" } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { kit: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  const added = ocm(home, ["add", `file://${remote}`, "--name", "mp", "--trust"])
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.output}`)
+  // the F112 state: the registry records a sync that succeeded just now,
+  // against a clone the registry does not know is gone
+  editRegistry(home, (registry) => {
+    registry.marketplaces.mp.lastSync = { at: new Date().toISOString(), ok: true, error: null }
+  })
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+  const listJson = ocm(home, ["list", "--json"]).stdout
+  const infoJson = ocm(home, ["info", "kit", "--json"]).stdout
+
+  const dir = readRegistry(home).marketplaces.mp.dir
+  rmSync(dir, { recursive: true, force: true }) // the clone, deleted by hand
+
+  const all = ocm(home, ["list", "--all"])
+  if (all.status !== 0) throw new Error(`ocm list --all exited ${all.status}: ${all.output}`)
+  // spec 33 §4: the marker joins the row's parenthesised set, comma-separated,
+  // after the mode marker — never a second parenthesised group
+  expect(row(all.stdout, "mp")).toContain("(auto, clone missing \u2014 ocm update re-clones)")
+  expect(all.output).not.toContain("synced") // a sync age for a gone directory is the lie
+
+  const info = ocm(home, ["info", "kit"])
+  if (info.status !== 0) throw new Error(`ocm info kit exited ${info.status}: ${info.output}`)
+  const cause = `  marketplace clone missing (${dir}) \u2014 ocm update re-clones`
+  const lines = info.stdout.split("\n")
+  const causeCount = lines.filter((l) => l === cause).length
+  if (causeCount !== 1) throw new Error(`expected the cause line once, got ${causeCount}, in:\n${info.stdout}`)
+  if (!(lines.indexOf(cause) < lines.indexOf("  components"))) {
+    throw new Error(`expected the cause line above the component list in:\n${info.stdout}`)
+  }
+  const work = lineWith(info.stdout, "kit:work")
+  expect(work).toContain("(not linked)")
+  expect(work).not.toContain("→")
+
+  // the --json forms are unchanged by the deletion
+  expect(ocm(home, ["list", "--json"]).stdout).toBe(listJson)
+  expect(ocm(home, ["info", "kit", "--json"]).stdout).toBe(infoJson)
+
+  // invariants: the renders write nothing, and nothing appears outside ocm's namespace
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes)
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+  assertAbsent(join(home, ".claude"))
+  assertAbsent(join(home, ".agents"))
+})
+
+phase("12. a local marketplace's missing clone: list and info name restore-or-remove, not re-clone", async (home) => {
+  const mp = join(home, "mp-local")
+  writeTree(mp, { plugins: { kit: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  const added = ocm(home, ["add", mp, "--trust"])
+  if (added.status !== 0) throw new Error(`ocm add mp-local exited ${added.status}: ${added.output}`)
+  const dir = readRegistry(home).marketplaces["mp-local"].dir
+  rmSync(mp, { recursive: true, force: true }) // the user's directory, gone
+
+  const listed = ocm(home, ["list"])
+  if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}: ${listed.output}`)
+  expect(row(listed.stdout, "mp-local")).toContain("(clone missing \u2014 restore the directory, or run ocm remove mp-local)")
+
+  const info = ocm(home, ["info", "kit"])
+  if (info.status !== 0) throw new Error(`ocm info kit exited ${info.status}: ${info.output}`)
+  const cause = `  marketplace clone missing (${dir}) \u2014 restore the directory, or run ocm remove mp-local`
+  const causeCount = info.stdout.split("\n").filter((l) => l === cause).length
+  if (causeCount !== 1) throw new Error(`expected the local remedy cause line once, got ${causeCount}, in:\n${info.stdout}`)
+})
 }

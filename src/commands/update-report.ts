@@ -21,6 +21,17 @@ export interface PluginReport {
   note: string | null
 }
 
+// brief 33 §3 (F92): a pre-existing record's collision before and after the
+// registration rebuild — an event of the update, not a registry detail
+export interface CollisionTransition {
+  plugin: string
+  incumbent: string
+  state: "recorded" | "cleared"
+  // brief 33 §3: the post-rebuild enabled state — a cleared record the
+  // rebuild re-enabled gets a truthful tail, not the install remedy
+  enabled: boolean
+}
+
 export interface MarketplaceReport {
   name: string
   ok: boolean
@@ -36,6 +47,8 @@ export interface MarketplaceReport {
   pruned: string[]
   dropped: { name: string; reason: string }[]
   refused: { from: string; to: string; incumbent: string; held: boolean; components: string[] }[]
+  // brief 33 §3 (F92): collision transitions across the registration
+  collisions: CollisionTransition[]
   plugins: PluginReport[]
   warnings: string[]
   outcomes: CoreOutcome[] | null
@@ -281,6 +294,18 @@ export function renderMarketplace(report: MarketplaceReport, quiet: boolean, hea
       refusal.held
         ? `    ${refusal.from} keeps its current name and components; resolve the collision upstream or run \`ocm remove ${refusal.incumbent}\``
         : `    ${refusal.from} removed: ${refusal.components.join(", ")}`,
+    )
+  }
+  // brief 33 §3 (F92): one line per collision transition, both directions —
+  // a cleared name the rebuild re-enabled says so rather than naming an
+  // install the very same run just performed
+  for (const collision of report.collisions) {
+    console.log(
+      collision.state === "recorded"
+        ? `  ${collision.plugin}: name taken over by marketplace "${collision.incumbent}" — kept disabled; ocm install ${collision.plugin}@${report.name} --force to take it back`
+        : collision.enabled
+          ? `  ${collision.plugin}: the name is free again — re-enabled`
+          : `  ${collision.plugin}: the name is free again — ocm install ${collision.plugin}@${report.name} to enable it`,
     )
   }
   for (const plugin of report.plugins) {
