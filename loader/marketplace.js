@@ -27,6 +27,14 @@ export function registerPlugins(registry, name, plugins) {
   // every caller assigns or verifies the entry in the registry right before this
   const entry = registry.marketplaces[name]
   const root = componentRoot(entry)
+  // brief 33 §3 (F92): the collision state before the rebuild — a change
+  // to a pre-existing record is an event of the update, not a registry
+  // detail. Fresh records are excluded: the fresh-collision note already
+  // reports those
+  const before = {}
+  for (const [pluginName, plugin] of Object.entries(entry.plugins)) {
+    before[pluginName] = plugin.collision
+  }
   const updated = {}
   for (const plugin of plugins) {
     const existing = entry.plugins[plugin.name]
@@ -59,6 +67,16 @@ export function registerPlugins(registry, name, plugins) {
     updated[plugin.name] = record
   }
   entry.plugins = updated
+  const collisions = []
+  for (const [pluginName, previous] of Object.entries(before)) {
+    const current = updated[pluginName]?.collision
+    if (previous === undefined && current !== undefined) {
+      collisions.push({ plugin: pluginName, incumbent: current, state: "recorded" })
+    } else if (previous !== undefined && current === undefined) {
+      collisions.push({ plugin: pluginName, incumbent: previous, state: "cleared" })
+    }
+  }
+  return { collisions }
 }
 
 // brief 31 §3: the registry's component list is the outcome record filtered
@@ -227,11 +245,24 @@ export function removeMarketplace(name) {
   if (entry.local === false) {
     rmSync(entry.dir, { recursive: true, force: true })
   }
+  // brief 33 §3 (F70): a collision record naming this marketplace goes
+  // stale the moment the entry does — clear it in the same save. Clearing
+  // is not consent to enable: the plugin stays disabled
+  const freed = []
+  for (const [mpName, mpEntry] of Object.entries(registry.marketplaces)) {
+    if (mpName === name) continue
+    for (const [pluginName, plugin] of Object.entries(mpEntry.plugins)) {
+      if (plugin.collision !== name) continue
+      delete plugin.collision
+      freed.push({ plugin: pluginName, marketplace: mpName })
+    }
+  }
   delete registry.marketplaces[name]
   saveRegistry(registry)
   return {
     name,
     owned: owned.map(([pluginName, plugin]) => ({ name: pluginName, components: plugin.components })),
+    freed,
     restore,
     warnings,
     report: { marketplace: name, outcomes: [...links.outcomes, ...mcp.outcomes], warnings },

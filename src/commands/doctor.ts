@@ -8,12 +8,13 @@ import type { CoreRegistry } from "../../loader/core.js"
 import { installLoader, loaderStatus, packageVersion, reportTuiPlugin, type LoaderFileStatus } from "../loader"
 import { materializeLinks } from "../install"
 import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OCM_REGISTRY_FILE, OCM_ROOT_CACHE_DIR, OCM_ROOT_SLUG } from "../paths"
+import { loadRegistryForWrite, saveRegistry } from "../registry"
 import { error, fixed, reportFindings, warning, type Finding } from "../findings"
 import { ocmPluginErrors } from "../probe"
 import { activeRootHoldsRegistry, relativeXdgWarning, strandedMessage, strandedRoots } from "../stranded"
 import { checkConfig } from "./doctor-config"
 import { checkBrokenLinks, checkFoldedRecords, checkForbiddenPaths, checkMaterialized, checkStaleRecords } from "./doctor-links"
-import { checkDisplaced, checkOrphanMirrors, checkStrays } from "./doctor-orphans"
+import { checkDisplaced, checkOrphanLinks, checkOrphanMirrors, checkStrays } from "./doctor-orphans"
 import { recloneMarketplace } from "./update"
 
 function errText(err: unknown): string {
@@ -56,13 +57,18 @@ export function doctor(fix: boolean): void {
   // these files": the stray and MCP fixes stay report-only until it is
   // fixed, or --fix would uninstall everything at once
   const registryUsable = checkRegistryFile(findings)
-  checkStrays(registry, findings, fix && registryUsable)
   checkMarketplaces(registry, findings, fix)
   checkLegacyManifests(registry, findings)
-  checkCollisions(registry, findings)
+  checkCollisions(registry, findings, fix)
+  // brief 33 §1: the broken-link check runs first and the sweeps skip what
+  // it already reported — one path, one finding. First relative to the
+  // orphan sweeps only: after the marketplace checks, so a --fix re-clone
+  // restores the links before this runs
   checkBrokenLinks(registry, findings, fix)
+  checkStrays(registry, findings, fix, registryUsable)
+  checkOrphanLinks(registry, findings, fix, registryUsable)
   checkConfig(findings, registry, fix, registryUsable)
-  checkOrphanMirrors(registry, findings, fix && registryUsable)
+  checkOrphanMirrors(registry, findings, fix, registryUsable)
   checkDisplaced(registry, findings)
   checkMaterialized(registry, findings, fix)
   checkStaleRecords(registry, findings)
@@ -228,17 +234,47 @@ function checkLegacyManifests(registry: CoreRegistry, findings: Finding[]): void
 }
 
 // spec 18: a recorded collision is a user decision, not a repair — the
-// finding names the holder and the takeover command, and --fix changes nothing
-function checkCollisions(registry: CoreRegistry, findings: Finding[]): void {
+// finding names the holder and the takeover command, and --fix changes
+// nothing. Brief 33 §3 (F70): a record naming a marketplace that is no
+// longer added is stale — --fix clears the field only, and the enable
+// stays the user's call
+function checkCollisions(registry: CoreRegistry, findings: Finding[], fix: boolean): void {
+  const stale: { marketplace: string; plugin: string }[] = []
   for (const [name, entry] of Object.entries(registry.marketplaces)) {
     for (const [plugin, record] of Object.entries(entry.plugins)) {
       if (!record.collision || record.enabled) continue
-      findings.push(
-        error(
-          `plugin "${plugin}" from marketplace "${name}" is disabled — the name is owned by marketplace "${record.collision}"\n` +
-            `    install with ocm install ${plugin}@${name} --force, or remove one marketplace`,
-        ),
-      )
+      if (registry.marketplaces[record.collision]) {
+        findings.push(
+          error(
+            `plugin "${plugin}" from marketplace "${name}" is disabled — the name is owned by marketplace "${record.collision}"\n` +
+              `    install with ocm install ${plugin}@${name} --force, or remove one marketplace`,
+          ),
+        )
+      } else {
+        stale.push({ marketplace: name, plugin })
+        if (!fix) {
+          findings.push(
+            error(
+              `plugin "${plugin}" from marketplace "${name}" is disabled by a stale collision record naming "${record.collision}", which is no longer added\n` +
+                `    ocm doctor --fix clears the record; ocm install ${plugin}@${name} enables the plugin`,
+            ),
+          )
+        }
+      }
     }
+  }
+  if (!fix || !stale.length) return
+  // re-loaded for write so the save stamps the writer version and cannot
+  // clobber a registry changed since doctor read it
+  const { registry: fresh } = loadRegistryForWrite()
+  for (const { marketplace, plugin } of stale) {
+    delete fresh.marketplaces[marketplace]?.plugins[plugin]?.collision
+    delete registry.marketplaces[marketplace]?.plugins[plugin]?.collision
+  }
+  saveRegistry(fresh)
+  for (const { marketplace, plugin } of stale) {
+    findings.push(
+      fixed(`plugin "${plugin}" from marketplace "${marketplace}": stale collision record cleared (stays disabled — ocm install ${plugin}@${marketplace} to enable it)`),
+    )
   }
 }

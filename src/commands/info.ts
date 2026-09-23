@@ -185,6 +185,12 @@ export function info(arg: string, options: InfoOptions = {}): void {
   for (const component of pendingExecutables(entry)) {
     console.log(`  ${component.rel} — awaiting trust (ocm trust ${marketplace})`)
   }
+  // spec 33 §4: state the cause once instead of a "(not linked)" on every
+  // row; a local directory is the user's, so the remedy is restore-or-remove
+  if (!existsSync(componentRoot(entry))) {
+    const remedy = entry.local ? `restore the directory, or run ocm remove ${marketplace}` : "ocm update re-clones"
+    console.log(`  marketplace clone missing (${componentRoot(entry)}) — ${remedy}`)
+  }
   const components = resultingComponents(marketplace, plugin, entry, record)
   if (components.length) {
     console.log("  components")

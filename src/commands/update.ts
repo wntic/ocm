@@ -10,7 +10,7 @@ import { reportUpgrade } from "../report"
 import type { DiscoveredPlugin, MarketplaceEntry, Registry } from "../types"
 import { decideUpdateTrust } from "./trust"
 import { pluginFileChanges, pluginReports, renderMarketplace } from "./update-report"
-import type { FileChange, MarketplaceReport } from "./update-report"
+import type { CollisionTransition, FileChange, MarketplaceReport } from "./update-report"
 
 export interface UpdateOptions {
   quiet?: boolean
@@ -125,13 +125,14 @@ async function updateOne(registry: Registry, name: string, trust?: boolean): Pro
   const entry = registry.marketplaces[name]!
   const report: MarketplaceReport = {
     name, ok: true, error: null, note: null, before: null, after: null, changed: false,
-    renamed: [], removed: [], pruned: [], dropped: [], refused: [], plugins: [], warnings: [], outcomes: null,
+    renamed: [], removed: [], pruned: [], dropped: [], refused: [], collisions: [], plugins: [], warnings: [], outcomes: null,
     digestsAbsent: null, recloned: null,
   }
   try {
     await pullMarketplace(entry, name, report)
     if (!report.note) {
       const views = reconcile(registry, name, report)
+      report.collisions = views.collisions
       await decideUpdateTrust(name, entry, componentRoot(entry), trust)
       if (report.after) entry.revision = report.after
       entry.lastSync = { at: new Date().toISOString(), ok: true, error: null }
@@ -190,6 +191,7 @@ async function updateOne(registry: Registry, name: string, trust?: boolean): Pro
         report.pruned.length > 0 ||
         report.dropped.length > 0 ||
         report.refused.length > 0 ||
+        report.collisions.length > 0 ||
         report.plugins.length > 0 ||
         links.outcomes.some((o) => o.state === "created")
     }
@@ -214,6 +216,7 @@ interface ReconcileViews {
   known: Set<string>
   changes: Map<string, FileChange[]>
   paths: Set<string> | null
+  collisions: CollisionTransition[]
 }
 
 // discover, reconcile against the registry (spec 08 step 4); the record
@@ -243,7 +246,7 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport):
   // name — and before registration, so a new plugin is not yet known
   const versions = new Map(Object.entries(entry.plugins).map(([pluginName, plugin]) => [pluginName, plugin.version]))
   const known = new Set(Object.keys(entry.plugins))
-  registerPlugins(registry, name, registrable)
+  const { collisions } = registerPlugins(registry, name, registrable)
   // registration replaces the plugins map wholesale, so the records a
   // refused rename kept go back after it
   Object.assign(entry.plugins, kept)
@@ -255,5 +258,6 @@ function reconcile(registry: Registry, name: string, report: MarketplaceReport):
   report.pruned = pruned
   report.dropped = dropped
   report.refused = refused.map(({ from, to, incumbent }) => ({ from, to, incumbent, held: true, components: [] }))
-  return { plugins, versions, known, changes: fileViews.changes, paths: fileViews.paths }
+  // brief 33 §3: the freed-name remedy is only true while the plugin stays disabled, so the report needs the post-rebuild enabled state
+  return { plugins, versions, known, changes: fileViews.changes, paths: fileViews.paths, collisions: collisions.map((collision) => ({ ...collision, enabled: entry.plugins[collision.plugin]?.enabled === true })) }
 }

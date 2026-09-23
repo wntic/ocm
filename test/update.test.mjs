@@ -1966,6 +1966,154 @@ phase("6. a recorded refusal clears when the incumbent marketplace is removed: t
 }, 420_000)
 }
 
+// brief 33 §3 (F92): the incumbent-side update reports collision transitions
+// — registerPlugins returns each pre-existing record's collision before and
+// after the rebuild, and the update report renders one line per transition,
+// on the otherwise-quiet path too. The loader's own callers ignore the
+// return and print nothing (unchanged)
+{
+phase("1. an incumbent-side update reports the recorded takeover and, once the record is stale, the freed name — while the plugin stays disabled", async (home) => {
+  // invariants: config safety and ownership — the user's keys and command
+  // predate every update below
+  writeTree(cfg(home), {
+    "opencode.json": json({ mcp: { "user-server": { type: "local", command: ["echo"] } } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  // the freed-name remedy ("to enable it") is only true while the plugin
+  // stays disabled, so big is explicit and review-tools is never installed
+  // from it — registerPlugins re-enables a cleared record in auto mode or
+  // once installed
+  const big = join(home, "big")
+  const collide = join(home, "collide")
+  writeTree(big, { plugins: { "review-tools": { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND } } } })
+  writeTree(collide, { plugins: { filler: { "plugin.json": PLUGIN_JSON, commands: { "fill.md": COMMAND } } } })
+  const addedBig = ocm(home, "add", big, "--explicit")
+  if (addedBig.status !== 0) throw new Error(`ocm add big --explicit exited ${addedBig.status}: ${addedBig.stderr}`)
+  const addedCollide = ocm(home, "add", collide)
+  if (addedCollide.status !== 0) throw new Error(`ocm add collide exited ${addedCollide.status}: ${addedCollide.stderr}`)
+  writeTree(collide, { plugins: { "review-tools": { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND } } } })
+  const updated = ocm(home, "update", "collide")
+  if (updated.status !== 0) throw new Error(`ocm update collide exited ${updated.status}: ${updated.stderr}`)
+  const seeded = readRegistry(home).marketplaces.collide.plugins["review-tools"]
+  if (seeded?.collision !== "big") {
+    throw new Error(`expected the fixture to seed collision "big" on review-tools@collide in ${registryFile(home)}, got ${JSON.stringify(seeded)}`)
+  }
+  const taken = ocm(home, "install", "review-tools@collide", "--force")
+  if (taken.status !== 0) throw new Error(`ocm install review-tools@collide --force exited ${taken.status}: ${taken.stderr}`)
+
+  // the recorded direction: big's rebuild meets the takeover
+  const recorded = ocm(home, "update", "big")
+  if (recorded.status !== 0) throw new Error(`ocm update big exited ${recorded.status}: ${recorded.stderr}`)
+  const recordedOutput = `${recorded.stdout}\n${recorded.stderr}`
+  expect(recordedOutput).toContain('review-tools: name taken over by marketplace "collide" — kept disabled; ocm install review-tools@big --force to take it back')
+  const incumbent = readRegistry(home).marketplaces.big.plugins["review-tools"]
+  if (!incumbent) throw new Error(`expected review-tools@big in ${registryFile(home)} after the update`)
+  expect(incumbent.collision).toBe("collide")
+  expect(incumbent.enabled).toBe(false)
+
+  // the cleared direction: the collider's entry removed by hand seeds the
+  // stale window; the rebuild clears the record and the report says so
+  editRegistry(home, (registry) => { delete registry.marketplaces.collide })
+  const freed = ocm(home, "update", "big")
+  if (freed.status !== 0) throw new Error(`ocm update big exited ${freed.status}: ${freed.stderr}`)
+  const freedOutput = `${freed.stdout}\n${freed.stderr}`
+  expect(freedOutput).toContain("review-tools: the name is free again — ocm install review-tools@big to enable it")
+  if (freedOutput.includes("name taken over")) {
+    throw new Error(`the cleared direction must not re-print the takeover line:\n${freedOutput}`)
+  }
+  const cleared = readRegistry(home).marketplaces.big.plugins["review-tools"]
+  if (!cleared) throw new Error(`expected review-tools@big to survive the cleared rebuild in ${registryFile(home)}`)
+  expect(cleared.collision).toBeUndefined()
+  expect(cleared.enabled).toBe(false) // the freed name is not consent to enable
+
+  // invariants: config safety, ownership, no writes under another tool's dirs
+  expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] })
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 240_000)
+
+// the follow-up decision on the auto-mode wrinkle: registerPlugins re-enables
+// a cleared record in auto mode (or once installed), so for that rebuild the
+// install remedy names a step the run just performed — brief 33 §2's rule
+// ("no finding may name a remedy that the run printing it would not
+// perform") gives the freed-name event a truthful tail instead
+phase("2. an incumbent-side update whose rebuild re-enables the plugin reports the freed name as re-enabled, not with the install remedy", async (home) => {
+  // invariants: config safety and ownership — the user's keys and command
+  // predate every update below
+  writeTree(cfg(home), {
+    "opencode.json": json({ mcp: { "user-server": { type: "local", command: ["echo"] } } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  // auto mode (no --explicit) is what re-enables the cleared record; the
+  // plugin is never installed from big, so the re-enable rests on the mode
+  const big = join(home, "big")
+  const collide = join(home, "collide")
+  writeTree(big, { plugins: { "review-tools": { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND } } } })
+  writeTree(collide, { plugins: { filler: { "plugin.json": PLUGIN_JSON, commands: { "fill.md": COMMAND } } } })
+  const addedBig = ocm(home, "add", big)
+  if (addedBig.status !== 0) throw new Error(`ocm add big exited ${addedBig.status}: ${addedBig.stderr}`)
+  const addedCollide = ocm(home, "add", collide)
+  if (addedCollide.status !== 0) throw new Error(`ocm add collide exited ${addedCollide.status}: ${addedCollide.stderr}`)
+  writeTree(collide, { plugins: { "review-tools": { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND } } } })
+  const updated = ocm(home, "update", "collide")
+  if (updated.status !== 0) throw new Error(`ocm update collide exited ${updated.status}: ${updated.stderr}`)
+  const seeded = readRegistry(home).marketplaces.collide.plugins["review-tools"]
+  if (seeded?.collision !== "big") {
+    throw new Error(`expected the fixture to seed collision "big" on review-tools@collide in ${registryFile(home)}, got ${JSON.stringify(seeded)}`)
+  }
+  const taken = ocm(home, "install", "review-tools@collide", "--force")
+  if (taken.status !== 0) throw new Error(`ocm install review-tools@collide --force exited ${taken.status}: ${taken.stderr}`)
+
+  // the recorded direction: unchanged wording, the same takeover event
+  const recorded = ocm(home, "update", "big")
+  if (recorded.status !== 0) throw new Error(`ocm update big exited ${recorded.status}: ${recorded.stderr}`)
+  expect(`${recorded.stdout}\n${recorded.stderr}`).toContain('review-tools: name taken over by marketplace "collide" — kept disabled; ocm install review-tools@big --force to take it back')
+  const incumbent = readRegistry(home).marketplaces.big.plugins["review-tools"]
+  if (!incumbent) throw new Error(`expected review-tools@big in ${registryFile(home)} after the update`)
+  expect(incumbent.collision).toBe("collide")
+  expect(incumbent.enabled).toBe(false)
+
+  // the cleared direction on an auto-mode marketplace: the rebuild
+  // re-enables the plugin, so the freed-name line must state that rather
+  // than an install the very same run just performed
+  editRegistry(home, (registry) => { delete registry.marketplaces.collide })
+  const freed = ocm(home, "update", "big")
+  if (freed.status !== 0) throw new Error(`ocm update big exited ${freed.status}: ${freed.stderr}`)
+  const freedOutput = `${freed.stdout}\n${freed.stderr}`
+  expect(freedOutput).toContain("review-tools: the name is free again — re-enabled")
+  if (freedOutput.includes("to enable it")) {
+    throw new Error(`the re-enabled transition must not name the install remedy — the rebuild just enabled the plugin:\n${freedOutput}`)
+  }
+  const cleared = readRegistry(home).marketplaces.big.plugins["review-tools"]
+  if (!cleared) throw new Error(`expected review-tools@big to survive the cleared rebuild in ${registryFile(home)}`)
+  expect(cleared.collision).toBeUndefined()
+  expect(cleared.enabled).toBe(true) // auto mode: the rebuild re-enabled it
+
+  // invariants: config safety, ownership, no writes under another tool's dirs
+  expect(mcpKeys(home)["user-server"]).toEqual({ type: "local", command: ["echo"] })
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 240_000)
+}
+
 // brief 30 §2–§3: content digests for local marketplaces — what is hashed
 // (the shipped components, keyed by plugin-relative path, one entry per
 // skill subtree, nothing else in the plugin directory) and where the

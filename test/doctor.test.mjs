@@ -1174,4 +1174,614 @@ phase("27. doctor --fix re-clone: every line between the header and the summary 
   assertResolves(join(cfg(home), "commands", "tool:work.md"), join(cloneDir(home), "plugins", "tool", "commands", "work.md"))
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
 }, 600_000)
+
+// brief 33 §1: ownership of a broken link is a property of where it points,
+// not of what the registry still records — a record removed by hand leaves
+// the links ocm laid into its own cache namespace, and doctor must own them
+const AGENT = "---\ndescription: code reviewer\n---\n\nReviewer body.\n"
+
+phase("28. a hand-removed registry record and a deleted clone: doctor owns the broken cache-namespace links, --fix removes them, and a second doctor is clean", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { "greet-kit": { "plugin.json": PLUGIN_JSON, commands: { "greet.md": COMMAND }, agents: { "helper.md": AGENT } } } })
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp"]).status).toBe(0)
+  const commandLink = join(cfg(home), "commands", "greet-kit:greet.md")
+  const agentLink = join(cfg(home), "agents", "greet-kit:helper.md")
+  assertResolves(commandLink, join(cloneDir(home), "plugins", "greet-kit", "commands", "greet.md"))
+  assertResolves(agentLink, join(cloneDir(home), "plugins", "greet-kit", "agents", "helper.md"))
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const registry = readRegistry(home)
+  delete registry.marketplaces.mp
+  writeFileSync(registryFile(home), json(registry))
+  rmSync(cloneDir(home), { recursive: true, force: true })
+
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with two broken ocm links:\n${diagnosed.output}`)
+  for (const name of ["greet-kit:greet.md", "greet-kit:helper.md"]) {
+    const line = diagnosed.output.split("\n").find((l) => l.includes(name) && l.includes("broken symlink"))
+    if (!line) throw new Error(`expected a broken-symlink finding naming ${name}:\n${diagnosed.output}`)
+    if (line.includes("not ocm's")) throw new Error(`doctor disowns its own cache-namespace link ${name}:\n${line}`)
+    if (!line.includes("ocm doctor --fix removes it")) throw new Error(`the broken-link finding for ${name} lacks the remedy wording:\n${line}`)
+  }
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 0 after removing both links:\n${fixed.output}`)
+  assertAbsent(commandLink)
+  assertAbsent(agentLink)
+  const clean = ocm(home, ["doctor"], 300_000)
+  if (clean.status !== 0) throw new Error(`a second ocm doctor exited ${clean.status}, expected 0:\n${clean.output}`)
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief 33 §1, predicate clause (a): the pre-0.7 shared layout is ocm's
+// namespace even when no registry record names the marketplace. The
+// reportUnreferencedOldCache stderr warning legitimately fires here — it is
+// not a finding and does not affect the exit code
+phase("29. a broken command link into the pre-0.7 shared cache layout is ocm's with no registry record: no disclaimer, --fix removes the link and leaves the old tree untouched", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const oldCommands = join(home, ".cache", "ocm", "marketplaces", "ghost", "plugins", "greet-kit", "commands")
+  writeTree(oldCommands, { "keep.md": COMMAND })
+  const link = join(cfg(home), "commands", "greet-kit:commit.md")
+  symlinkSync(join(oldCommands, "commit.md"), link) // the target does not exist; sibling keep.md does
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a broken ocm link:\n${diagnosed.output}`)
+  const line = diagnosed.output.split("\n").find((l) => l.includes("greet-kit:commit.md") && l.includes("broken symlink"))
+  if (!line) throw new Error(`expected a broken-symlink finding naming greet-kit:commit.md:\n${diagnosed.output}`)
+  if (line.includes("not ocm's")) throw new Error(`doctor disowns a broken link into the pre-0.7 shared layout:\n${line}`)
+  if (!line.includes("ocm doctor --fix removes it")) throw new Error(`the broken-link finding for greet-kit:commit.md lacks the remedy wording:\n${line}`)
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 0 after removing the link:\n${fixed.output}`)
+  assertAbsent(link)
+  expect(readFileSync(join(oldCommands, "keep.md"), "utf8")).toBe(COMMAND) // the old-layout tree is not ocm's to clean
+  assertFileExists(oldCommands)
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief 33 §1, F168 guard: another root's cache namespace is never this
+// root's — a predicate that matched any ~/.cache/ocm path would let root A's
+// --fix uninstall root B's components. Passes against current code; its job
+// is to turn red on that exact mistake
+phase("30. F168: a broken link into another root's cache namespace keeps (not ocm's, left in place) — --fix leaves it, and root B's registry, clone and own links are byte-identical", async (home) => {
+  const xdg = join(home, "xdg")
+  const env = { XDG_CONFIG_HOME: xdg }
+  expect(ocm(home, ["init"]).status).toBe(0)
+  writeTree(join(home, "mp-a"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocm(home, ["add", join(home, "mp-a")]).status).toBe(0) // root A holds a registry, so root B is no stranding noise
+  const remoteB = join(home, "remote-b")
+  gitRepo(remoteB, { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } } } })
+  expect(ocm(home, ["init"], 120_000, { env }).status).toBe(0)
+  expect(ocm(home, ["add", `file://${remoteB}`, "--name", "mp-b"], 120_000, { env }).status).toBe(0)
+  const bRegistry = join(xdg, "opencode", "ocm", "registry.json")
+  const bCloneFile = join(rootCacheDir(home, xdg), "marketplaces", "mp-b", "plugins", "beta", "commands", "lint.md")
+  const bRegistryBytes = readFileSync(bRegistry, "utf8")
+  const bCloneBytes = readFileSync(bCloneFile, "utf8")
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const broken = join(cfg(home), "commands", "beta:gone.md")
+  symlinkSync(join(rootCacheDir(home, xdg), "marketplaces", "mp-b", "plugins", "beta", "commands", "gone.md"), broken) // the target does not exist
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000) // root A: no XDG variable
+  if (fixed.status !== 1) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 1 with a foreign broken link:\n${fixed.output}`)
+  const line = fixed.output.split("\n").find((l) => l.includes("beta:gone.md") && l.includes("broken symlink"))
+  if (!line) throw new Error(`expected a broken-symlink finding naming beta:gone.md:\n${fixed.output}`)
+  if (!line.includes("(not ocm's, left in place)")) throw new Error(`a link into another root's cache namespace must keep the (not ocm's, left in place) label:\n${line}`)
+  if (!lstatSync(broken).isSymbolicLink()) throw new Error(`the broken link at ${broken} must survive --fix untouched`)
+  expect(readFileSync(bRegistry, "utf8")).toBe(bRegistryBytes) // root B's registry
+  expect(readFileSync(bCloneFile, "utf8")).toBe(bCloneBytes) // root B's clone
+  assertResolves(join(xdg, "opencode", "commands", "beta:lint.md"), bCloneFile) // root B still works
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief 33 §1, regression guard: a <plugin>:<file> name is an ocm layout,
+// but the name alone is never ownership proof — the target must resolve
+// inside a registered marketplace. Passes against current code
+phase("31. a broken <plugin>:<file> link into an unregistered local directory keeps (not ocm's, left in place): --fix persists the error and touches nothing", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  writeTree(join(home, "mp-a"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocm(home, ["add", join(home, "mp-a")]).status).toBe(0) // a registered root exists; the target is outside it
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const unregistered = join(home, "unregistered-mp", "plugins", "greet-kit", "commands")
+  writeTree(unregistered, { "keep.md": COMMAND })
+  const link = join(cfg(home), "commands", "greet-kit:greet.md")
+  symlinkSync(join(unregistered, "greet.md"), link) // the target does not exist
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a foreign broken link:\n${diagnosed.output}`)
+  const line = diagnosed.output.split("\n").find((l) => l.includes("greet-kit:greet.md") && l.includes("broken symlink"))
+  if (!line) throw new Error(`expected a broken-symlink finding naming greet-kit:greet.md:\n${diagnosed.output}`)
+  if (!line.includes("(not ocm's, left in place)")) throw new Error(`a link into an unregistered directory must keep the (not ocm's, left in place) label:\n${line}`)
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 1) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 1 — the foreign link's error must persist:\n${fixed.output}`)
+  if (!lstatSync(link).isSymbolicLink()) throw new Error(`the broken link at ${link} must survive --fix untouched`)
+  expect(readFileSync(join(unregistered, "keep.md"), "utf8")).toBe(COMMAND) // the user's directory is untouched
+  assertFileExists(unregistered)
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief 33 §1 changes 2 and 5: the orphan sweep widened to commands/ and
+// agents/, live links included. Only symlinks enter it; the broken-link check
+// owns broken ones, so one path yields one finding; a link into a registered
+// marketplace's root is never an orphan (the registered-root veto)
+
+// brief test 1: the F30 state with the clone still present — live links no
+// verb can remove. Each is reported exactly once; --fix removes the links,
+// never the clone, and a user's regular file named like an ocm link is
+// untouched and unreported
+phase("32. a hand-removed registry record with the clone present: doctor reports each live command and agent link as an orphan exactly once, and --fix removes the links but not the clone", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { "greet-kit": { "plugin.json": PLUGIN_JSON, commands: { "greet.md": COMMAND }, agents: { "helper.md": AGENT } } } })
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp"]).status).toBe(0)
+  const commandLink = join(cfg(home), "commands", "greet-kit:greet.md")
+  const agentLink = join(cfg(home), "agents", "greet-kit:helper.md")
+  assertResolves(commandLink, join(cloneDir(home), "plugins", "greet-kit", "commands", "greet.md"))
+  assertResolves(agentLink, join(cloneDir(home), "plugins", "greet-kit", "agents", "helper.md"))
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n", "user:note.md": "# user note\n" })
+  writeTree(join(cfg(home), "agents"), { "mine.md": "# my own agent\n" })
+  const registry = readRegistry(home)
+  delete registry.marketplaces.mp
+  writeFileSync(registryFile(home), json(registry))
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with two orphaned live links:\n${diagnosed.output}`)
+  for (const name of ["greet-kit:greet.md", "greet-kit:helper.md"]) {
+    const lines = diagnosed.output.split("\n").filter((l) => l.includes(name))
+    if (lines.length !== 1) throw new Error(`expected exactly one finding line for ${name}, found ${lines.length}:\n${diagnosed.output}`)
+    if (!lines[0].includes("no marketplace owns this link") || !lines[0].includes("ocm doctor --fix removes it")) {
+      throw new Error(`the orphan finding for ${name} lacks the orphan wording:\n${lines[0]}`)
+    }
+  }
+  if (diagnosed.output.includes("user:note.md")) throw new Error(`a user's regular file named like an ocm link must go unreported:\n${diagnosed.output}`)
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 0 after removing both links:\n${fixed.output}`)
+  assertAbsent(commandLink)
+  assertAbsent(agentLink)
+  assertFileExists(join(cloneDir(home), "plugins", "greet-kit", "commands", "greet.md")) // doctor removes links, not clones
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  expect(readFileSync(join(cfg(home), "commands", "user:note.md"), "utf8")).toBe("# user note\n") // ownership
+  expect(readFileSync(join(cfg(home), "agents", "mine.md"), "utf8")).toBe("# my own agent\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief test 3: a live link into an unregistered local marketplace directory
+// — the target is the user's own directory, so the finding states the true
+// cause and --fix removes nothing
+phase("33. a live link into an unregistered local marketplace directory: reported with the true cause, and --fix persists the error while touching nothing", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  writeTree(join(home, "mp-a"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocm(home, ["add", join(home, "mp-a")]).status).toBe(0) // a registered root exists; the target is outside it
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const target = join(home, "unregistered-mp", "plugins", "greet-kit", "commands", "greet.md")
+  writeTree(dirname(target), { "greet.md": COMMAND })
+  const link = join(cfg(home), "commands", "greet-kit:greet.md")
+  symlinkSync(target, link) // the target exists — a live link
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a foreign live link:\n${diagnosed.output}`)
+  const line = diagnosed.output.split("\n").find((l) => l.includes("greet-kit:greet.md"))
+  if (!line) throw new Error(`expected a finding naming greet-kit:greet.md:\n${diagnosed.output}`)
+  if (!line.includes("no marketplace owns it and the target is not ocm's")) {
+    throw new Error(`a live link into an unregistered directory must carry the true-cause wording:\n${line}`)
+  }
+  if (!line.includes("remove it by hand, or re-add the marketplace")) {
+    throw new Error(`the true-cause finding must name the hand-removal remedy:\n${line}`)
+  }
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 1) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 1 — the foreign link's error must persist:\n${fixed.output}`)
+  if (!lstatSync(link).isSymbolicLink()) throw new Error(`the live link at ${link} must survive --fix untouched`)
+  expect(readFileSync(target, "utf8")).toBe(COMMAND) // the user's directory is untouched
+  assertFileExists(join(home, "unregistered-mp"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// the loader's startup sync, run the way ocm-loader.js runs it — phase 2's
+// loaderSync, re-defined here because the absorbed block's copy is not in
+// scope in this block
+function loaderSync(home) {
+  const runner = join(home, "sync-runner.mjs")
+  writeFileSync(runner, "const mod = await import(process.argv[2]); await mod.syncAll({ force: true })\n")
+  const r = spawnSync(process.execPath, [runner, CORE_MODULE], { env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 120_000 })
+  if (r.status !== 0) throw new Error(`the loader sync exited ${r.status}: ${r.stderr}`)
+}
+
+// brief test 4 (spec 20 §2 guard): the F8 chain with command and agent links
+// present — a regression guard pinning the invariant through the sweep
+// widening; passes against current code, like phase 2 does for plugins
+phase("34. the F8 chain with command and agent links present: after sync + trust, doctor --fix removes nothing and the registry and config bytes are unchanged", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { "exec-kit": {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "work.md": COMMAND },
+    agents: { "helper.md": AGENT },
+    plugin: { "notify.js": JS_PLUGIN },
+  } } })
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp", "--trust"]).status).toBe(0)
+  writeFileSync(join(remote, "plugins", "exec-kit", "plugin", "other.js"), JS_PLUGIN_OTHER)
+  commitAll(remote, "ship a new executable component")
+  loaderSync(home)
+  assertAbsent(pluginLink(home, "exec-kit", "other.js")) // never materialized unattended
+  expect(readRegistry(home).marketplaces.mp.trustPending).toBe(true)
+  expect(ocm(home, ["trust", "mp", "--yes"]).status).toBe(0)
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const configExisted = existsSync(configFile(home))
+  const configBytes = configExisted ? readFileSync(configFile(home), "utf8") : null
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 0 after sync + trust:\n${fixed.output}`)
+  assertResolves(join(cfg(home), "commands", "exec-kit:work.md"), join(cloneDir(home), "plugins", "exec-kit", "commands", "work.md"))
+  assertResolves(join(cfg(home), "agents", "exec-kit:helper.md"), join(cloneDir(home), "plugins", "exec-kit", "agents", "helper.md"))
+  assertResolves(pluginLink(home, "exec-kit", "other.js"), join(cloneDir(home), "plugins", "exec-kit", "plugin", "other.js")) // the link the user just approved
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes) // idempotence
+  if (configExisted) expect(readFileSync(configFile(home), "utf8")).toBe(configBytes)
+  else assertAbsent(configFile(home))
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief test 5 (change 5, the registered-root veto): a command link resolving
+// inside a registered marketplace's clone is never an orphan, whatever the
+// per-plugin records say — the disagreement is reported, nothing is removed
+phase("35. a command link into a registered marketplace's root with no matching plugin record: reported as stale records, never as an orphan, and --fix removes nothing", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp"]).status).toBe(0)
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const target = join(cloneDir(home), "plugins", "adw", "commands", "commit.md")
+  const link = join(cfg(home), "commands", "other-kit:thing.md") // "other-kit" matches no plugin record
+  symlinkSync(target, link) // live, inside the registered marketplace's clone
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a stale-records finding:\n${diagnosed.output}`)
+  const lines = diagnosed.output.split("\n").filter((l) => l.includes("other-kit:thing.md"))
+  if (!lines.some((l) => l.includes("registry records are stale — run ocm update"))) {
+    throw new Error(`expected a stale-records finding naming other-kit:thing.md:\n${diagnosed.output}`)
+  }
+  for (const line of lines) {
+    if (line.includes("no marketplace owns")) throw new Error(`a link into a registered root must never be reported as an orphan:\n${line}`)
+  }
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 1) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 1 — the stale-records error must persist:\n${fixed.output}`)
+  if (!lstatSync(link).isSymbolicLink()) throw new Error(`the link at ${link} must survive --fix untouched`)
+  expect(readFileSync(target, "utf8")).toBe(COMMAND) // the clone is untouched
+  assertResolves(join(cfg(home), "commands", "adw:commit.md"), target) // the registered link still works
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief test 11 (F168 guard, live half): a live link into another root's
+// cache namespace fails the predicate — reported with the true cause, never
+// removed, and root B's registry, clone and own links are byte-identical
+phase("36. F168 with a live link: a command link into another root's cache namespace is reported with the true cause and survives --fix; root B is byte-identical", async (home) => {
+  const xdg = join(home, "xdg")
+  const env = { XDG_CONFIG_HOME: xdg }
+  expect(ocm(home, ["init"]).status).toBe(0)
+  writeTree(join(home, "mp-a"), { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocm(home, ["add", join(home, "mp-a")]).status).toBe(0) // root A holds a registry, so root B is no stranding noise
+  const remoteB = join(home, "remote-b")
+  gitRepo(remoteB, { plugins: { beta: { "plugin.json": PLUGIN_JSON, commands: { "lint.md": COMMAND } } } })
+  expect(ocm(home, ["init"], 120_000, { env }).status).toBe(0)
+  expect(ocm(home, ["add", `file://${remoteB}`, "--name", "mp-b"], 120_000, { env }).status).toBe(0)
+  const bRegistry = join(xdg, "opencode", "ocm", "registry.json")
+  const bCloneFile = join(rootCacheDir(home, xdg), "marketplaces", "mp-b", "plugins", "beta", "commands", "lint.md")
+  const bRegistryBytes = readFileSync(bRegistry, "utf8")
+  const bCloneBytes = readFileSync(bCloneFile, "utf8")
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const link = join(cfg(home), "commands", "beta:lint.md")
+  symlinkSync(bCloneFile, link) // the target exists — a live link into root B's namespace
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000) // root A: no XDG variable
+  if (fixed.status !== 1) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 1 with a foreign live link:\n${fixed.output}`)
+  const line = fixed.output.split("\n").find((l) => l.includes("beta:lint.md"))
+  if (!line) throw new Error(`expected a finding naming beta:lint.md:\n${fixed.output}`)
+  if (!line.includes("no marketplace owns it and the target is not ocm's")) {
+    throw new Error(`a live link into another root's namespace must carry the true-cause wording:\n${line}`)
+  }
+  if (!lstatSync(link).isSymbolicLink()) throw new Error(`the live link at ${link} must survive --fix untouched`)
+  expect(readFileSync(bRegistry, "utf8")).toBe(bRegistryBytes) // root B's registry
+  expect(readFileSync(bCloneFile, "utf8")).toBe(bCloneBytes) // root B's clone
+  assertResolves(join(xdg, "opencode", "commands", "beta:lint.md"), bCloneFile) // root B still works
+  assertResolves(join(cfg(home), "commands", "adw:commit.md"), join(home, "mp-a", "plugins", "adw", "commands", "commit.md")) // root A still works
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief test 12 (orphan half): a live link into the pre-0.7 shared layout for
+// a marketplace no record names — ocm's by clause (a), an orphan; --fix
+// removes the link, never anything under the old layout. The
+// reportUnreferencedOldCache stderr warning legitimately fires here — it is
+// not a finding and does not affect the exit code (phase 29's precedent)
+phase("37. a live command link into the pre-0.7 shared layout with no record: an orphan, and --fix removes the link while touching nothing under the old layout", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const oldCommands = join(home, ".cache", "ocm", "marketplaces", "ghost", "plugins", "greet-kit", "commands")
+  writeTree(oldCommands, { "commit.md": COMMAND, "keep.md": COMMAND })
+  const link = join(cfg(home), "commands", "greet-kit:commit.md")
+  symlinkSync(join(oldCommands, "commit.md"), link) // the target exists — a live link
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with an orphaned live link:\n${diagnosed.output}`)
+  const line = diagnosed.output.split("\n").find((l) => l.includes("greet-kit:commit.md"))
+  if (!line) throw new Error(`expected a finding naming greet-kit:commit.md:\n${diagnosed.output}`)
+  if (!line.includes("no marketplace owns this link") || !line.includes("ocm doctor --fix removes it")) {
+    throw new Error(`the orphan finding for greet-kit:commit.md lacks the orphan wording:\n${line}`)
+  }
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 0 after removing the link:\n${fixed.output}`)
+  assertAbsent(link)
+  expect(readFileSync(join(oldCommands, "commit.md"), "utf8")).toBe(COMMAND) // the old-layout tree is not ocm's to clean
+  expect(readFileSync(join(oldCommands, "keep.md"), "utf8")).toBe(COMMAND)
+  assertFileExists(oldCommands)
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
+
+// brief 33 §2 (F85): no finding may name a remedy the run printing it would
+// not perform. With the registry unreadable the orphan sweeps must not offer
+// a removal — each orphan candidate becomes a cannot-verify finding under the
+// corruption headline, --fix removes nothing, and the report is identical
+// with and without the flag
+phase("38. with an unreadable registry: the orphan findings name the registry repair instead of a removal, --fix removes nothing, and the plain run prints identical output", async (home) => {
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  writeTree(join(cfg(home), "plugins"), { "my-own.js": USER_PLUGIN })
+  expect(ocm(home, ["init"]).status).toBe(0)
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { "demo-kit": {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "notify.md": COMMAND },
+    agents: { "helper.md": AGENT },
+    skills: { style: { "SKILL.md": SKILL("style") } },
+    plugin: { "notify.js": JS_PLUGIN },
+  } } })
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp", "--trust"]).status).toBe(0)
+  // ghost orphans, every link live, each target inside this root's cache
+  // namespace so it is provably ocm's
+  const ghostPluginTarget = join(rootCacheDir(home), "marketplaces", "ghost", "plugins", "demo-kit", "commands", "tdd.md")
+  const ghostCommandTarget = join(rootCacheDir(home), "marketplaces", "ghost", "plugins", "greet-kit", "commands", "greet.md")
+  writeTree(dirname(ghostPluginTarget), { "tdd.md": COMMAND })
+  writeTree(dirname(ghostCommandTarget), { "greet.md": COMMAND })
+  const ghostPluginLink = join(cfg(home), "plugins", "ocm--demo-kit--tdd.md")
+  const ghostCommandLink = join(cfg(home), "commands", "greet-kit:greet.md")
+  symlinkSync(ghostPluginTarget, ghostPluginLink)
+  symlinkSync(ghostCommandTarget, ghostCommandLink)
+  const ghostMirror = seedGhostMirror(join(rootCacheDir(home), "links"))
+  const ownLinks = [join(cfg(home), "commands", "demo-kit:notify.md"), join(cfg(home), "agents", "demo-kit:helper.md"), pluginLink(home, "demo-kit", "notify.js")]
+
+  // state 1: a healthy registry keeps the wording — a later --fix would
+  // honour the promise
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with three ghost orphans:\n${diagnosed.output}`)
+  for (const path of [ghostPluginLink, ghostCommandLink, ghostMirror]) {
+    const line = diagnosed.output.split("\n").find((l) => l.includes(path))
+    if (!line) throw new Error(`expected an orphan finding naming ${path}:\n${diagnosed.output}`)
+    if (!line.includes("— ocm doctor --fix removes it")) throw new Error(`the orphan finding for ${path} lacks the removal wording:\n${line}`)
+  }
+
+  // state 3: the registry unreadable — the removal is not offered
+  writeFileSync(registryFile(home), "{\n")
+  const fixRun = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixRun.status !== 1) throw new Error(`ocm doctor --fix exited ${fixRun.status}, expected 1 with an unreadable registry:\n${fixRun.output}`)
+  const lines = fixRun.output.split("\n")
+  const corruption = lines.findIndex((l) => l.includes(registryFile(home)) && l.includes("not valid JSON — restore it from a backup"))
+  if (corruption === -1) throw new Error(`expected the corruption finding naming ${registryFile(home)}:\n${fixRun.output}`)
+  for (const line of lines) {
+    if (line.includes("ocm doctor --fix removes it")) throw new Error(`a run that removes nothing must not promise a removal:\n${line}`)
+    if (line.includes("orphaned by a loader uninstall?")) throw new Error(`the loader-uninstall cause guess must not appear while the registry is unreadable:\n${line}`)
+  }
+  for (const path of [ghostPluginLink, ghostCommandLink, ghostMirror, ...ownLinks]) {
+    const line = lines.find((l) => l.includes(path) && l.includes("cannot verify ownership") && l.includes("the registry is unreadable"))
+    if (!line) throw new Error(`expected a cannot-verify finding naming ${path}:\n${fixRun.output}`)
+  }
+  if (!lines.some((l) => l.includes(registryFile(home)) && l.includes("then run ocm doctor --fix"))) {
+    throw new Error(`expected a recovery line naming ${registryFile(home)}:\n${fixRun.output}`)
+  }
+  const firstCannotVerify = lines.findIndex((l) => l.includes("cannot verify ownership"))
+  if (corruption > firstCannotVerify) throw new Error(`the corruption finding must be rendered before the cannot-verify lines:\n${fixRun.output}`)
+  // --fix removed nothing and repaired nothing
+  for (const link of [ghostPluginLink, ghostCommandLink, ...ownLinks]) {
+    if (!lstatSync(link).isSymbolicLink()) throw new Error(`--fix removed the link at ${link} while the registry was unreadable`)
+  }
+  assertFileExists(join(ghostMirror, "SKILL.md"))
+  assertFileExists(join(rootCacheDir(home), "links", "mp", "skills", "demo-kit--style", "SKILL.md"))
+  expect(JSON.parse(readFileSync(configFile(home), "utf8")).skills.paths).toContain(join(rootCacheDir(home), "links", "mp", "skills"))
+  expect(readFileSync(registryFile(home), "utf8")).toBe("{\n")
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  expect(readFileSync(join(cfg(home), "plugins", "my-own.js"), "utf8")).toBe(USER_PLUGIN)
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+  // state 3 without --fix: the same report, byte for byte
+  const plain = ocm(home, ["doctor"], 300_000)
+  if (plain.status !== 1) throw new Error(`ocm doctor exited ${plain.status}, expected 1 with an unreadable registry:\n${plain.output}`)
+  expect(plain.output).toBe(fixRun.output)
+}, 600_000)
+
+// brief 33 §3 (F70, read side): a home that already holds a stale record —
+// checkCollisions must not present a removed marketplace as the owner. The
+// window is seeded by hand (delete the incumbent's entry and its link, the
+// end state a pre-brief-33 `ocm remove` left behind) because the source-side
+// fix, pinned in install.test.mjs, clears the field at removal once it lands
+phase("39. a stale collision record naming a removed marketplace: the stale finding prints, --fix clears the field and keeps the plugin disabled, and a second run is clean", async (home) => {
+  const big = join(home, "big")
+  const collide = join(home, "collide")
+  writeTree(big, { plugins: { "review-tools": { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND } } } })
+  writeTree(collide, { plugins: { filler: { "plugin.json": PLUGIN_JSON, commands: { "fill.md": COMMAND } } } })
+  if (ocm(home, ["add", big]).status !== 0) throw new Error(`ocm add ${big} exited non-zero`)
+  if (ocm(home, ["add", collide]).status !== 0) throw new Error(`ocm add ${collide} exited non-zero`)
+  writeTree(collide, { plugins: { "review-tools": { "plugin.json": PLUGIN_JSON, commands: { "review.md": COMMAND } } } })
+  if (ocm(home, ["update", "collide"]).status !== 0) throw new Error("ocm update collide exited non-zero")
+  const seeded = readRegistry(home).marketplaces.collide.plugins["review-tools"]
+  if (seeded?.collision !== "big") {
+    throw new Error(`expected the fixture to seed collision "big" on review-tools@collide in ${registryFile(home)}, got ${JSON.stringify(seeded)}`)
+  }
+  rmSync(join(cfg(home), "commands", "review-tools:review.md")) // big's link, as a removal takes down
+  const stale = readRegistry(home)
+  delete stale.marketplaces.big
+  writeFileSync(registryFile(home), `${JSON.stringify(stale, null, 2)}\n`)
+
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a stale collision record:\n${diagnosed.output}`)
+  for (const needle of [
+    'plugin "review-tools" from marketplace "collide" is disabled by a stale collision record naming "big", which is no longer added',
+    "ocm doctor --fix clears the record; ocm install review-tools@collide enables the plugin",
+  ]) {
+    expect(diagnosed.output).toContain(needle)
+  }
+  if (diagnosed.output.includes("is disabled — the name is owned by marketplace")) {
+    throw new Error(`the stale record must not print the live-collision wording — it names a marketplace that is gone:\n${diagnosed.output}`)
+  }
+
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (fixed.status !== 0) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 0 after clearing the record:\n${fixed.output}`)
+  if (!fixedLines(fixed.output).some((l) => l.includes("review-tools") && l.includes("collide"))) {
+    throw new Error(`expected a fixed finding naming review-tools@collide:\n${fixed.output}`)
+  }
+  const cleared = readRegistry(home).marketplaces.collide.plugins["review-tools"]
+  if (!cleared) throw new Error(`expected review-tools@collide to survive --fix in ${registryFile(home)}`)
+  expect(cleared.collision).toBeUndefined() // the field, and nothing else
+  expect(cleared.enabled).toBe(false) // the enable stays the user's call
+
+  const again = ocm(home, ["doctor"], 300_000)
+  if (again.status !== 0) throw new Error(`a second ocm doctor exited ${again.status}, expected 0 on the repaired home:\n${again.output}`)
+  if (again.output.includes("stale collision record")) {
+    throw new Error(`a second doctor run must be clean of the stale finding:\n${again.output}`)
+  }
+
+  // invariants: config parses, ownership, no writes under another tool's dirs
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
 }
