@@ -1,6 +1,6 @@
 import { OCM_REGISTRY_FILE } from "./paths"
 import { approvedComponents, componentKey, componentRoot, enabledPlugins, executableComponents, readRegistry } from "../loader/core.js"
-import type { CoreMaterializeReport, CoreOutcome, CorePluginComponents } from "../loader/core.js"
+import type { CoreMaterializeReport, CoreOutcome, CorePluginComponents, CoreState } from "../loader/core.js"
 
 const BLOCKED_PREFIX = "blocked (untrusted): "
 
@@ -14,14 +14,15 @@ export function componentSummary(components: CorePluginComponents): string {
 
 // brief 45 §1: the components a run materialized, derived from its outcomes
 // the same way deriveComponents derives the registry record
-// (loader/marketplace.js)
-export function outcomeComponents(outcomes: CoreOutcome[]): CorePluginComponents {
+// (loader/marketplace.js). Brief 47 §2: the teardown passes ["removed"] to
+// count what it took down
+export function outcomeComponents(outcomes: CoreOutcome[], states: CoreState[] = ["created", "current", "refreshed"]): CorePluginComponents {
   const components: CorePluginComponents = {}
   for (const type of ["command", "agent", "skill", "plugin", "mcp"] as const) {
     const names = [
       ...new Set(
         outcomes
-          .filter((o) => o.type === type && (o.state === "created" || o.state === "current" || o.state === "refreshed"))
+          .filter((o) => o.type === type && states.includes(o.state))
           .map((o) => o.component),
       ),
     ].sort()

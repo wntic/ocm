@@ -26,7 +26,7 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.6.1 | brief 38 §0 — the TUI freeze at zero columns, and a stale loader after upgrade | published 2026-09-20 |
 | v0.7.0 | briefs 30, 31, 38, 39, 40, 41 — outcome-derived reports, per-root cache, renames in the loader, local changed-set, plugin-root substitution, small correctness | published 2026-09-22 |
 | v0.7.1 | briefs 42, 43 — a read-only command writes nothing; the cache migration is resumable and moves only what it owns | published 2026-09-23 |
-| v0.8.0 | briefs 32, 33, 44, 45, 46 — error classification, doctor ownership, the materializer split, outcome-derived headlines | in progress |
+| v0.8.0 | briefs 32, 33, 44, 45, 46, 47 — error classification, doctor ownership, the materializer split, outcome-derived headlines, round 6's two mediums | tagged 2026-09-24 |
 | v0.9.0 | brief 36 — display & TUI, and a voice for the loader's startup sync | planned |
 | v1.0.0 | no new scope — the first release to meet the bar below after v0.9.0 | planned |
 
@@ -62,7 +62,10 @@ code. So the finish line is set by scope, not by a clean round:
 - **Round 6, before v0.8.0, is the last broad e2e round.** After it, a
   round covers only the surface its release changed.
 - **The release bar:** a release ships when its round finds no high and no
-  medium. Low findings go to a backlog and do not generate briefs.
+  medium. Low findings go to a backlog and do not generate briefs. A
+  medium that a release's own round finds is fixed **in that release**, as
+  a follow-up to the brief whose surface it is — that is finishing the
+  frozen scope, not adding to it (brief 47, for round 6).
 - **v1.0.0** is the first release after v0.9.0 that meets the bar. It adds
   nothing.
 

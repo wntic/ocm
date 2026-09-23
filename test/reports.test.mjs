@@ -54,6 +54,8 @@ const noticeCount = (output) => output.split("\n").filter((l) => l.trim() === "r
 
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 
+const AGENT = "---\ndescription: code reviewer\n---\n\nReviewer body.\n"
+
 const SKILL = "---\nname: style\ndescription: style guidance\n---\n\n# Style\n\nBody.\n"
 
 const PLUGIN_JSON = json({ description: "demo plugin" }) // spec 19
@@ -450,4 +452,52 @@ phase("17. add of a marketplace with a nameless skill exits 0 and counts only th
   if (!line) throw new Error(`expected an "adw (...)" per-plugin line on stdout:\n${added.output}`)
   expect(line).toBe("  adw (1 command, 1 skill)")
   expect(lstatSync(join(rootCacheDir(home), "links", "mp", "skills", "adw--good")).isDirectory()).toBe(true) // the counted skill materialized
+})
+
+// brief 47 §2 (F273): the remove report derives its per-plugin lines from
+// the teardown's outcomes, not the records — a marketplace added --explicit
+// with nothing installed must not claim deletions that never happened
+phase("18. ocm remove of a marketplace added --explicit with nothing installed says nothing was installed and prints no per-plugin count lines", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: {
+    "demo-kit": {
+      "plugin.json": PLUGIN_JSON,
+      commands: { "commit.md": COMMAND },
+      agents: { "reviewer.md": AGENT },
+      skills: { style: { "SKILL.md": SKILL } },
+      plugin: { "hook.js": JS_PLUGIN },
+      "mcp.json": json(MCP),
+    },
+    "release-kit": {
+      "plugin.json": PLUGIN_JSON,
+      commands: { "ship.md": COMMAND },
+      skills: { format: { "SKILL.md": "---\nname: format\ndescription: format guidance\n---\n\n# Format\n\nBody.\n" } },
+    },
+  } })
+  expect(ocm(home, ["add", mp, "--explicit"]).status).toBe(0)
+  const removed = ocm(home, ["remove", "mp"])
+  expect(removed.status).toBe(0)
+  expect(removed.stdout).toContain('removed marketplace "mp" — nothing was installed')
+  const countLines = removed.output.split("\n").filter((l) => /^  \S+: .* removed$/.test(l))
+  if (countLines.length) throw new Error(`expected no per-plugin count lines for never-installed plugins, got:\n${countLines.join("\n")}`)
+  expect(noticeCount(removed.output)).toBe(0) // nothing on disk changed
+})
+
+phase("19. ocm remove of a marketplace with one plugin installed prints one singular per-plugin line for that plugin only", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: {
+    adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } },
+    beta: { "plugin.json": PLUGIN_JSON, commands: { "ship.md": COMMAND } },
+  } })
+  expect(ocm(home, ["add", mp, "--explicit"]).status).toBe(0)
+  expect(ocm(home, ["install", "adw"]).status).toBe(0)
+  assertFileExists(commandLink(home, "adw", "commit.md")) // the fixture really installed something
+  const removed = ocm(home, ["remove", "mp"])
+  expect(removed.status).toBe(0)
+  assertAbsent(commandLink(home, "adw", "commit.md")) // the teardown happened; only the report is in question
+  const countLines = removed.output.split("\n").filter((l) => /^  \S+: .* removed$/.test(l))
+  if (countLines.length !== 1) throw new Error(`expected exactly one per-plugin count line, got ${countLines.length}:\n${removed.output}`)
+  expect(countLines[0]).toBe("  adw: 1 command removed")
+  if (removed.output.includes("beta")) throw new Error(`expected no line for the never-installed plugin "beta":\n${removed.output}`)
+  if (noticeCount(removed.output) !== 1) throw new Error(`expected exactly one restart notice on ocm remove:\n${removed.output}`)
 })
