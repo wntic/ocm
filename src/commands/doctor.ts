@@ -189,7 +189,7 @@ function checkMarketplaces(registry: CoreRegistry, findings: Finding[], fix: boo
       try {
         recloneMarketplace(entry)
         materializeLinks(name, entry)
-        findings.push(fixed(`marketplace "${name}": clone directory missing, re-cloned from ${entry.url}`))
+        findings.push(fixed(`marketplace "${name}": clone directory missing, re-cloned from ${entry.url} (restart opencode to activate)`))
       } catch (err) {
         findings.push(error(`marketplace "${name}": cannot re-clone — ${errText(err)}`))
       }

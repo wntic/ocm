@@ -115,3 +115,22 @@ test("9. errorMessage renders each system-error code as an ocm message for both 
     rmSync(t, { recursive: true, force: true })
   }
 }, 120_000)
+
+// the top-level catch renders reads too: a missing file must not read as a
+// write failure, or the user goes to fix permissions that are fine
+test("9b. errorMessage names a read as a read: a missing file on open, a missing directory on scandir, and no repeated node suffix", async () => {
+  const { errorMessage } = await import("../loader/error-message.js")
+  const { readdirSync, readFileSync } = await import("node:fs")
+  const t = mkdtempSync(join(tmpdir(), "ocm-errmsg-"))
+  try {
+    const missing = join(t, "absent", "registry.json")
+    let opened
+    try { readFileSync(missing) } catch (err) { opened = err }
+    expect(errorMessage(opened)).toBe(`cannot read ${missing} — no such file or directory`)
+    let scanned
+    try { readdirSync(join(t, "absent")) } catch (err) { scanned = err }
+    expect(errorMessage(scanned)).toBe(`cannot read ${join(t, "absent")} — no such file or directory`)
+  } finally {
+    rmSync(t, { recursive: true, force: true })
+  }
+})
