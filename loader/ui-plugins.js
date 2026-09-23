@@ -1,8 +1,9 @@
 // The per-plugin flows of the /ocm TUI dialog (specs 10b, 22): the plugin
 // menu, install/uninstall, and the details view.
+import { existsSync } from "node:fs"
 import { componentRoot, executableComponents, readRegistry, setEnabled, withRegistryLock } from "./core.js"
 import { rethrowIfDefect } from "./defect.js"
-import { NOTICE, backView, componentSummary, fit, message, pushView, select, toast } from "./ui-dialog.js"
+import { NOTICE, backView, componentSummary, message, pushView, select, toast } from "./ui-dialog.js"
 import { confirm } from "./ui-modals.js"
 import { updateFlow } from "./ui-marketplaces.js"
 import { trustFlow } from "./ui-trust.js"
@@ -22,6 +23,19 @@ export function blocked(name, record, entry) {
   }
 }
 
+// brief 36 §5: "none" is not a security state when nothing executable ships —
+// the same sentence info prints, read from the same tree; false whenever the
+// tree cannot be read
+function noExecutables(entry) {
+  try {
+    const root = componentRoot(entry)
+    return existsSync(root) && executableComponents(root, entry).length === 0
+  } catch (err) {
+    rethrowIfDefect(err)
+    return false
+  }
+}
+
 // spec 22 §4: the version sits next to the name, as `ocm info` prints it
 export function pluginDetailLines(marketplace, name, entry) {
   const record = entry.plugins[name] ?? {}
@@ -33,7 +47,8 @@ export function pluginDetailLines(marketplace, name, entry) {
   lines.push(`enabled: ${record.enabled ? "yes" : "no"}`)
   lines.push(`installed: ${record.installedAt ?? "no"}`)
   lines.push(`marketplace: ${entry.url}${entry.ref ? ` @ ${entry.ref}` : ""}`)
-  lines.push(`trust: ${entry.trust?.code ?? "none"}`)
+  const code = entry.trust?.code ?? "none"
+  lines.push(`trust: ${code === "none" && noExecutables(entry) ? "n/a — no executable components" : code}`)
   const components = record.components ?? {}
   const named = [
     ...(components.command ?? []).map((file) => `command ${name}:${file}`),
@@ -112,9 +127,9 @@ async function togglePlugin(api, marketplace, name, back) {
 }
 
 // spec 22 §2/§3: a select, not an alert — the body scrolls and the action row
-// carries a visible back affordance. fit wraps each line to the select-row
-// width of the chosen bucket, so no option title reaches the widget's
-// ellipsis
+// carries a visible back affordance. select is the choke point: it wraps
+// every line to the row budget of the chosen bucket, and a wrapped line
+// becomes additional rows carrying the parent's index, selectable but inert
 function showDetails(api, marketplace, name) {
   const entry = readRegistry().marketplaces?.[marketplace]
   if (!entry || !entry.plugins?.[name]) {
@@ -122,7 +137,7 @@ function showDetails(api, marketplace, name) {
     backView(api)
     return
   }
-  const lines = fit(pluginDetailLines(marketplace, name, entry)).lines
+  const lines = pluginDetailLines(marketplace, name, entry)
   select(api, {
     title: `${name}@${marketplace}`,
     skipFilter: true,

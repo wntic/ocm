@@ -1564,7 +1564,7 @@ phase("12. a refused rename is inert: the plugin keeps its old name, links and c
   const listed = ocm(home, "list")
   if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}: ${listed.stderr}`)
   const mpB = listed.stdout.slice(listed.stdout.indexOf("mp-b"))
-  if (!mpB.includes("greet-kit") || !mpB.includes("commands: hello.md")) {
+  if (!mpB.includes("greet-kit") || !mpB.includes("commands: hello")) {
     throw new Error(`ocm list must still show greet-kit with its components under mp-b:\n${listed.stdout}`)
   }
   if (mpB.includes("stolen-name")) throw new Error(`ocm list must not attribute stolen-name to mp-b:\n${listed.stdout}`)

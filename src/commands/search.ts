@@ -3,7 +3,7 @@ import { DEFAULT_SYNC_INTERVAL_MS, searchPlugins } from "../../loader/core.js"
 import type { CoreSearchMatch } from "../../loader/core.js"
 import { loadRegistry } from "../registry"
 import type { MarketplaceEntry, MarketplacePlugin } from "../types"
-import { shippedExecutables } from "./display"
+import { bareComponents, componentSummary, shippedExecutables, wrapLine, wrapping } from "./display"
 
 export interface SearchOptions {
   enabledOnly?: boolean
@@ -17,26 +17,6 @@ function isBlocked(entry: MarketplaceEntry, plugin: string, record: MarketplaceP
   if (entry.trust.code === "granted") return false
   if (record.components.plugin?.length || record.components.mcp?.length) return true
   return shippedExecutables(entry).has(plugin)
-}
-
-// the names the summary line prints: commands and agents drop their .md
-function bareComponents(components: Partial<Record<string, string[]>>): Partial<Record<string, string[]>> {
-  const out: Partial<Record<string, string[]>> = {}
-  for (const type of ["command", "agent"] as const) {
-    if (components[type]?.length) out[type] = components[type]!.map((file) => file.replace(/\.md$/, ""))
-  }
-  for (const type of ["skill", "plugin", "mcp"] as const) {
-    if (components[type]?.length) out[type] = [...components[type]!]
-  }
-  return out
-}
-
-const LABELS: Record<string, string> = { command: "commands", agent: "agents", skill: "skills", plugin: "plugins", mcp: "mcp" }
-
-function componentSummary(components: Partial<Record<string, string[]>>): string {
-  return Object.entries(bareComponents(components))
-    .map(([type, names]) => `${LABELS[type]}: ${names!.join(", ")}`)
-    .join(" · ")
 }
 
 // a stale or failed sync is a common cause of a plugin appearing not to exist
@@ -75,14 +55,20 @@ export function search(queryArg: string, options: SearchOptions = {}): void {
     return
   }
   for (const match of matches) {
-    const head = [
+    const headParts = [
       `${match.plugin}@${match.marketplace}`,
       match.record.version,
       match.record.manifest.category,
-      match.record.manifest.description,
-    ].filter(Boolean).join("  ")
+    ]
+    const description = match.record.manifest.description
     const markers = `${!match.record.enabled ? " (disabled)" : ""}${isBlocked(match.entry, match.plugin, match.record) ? " (blocked)" : ""}`
-    console.log(`${head}${markers}`)
+    if (wrapping()) {
+      // brief 36 §1: the description wraps beneath the head line, indented two
+      console.log(`${headParts.filter(Boolean).join("  ")}${markers}`)
+      if (description) for (const line of wrapLine(2, description.split(" "))) console.log(line)
+    } else {
+      console.log(`${[...headParts, description].filter(Boolean).join("  ")}${markers}`)
+    }
     if (match.matched.length) {
       for (const component of match.matched) console.log(`  matched: ${component}`)
     } else {

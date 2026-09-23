@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { loadRegistry } from "../registry"
 import type { MarketplaceEntry } from "../types"
-import { age, pendingExecutables, shippedExecutables } from "./display"
+import { age, bareComponents, componentLine, pendingExecutables, shippedExecutables, wrapLine } from "./display"
 import { componentRoot } from "../../loader/core.js"
 import type { CoreExecutableComponent } from "../../loader/core.js"
 
@@ -65,6 +65,8 @@ export function list(options: ListOptions = {}): void {
       // spec 23 §1: a problem line — stderr, and never styled red
       console.error(`  last sync failed: ${entry.lastSync.error}`)
     }
+    // brief 36 §6: stored sync warnings, stderr, until a later sync replaces them
+    for (const text of entry.lastSync?.warnings ?? []) console.error(`  warning: ${text}`)
     for (const component of pending) {
       console.log(`  ${component.rel} — awaiting trust (ocm trust ${name})`)
     }
@@ -73,23 +75,24 @@ export function list(options: ListOptions = {}): void {
     const shipped = entry.trust.code !== "granted" ? shippedExecutables(entry) : null
     for (const [pluginName, plugin] of Object.entries(entry.plugins)) {
       if (!options.all && !plugin.enabled) continue
+      const bare = bareComponents(plugin.components)
       const parts: string[] = []
-      if (plugin.components.agent) parts.push(`agents: ${plugin.components.agent.join(", ")}`)
-      if (plugin.components.command) parts.push(`commands: ${plugin.components.command.join(", ")}`)
-      if (plugin.components.skill) parts.push(`skills: ${plugin.components.skill.join(", ")}`)
+      if (bare.agent) parts.push(componentLine("agent", bare.agent))
+      if (bare.command) parts.push(componentLine("command", bare.command))
+      if (bare.skill) parts.push(componentLine("skill", bare.skill))
       // a not-granted marketplace's executables list as blocked with the remedy (spec 25 §1)
       const blocked = entry.trust.code !== "granted" ? ` (blocked — ocm trust ${name})` : ""
       const exec = shipped?.get(pluginName)
-      const pluginFiles = plugin.components.plugin?.length ? plugin.components.plugin : exec?.plugin
-      const mcpServers = plugin.components.mcp?.length ? plugin.components.mcp : exec?.mcp
-      if (pluginFiles?.length) parts.push(`plugins: ${pluginFiles.join(", ")}${blocked}`)
-      if (mcpServers?.length) parts.push(`mcp: ${mcpServers.join(", ")}${blocked}`)
+      const pluginFiles = bare.plugin?.length ? bare.plugin : exec?.plugin
+      const mcpServers = bare.mcp?.length ? bare.mcp : exec?.mcp
+      if (pluginFiles?.length) parts.push(`${componentLine("plugin", pluginFiles)}${blocked}`)
+      if (mcpServers?.length) parts.push(`${componentLine("mcp", mcpServers)}${blocked}`)
       // the marketplace revision is the implicit version of a versionless
       // plugin (spec 08)
       const version = plugin.version ?? (short ? `@${short}` : null)
       const markers = `${version ? ` (${version})` : ""}${options.all && !plugin.enabled ? " (disabled)" : ""}`
       console.log(`  ${pluginName}${markers}`)
-      for (const part of parts) console.log(`    ${part}`)
+      for (const part of parts) for (const line of wrapLine(4, part.split(" "))) console.log(line)
     }
   }
 }

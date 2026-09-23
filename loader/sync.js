@@ -193,7 +193,7 @@ async function runSync(entries, options, result) {
       if (!pull.ok) {
         result.failed.push(name)
         result.errors[name] = pull.output
-        recordSync(name, { at: new Date().toISOString(), ok: false, error: pull.output })
+        recordSync(name, { at: new Date().toISOString(), ok: false, error: pull.output, warnings: [] })
         continue
       }
       changed = pull.changed
@@ -212,8 +212,10 @@ async function runSync(entries, options, result) {
     const refresh = pulled || entry.local === true
     const prepared = refresh ? prepareRecords(name, root) : null
     const links = materialize(name, root, { enabled: enabledPlugins(prepared?.entry ?? entry, root) })
-    if (links.warnings.length) result.warnings = [...(result.warnings ?? []), ...links.warnings.map((w) => `${name}: ${w}`)]
-    if (prepared?.warnings.length) result.warnings = [...(result.warnings ?? []), ...prepared.warnings.map((w) => `${name}: ${w}`)]
+    // brief 36 §6 — the marketplace's own warnings travel with its lastSync
+    // so list and doctor can speak for a sync the user never saw
+    const warnings = [...links.warnings, ...(prepared?.warnings ?? [])]
+    if (warnings.length) result.warnings = [...(result.warnings ?? []), ...warnings.map((w) => `${name}: ${w}`)]
     // brief 31 §3: what changed is what the outcomes say moved — a pull
     // that changed nothing on disk is not a change
     if (links.outcomes.some((o) => o.state === "created" || o.state === "removed" || o.state === "refreshed")) result.changed = true
@@ -221,7 +223,7 @@ async function runSync(entries, options, result) {
     // brief 40: the prepared entry carries a refusal recorded this pass —
     // without it the fingerprint would be computed pre-refusal and drift
     markDriftedTrust(name, prepared?.entry ?? entry, root)
-    recordSync(name, { at: new Date().toISOString(), ok: true, error: null }, revision)
+    recordSync(name, { at: new Date().toISOString(), ok: true, error: null, warnings }, revision)
   }
   // the pre-08 global stamp is obsolete: the throttle lives in lastSync.at
   if (result.ran) {

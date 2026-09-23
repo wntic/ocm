@@ -139,7 +139,7 @@ export interface CoreMarketplaceEntry {
   // brief 40: renames refused for a cross-marketplace collision, as
   // from → to; the record stays under `from` until the collision clears
   refusedRenames?: Record<string, string>
-  lastSync: { at: string; ok: boolean; error: string | null } | null
+  lastSync: { at: string; ok: boolean; error: string | null; warnings?: string[] } | null
   plugins: Record<string, CoreMarketplacePlugin>
 }
 

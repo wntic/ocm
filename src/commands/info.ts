@@ -5,7 +5,7 @@ import type { CorePluginComponents } from "../../loader/core.js"
 import { OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { loadRegistry } from "../registry"
 import type { MarketplaceEntry, MarketplacePlugin, PluginManifest, Registry } from "../types"
-import { age, driftedComponents, pendingExecutables } from "./display"
+import { age, driftedComponents, pendingExecutables, shipsNoExecutables, wrapLine } from "./display"
 
 export interface InfoOptions {
   json?: boolean
@@ -124,6 +124,9 @@ function trustState(marketplace: string, entry: MarketplaceEntry): string {
   if (entry.trust.code === "granted" && (driftedComponents(entry)?.length ?? 0) > 0) {
     return `code changed since trust — run ocm trust ${marketplace}`
   }
+  if (entry.trust.code === "none" && shipsNoExecutables(entry)) {
+    return "n/a — no executable components"
+  }
   return entry.trust.code
 }
 
@@ -195,7 +198,11 @@ export function info(arg: string, options: InfoOptions = {}): void {
   if (components.length) {
     console.log("  components")
     for (const component of components) {
-      console.log(`    ${component.type.padEnd(8)}${component.name}  ${linked(component) ? `→ ${component.target}` : "(not linked)"}`)
+      // brief 36 §1: type and name stay together; the arrow target moves as
+      // one unit to a continuation line when the whole exceeds the budget
+      const head = `${component.type.padEnd(8)}${component.name}`
+      const tail = linked(component) ? `→ ${component.target}` : "(not linked)"
+      for (const line of wrapLine(4, [head, tail], "  ")) console.log(line)
     }
   }
 }

@@ -1,23 +1,9 @@
 import { readRegistry } from "./registry.js"
 
 // spec 09 ranking, first rule that matches wins; the marketplace name is a
-// match surface ranked below every plugin-level rule
+// match surface ranked below every plugin-level rule. Component matches are
+// computed up front so every rank carries them, not just rank 5 (brief 36 §3)
 function rankOf(query, plugin, record, marketplace) {
-  const name = plugin.toLowerCase()
-  if (name === query) return { rank: 0, matched: [] }
-  if (name.startsWith(query)) return { rank: 1, matched: [] }
-  if (name.includes(query)) return { rank: 2, matched: [] }
-  const manifest = record.manifest
-  const words = [...(manifest.tags ?? []), ...(manifest.keywords ?? [])].map((word) => word.toLowerCase())
-  const category = manifest.category?.toLowerCase()
-  if (category === query || words.includes(query)) return { rank: 3, matched: [] }
-  if (
-    (manifest.description?.toLowerCase().includes(query) ?? false) ||
-    category?.includes(query) ||
-    words.some((word) => word.includes(query))
-  ) {
-    return { rank: 4, matched: [] }
-  }
   const matched = []
   for (const file of record.components.command ?? []) {
     const name = file.replace(/\.md$/, "")
@@ -37,8 +23,23 @@ function rankOf(query, plugin, record, marketplace) {
   for (const server of record.components.mcp ?? []) {
     if (server.toLowerCase().includes(query)) matched.push(`mcp ${server}`)
   }
+  const name = plugin.toLowerCase()
+  if (name === query) return { rank: 0, matched }
+  if (name.startsWith(query)) return { rank: 1, matched }
+  if (name.includes(query)) return { rank: 2, matched }
+  const manifest = record.manifest
+  const words = [...(manifest.tags ?? []), ...(manifest.keywords ?? [])].map((word) => word.toLowerCase())
+  const category = manifest.category?.toLowerCase()
+  if (category === query || words.includes(query)) return { rank: 3, matched }
+  if (
+    (manifest.description?.toLowerCase().includes(query) ?? false) ||
+    category?.includes(query) ||
+    words.some((word) => word.includes(query))
+  ) {
+    return { rank: 4, matched }
+  }
   if (matched.length) return { rank: 5, matched }
-  if (marketplace.toLowerCase().includes(query)) return { rank: 6, matched: [] }
+  if (marketplace.toLowerCase().includes(query)) return { rank: 6, matched }
   return null
 }
 
