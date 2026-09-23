@@ -1022,8 +1022,10 @@ every 0.6.1 user's first upgrade. It is the only code in this round that
 touches user data. Two briefs: one for the migration (C1+C2), one for the
 read-only/predicate set (C3+C4), which is small enough to land first.
 
-**v0.8.0** — briefs 32 (error classification, takes F260 and F223) and 33
-(doctor completeness, takes F233), plus C5 as its own brief.
+**v0.8.0** — briefs 32 (error classification, takes F223) and 33 (doctor
+completeness, takes F233), plus C5 as brief 45 — which also takes F260:
+32 classifies git and filesystem failures and says nothing about partial
+success.
 
 **v0.9.0** — brief 36 (display & TUI) takes C6 and F263. F258's missing
 "reverted your edits" line goes here too; the revert itself is correct and
