@@ -2,6 +2,8 @@
 // wrappers over api.ui so every flow renders through the same dialogs, plus
 // the pure wrap/size/scroll/stack models the views render from. Nothing
 // reloads in-session, so every mutation toast ends with the restart notice.
+import { errorMessage as message } from "./error-message.js"
+
 const NOTICE = "restart opencode to activate"
 
 // the widget library offers three fixed dialog widths; content is wrapped to
@@ -16,8 +18,6 @@ const BUCKETS = [
 // frame — borders, padding and the selection gutter — so a medium row
 // ellipsizes past 51 characters (spec 22 §2)
 const ROW_CHROME = 9
-
-const message = (err) => (err instanceof Error ? err.message : String(err))
 
 function componentSummary(record) {
   const parts = []

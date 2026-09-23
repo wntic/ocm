@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { errorMessage } from "./error-message.js"
 import { OPENCODE_CONFIG_FILE, OPENCODE_DIR } from "./paths.js"
 import { isRecord } from "./registry.js"
 
@@ -45,7 +46,7 @@ export function setSkillsPath(skillsDir, present) {
     writeFileSync(tmp, `${JSON.stringify(updated, null, 2)}\n`)
     renameSync(tmp, OPENCODE_CONFIG_FILE)
   } catch (err) {
-    return { state: "failed", reason: `failed ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}` }
+    return { state: "failed", reason: `failed ${OPENCODE_CONFIG_FILE}: ${errorMessage(err)}` }
   }
   return { state: "wrote", reason: null }
 }

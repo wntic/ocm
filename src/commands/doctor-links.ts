@@ -9,6 +9,7 @@ import {
   componentRoot,
   discoverPlugins,
   enabledPlugins,
+  errorMessage,
   foldedComponentGroups,
 } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
@@ -17,7 +18,7 @@ import { HOME, OCM_CACHE_DIR, OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMA
 import { error, fixed, type Finding } from "../findings"
 
 function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  return errorMessage(err)
 }
 
 // raw-string prefix compare only: a raw symlink target must never be compared

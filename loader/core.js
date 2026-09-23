@@ -25,9 +25,12 @@ export {
   STAMP_FILE,
 } from "./paths.js"
 export { digestChanges, pluginHashes } from "./digest.js"
+export { errorMessage } from "./error-message.js"
 export { dirClashes, discoverPlugins, manifestOnlyMessages, mcpShapeError, readMcpServers } from "./discovery.js"
 export { displacedRecords, displayPath, restoreDisplaced } from "./displaced.js"
 export { git, isGitRepo } from "./git.js"
+export { classifyGitFailure } from "./git-errors.js"
+export { gitProbe } from "./git-probe.js"
 export { foldedComponentGroups, foldedDirPairs, pluginLimitViolation } from "./limits.js"
 export { isRenderedFile } from "./links.js"
 export { marketplaceGateFindings, pluginGateFindings } from "./manifest-gate.js"

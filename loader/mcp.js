@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { mcpShapeError, mcpSourceFile, PLUGIN_NAME_RE, readMcpServers } from "./discovery.js"
+import { errorMessage } from "./error-message.js"
 import { OPENCODE_CONFIG_FILE, OPENCODE_DIR } from "./paths.js"
 import { isRecord } from "./registry.js"
 import { componentKey } from "./trust.js"
@@ -53,7 +54,7 @@ function applyMcpKeys(desired, prefixes) {
     writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`)
     renameSync(tmp, OPENCODE_CONFIG_FILE)
   } catch (err) {
-    return { warning: `failed ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}`, outcomes: [] }
+    return { warning: `failed ${OPENCODE_CONFIG_FILE}: ${errorMessage(err)}`, outcomes: [] }
   }
   return { warning: null, outcomes }
 }
@@ -170,7 +171,7 @@ function removeOwnedMcp(matches) {
     writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`)
     renameSync(tmp, OPENCODE_CONFIG_FILE)
   } catch (err) {
-    return { outcomes: [], warning: `cannot write ${OPENCODE_CONFIG_FILE}: ${err instanceof Error ? err.message : String(err)}` }
+    return { outcomes: [], warning: `cannot write ${OPENCODE_CONFIG_FILE}: ${errorMessage(err)}` }
   }
   return { outcomes: owned.map((key) => mcpKeyOutcome(key, "removed")), warning: null }
 }

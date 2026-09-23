@@ -189,7 +189,9 @@ export async function addMarketplace(source, options = {}) {
     root,
     mode,
     plugins: plugins.map((plugin) => ({ name: plugin.name, components: plugin.components })),
-    warnings: discovered.warnings,
+    // brief 32 §6 (F223): a broken plugin beside a valid one is the author's
+    // defect — a warning on a successful add, not a failed add
+    warnings: [...discovered.warnings, ...manifestOnlyMessages(root)],
     report,
     trustComponents,
     wasV1,

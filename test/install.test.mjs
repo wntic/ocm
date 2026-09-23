@@ -779,6 +779,47 @@ phase("12. mcp.json server keys that differ only in case stay two servers: the f
   expect(mcp["ocm--p--everything"]).toEqual({ type: "local", command: ["echo", "lower"], enabled: true })
   expect(mcp["user-server"]).toEqual({ type: "local", command: ["echo"] })
 })
+
+// brief 32 §2 (F82): a kill -9 mid-add leaves a non-empty clone dir no
+// registry entry claims; the NEXT add removes it before cloning instead of
+// failing on git's "already exists and is not an empty directory".
+
+phase("13. a pre-created non-empty orphan clone dir: the first ocm add removes it, warns once on stderr, and succeeds", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  // the leftover of a killed add: a non-empty dir no registry entry names
+  const orphan = join(rootCacheDir(home), "marketplaces", "mp")
+  writeTree(orphan, { "half-written": "sentinel of the interrupted clone\n" })
+  const added = ocm(home, ["add", `file://${remote}`, "--name", "mp"])
+  if (added.status !== 0) throw new Error(`the first add over the orphan exited ${added.status}:\n${added.output}`)
+  const warning = `warning: removing an incomplete clone at ${orphan} left by an interrupted ocm add`
+  const lines = added.stderr.split("\n").filter((l) => l === warning)
+  if (lines.length !== 1) throw new Error(`expected the warning line exactly once on stderr, got ${lines.length}:\n${added.stderr}`)
+  const entry = readRegistry(home).marketplaces.mp
+  if (entry.dir !== orphan) throw new Error(`expected mp.dir to hold ${orphan} in ${registryFile(home)}, got ${entry.dir}`)
+  assertAbsent(join(orphan, "half-written")) // the orphan was replaced by the real clone
+  assertFileExists(join(orphan, "plugins", "tool", "plugin.json"))
+}, 240_000)
+
+phase("14. a clone dir a registry entry claims is not removed: the duplicate-add refusal applies instead", async (home) => {
+  const remoteA = join(home, "remote-a")
+  const remoteB = join(home, "remote-b")
+  gitRepo(remoteA, { plugins: { tool: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  gitRepo(remoteB, { plugins: { other: { "plugin.json": PLUGIN_JSON, commands: { "task.md": COMMAND } } } })
+  const added = ocm(home, ["add", `file://${remoteA}`, "--name", "mp"])
+  if (added.status !== 0) throw new Error(`ocm add remote-a exited ${added.status}:\n${added.output}`)
+  const clone = join(rootCacheDir(home), "marketplaces", "mp")
+  assertFileExists(join(clone, "plugins", "tool", "plugin.json"))
+  // same name, different url: the colliding add must refuse, never delete
+  const refused = ocm(home, ["add", `file://${remoteB}`, "--name", "mp"])
+  if (refused.status === 0) throw new Error(`the colliding-name add exited 0, expected the duplicate refusal:\n${refused.output}`)
+  if (!refused.output.includes("already added")) throw new Error(`expected the duplicate-add refusal:\n${refused.output}`)
+  // invariant: ownership — the claimed directory keeps remoteA's checkout
+  assertFileExists(join(clone, "plugins", "tool", "plugin.json"))
+  assertAbsent(join(clone, "plugins", "other"))
+  expect(Object.keys(readRegistry(home).marketplaces)).toEqual(["mp"])
+  expect(readRegistry(home).marketplaces.mp.url).toBe(`file://${remoteA}`)
+}, 240_000)
 }
 
 // collisions: plugin-name collisions across marketplaces — absorbed from test/phase18-collisions.mjs

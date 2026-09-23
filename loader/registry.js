@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { writeJsonAtomic } from "./atomic.js"
 import { rethrowIfDefect } from "./defect.js"
+import { errorMessage } from "./error-message.js"
 import { CACHE_DIR, LEGACY_REGISTRY_FILE, MARKETPLACES_DIR, OPENCODE_DIR, REGISTRY_FILE } from "./paths.js"
 
 export function isRecord(value) {
@@ -214,7 +215,7 @@ export function saveRegistry(registry) {
   try {
     writeJsonAtomic(REGISTRY_FILE, serializeRegistry(registry))
   } catch (err) {
-    throw new Error(`cannot write ${REGISTRY_FILE}: ${err instanceof Error ? err.message : String(err)}`)
+    throw new Error(`cannot write ${REGISTRY_FILE}: ${errorMessage(err)}`)
   }
   recordConfigRoot()
 }

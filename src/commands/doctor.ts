@@ -3,7 +3,7 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { componentRoot, isGitRepo, readRegistry, registryWriterVersion, versionCompare } from "../../loader/core.js"
+import { componentRoot, errorMessage, isGitRepo, readRegistry, registryWriterVersion, versionCompare } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { installLoader, loaderStatus, packageVersion, reportTuiPlugin, type LoaderFileStatus } from "../loader"
 import { materializeLinks } from "../install"
@@ -17,7 +17,7 @@ import { checkDisplaced, checkOrphanMirrors, checkStrays } from "./doctor-orphan
 import { recloneMarketplace } from "./update"
 
 function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  return errorMessage(err)
 }
 
 export function doctor(fix: boolean): void {
@@ -189,7 +189,7 @@ function checkMarketplaces(registry: CoreRegistry, findings: Finding[], fix: boo
       try {
         recloneMarketplace(entry)
         materializeLinks(name, entry)
-        findings.push(fixed(`marketplace "${name}": re-cloned and re-materialized (restart opencode to activate)`))
+        findings.push(fixed(`marketplace "${name}": clone directory missing, re-cloned from ${entry.url}`))
       } catch (err) {
         findings.push(error(`marketplace "${name}": cannot re-clone — ${errText(err)}`))
       }

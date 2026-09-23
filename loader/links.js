@@ -13,6 +13,7 @@ import {
 import { dirname, join, relative } from "node:path"
 import { containsSkillMd } from "./discovery.js"
 import { appendDisplacement, displayPath } from "./displaced.js"
+import { errorMessage } from "./error-message.js"
 
 const RENDERED_MARKER = "ocm: rendered from "
 
@@ -44,7 +45,7 @@ function takeOver(dest, ctx, plugin) {
     mkdirSync(dirname(target), { recursive: true })
     renameSync(dest, target)
   } catch (err) {
-    ctx.warnings.push(`failed to displace ${dest}: ${err instanceof Error ? err.message : String(err)}`)
+    ctx.warnings.push(`failed to displace ${dest}: ${errorMessage(err)}`)
     return false
   }
   appendDisplacement({ marketplace: ctx.name, plugin, dest, dir: ctx.displacedDir })
@@ -116,7 +117,7 @@ export function link(source, dest, ctx, plugin, component) {
     symlinkSync(source, dest)
     return "created"
   } catch (err) {
-    ctx.warnings.push(`failed ${dest}: ${err instanceof Error ? err.message : String(err)}`)
+    ctx.warnings.push(`failed ${dest}: ${errorMessage(err)}`)
     return "skipped"
   }
 }
@@ -131,7 +132,7 @@ export function render(source, dest, transform, ctx, plugin) {
     body = transformed.endsWith("\n") ? transformed : `${transformed}\n`
     output = body + `<!-- ${RENDERED_MARKER}${relative(ctx.dir, source)} @ ${ctx.revision} -->\n`
   } catch (err) {
-    ctx.warnings.push(`failed ${source}: ${err instanceof Error ? err.message : String(err)}`)
+    ctx.warnings.push(`failed ${source}: ${errorMessage(err)}`)
     return "skipped"
   }
   let silent = false
@@ -174,7 +175,7 @@ export function render(source, dest, transform, ctx, plugin) {
     writeFileSync(dest, output)
     return silent ? "ok" : "created"
   } catch (err) {
-    ctx.warnings.push(`failed ${dest}: ${err instanceof Error ? err.message : String(err)}`)
+    ctx.warnings.push(`failed ${dest}: ${errorMessage(err)}`)
     return "skipped"
   }
 }

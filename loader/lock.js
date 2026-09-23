@@ -1,6 +1,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs"
 import { join } from "node:path"
 import { rethrowIfDefect } from "./defect.js"
+import { errorMessage } from "./error-message.js"
 import { OCM_DIR } from "./paths.js"
 
 // beside the registry, never in the cache: the cache is reconstructible and
@@ -75,7 +76,7 @@ async function acquire(command, blocking) {
       fd = openSync(LOCK_FILE, "wx")
     } catch (err) {
       if (err?.code !== "EEXIST") {
-        throw new Error(`cannot write ${LOCK_FILE}: ${err instanceof Error ? err.message : String(err)}`)
+        throw new Error(`cannot write ${LOCK_FILE}: ${errorMessage(err)}`)
       }
       const holder = readHolder()
       const waited = Date.now() - started

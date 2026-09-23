@@ -11,6 +11,7 @@ import {
 } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import { writeJsonAtomic } from "./atomic.js"
+import { errorMessage } from "./error-message.js"
 import { DISPLACED_RECORD_FILE, OPENCODE_DIR } from "./paths.js"
 
 // paths under the opencode config dir are shown relative to it; anything
@@ -103,7 +104,7 @@ export function restoreDisplaced(scope) {
         lines.push(`restored your ${display} (was displaced by ${record.plugin})`)
         consumed.add(record)
       } catch (err) {
-        lines.push(`cannot restore your ${display} (was displaced by ${record.plugin}): ${err instanceof Error ? err.message : String(err)}`)
+        lines.push(`cannot restore your ${display} (was displaced by ${record.plugin}): ${errorMessage(err)}`)
       }
     }
   }

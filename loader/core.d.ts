@@ -27,6 +27,9 @@ export interface CorePullResult {
   dirty: boolean
   localChanges: number
   untracked: number
+  // brief 32 §4 (F99): the dirty paths as porcelain reports them, relative
+  // to the clone root
+  paths: string[]
   output: string
 }
 
@@ -293,6 +296,9 @@ export declare const STAMP_FILE: string
 export declare const DEFAULT_SYNC_INTERVAL_MS: number
 
 export declare function writeJsonAtomic(path: string, content: string): void
+// brief 32 §3: a node system error renders as an ocm error naming the path
+// and the remedy, never an errno code
+export declare function errorMessage(err: unknown): string
 export declare function withRegistryLock<T>(command: string, fn: () => T | Promise<T>): Promise<T>
 export declare function tryRegistryLock<T>(fn: () => T | Promise<T>): Promise<T | { skipped: true }>
 export declare function discoverPlugins(marketplaceDir: string): CoreDiscoveredPlugin[]
@@ -312,7 +318,17 @@ export declare function foldedComponentGroups(
 ): { type: "command" | "agent" | "skill" | "plugin"; names: string[] }[]
 export declare function lintCrossTool(marketplaceDir: string): string[]
 export declare function isGitRepo(dir: string): boolean
-export declare function git(args: string[], cwd?: string): Promise<{ ok: boolean; stdout: string; stderr: string }>
+export declare function git(args: string[], cwd?: string): Promise<{ ok: boolean; stdout: string; stderr: string; error?: Error }>
+export declare function classifyGitFailure(input: {
+  operation: "fetch" | "clone"
+  result: { ok: boolean; stdout: string; stderr: string; error?: Error }
+  url: string
+  ref: string | null
+  dir: string
+}): { code: string; message: string }
+// brief 32 §1: null when git is on PATH, else the git-missing message —
+// one `git --version` per process, cached
+export declare function gitProbe(): string | null
 export declare function pullRepo(entry: CoreMarketplaceEntry, name: string): Promise<CorePullResult>
 export declare function isRenderedFile(path: string): boolean
 export declare function readRegistry(): CoreRegistry

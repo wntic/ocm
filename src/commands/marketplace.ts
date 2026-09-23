@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { addMarketplace, denyTrust, duplicateRefusal, grantTrust, isGitUrl, normaliseMarketplaceName, parseSource, pinMarketplace, readRegistry, removeMarketplace, skipTrust } from "../../loader/core.js"
 import type { CoreAddResult, CoreMaterializeReport } from "../../loader/core.js"
 import { installLoader, reportTuiPlugin } from "../loader"
-import { git } from "../git"
+import { git, requireGit } from "../git"
 import { OCM_LINKS_DIR, OPENCODE_GLOBAL_CONFIG } from "../paths"
 import { queueFact, reportRestart, reportUpgrade, reportWarnings } from "../report"
 import { printTrustListing, promptTrust } from "./trust-prompt"
@@ -23,7 +23,10 @@ export async function add(source: string, options: AddOptions = {}): Promise<voi
   if (isGitUrl(source)) {
     const parsed = parseSource(source)
     const wanted = options.name ? normaliseMarketplaceName(options.name) : parsed.name
-    if (!duplicateRefusal(readRegistry(), parsed, wanted)) console.log(`cloning ${parsed.url}...`)
+    if (!duplicateRefusal(readRegistry(), parsed, wanted)) {
+      requireGit()
+      console.log(`cloning ${parsed.url}...`)
+    }
   }
   let result: CoreAddResult
   try {
