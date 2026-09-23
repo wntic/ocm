@@ -705,6 +705,46 @@ phase("a local marketplace gaining a folded plugins pair between add and update 
     if (detach) spawnSync("hdiutil", ["detach", detach, "-force"], { encoding: "utf8", timeout: 60_000 })
   }
 }, 240_000)
+
+// F221: the fold drop is an outcome, not a silent skip — a local update that
+// drops a folded pair must report it as an uninstalled item instead of
+// "already up to date"
+phase("a folded pair dropped by a local update is reported as an uninstalled item with its reason, never as already up to date", async (home) => {
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" }) // ownership probe file
+  const { dir: mp, detach } = foldedPairMarketplace(home)
+  try {
+    writeTree(mp, { plugins: { "case-Kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } } })
+    const added = ocm(home, "add", mp)
+    if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+    assertResolves(commandLink(home, "case-kit", "run.md"), join(mp, "plugins", "case-Kit", "commands", "run.md"))
+    // the sibling appears on disk between add and update
+    writeTree(join(mp, "plugins"), { "case-kit": { "plugin.json": PLUGIN_JSON, commands: { "run.md": COMMAND } } })
+    const shipped = readdirSync(join(mp, "plugins"))
+    for (const spelling of ["case-Kit", "case-kit"]) {
+      if (!shipped.includes(spelling)) throw new Error(`fixture error: plugins/ in ${mp} must hold both spellings, got ${JSON.stringify(shipped)}`)
+    }
+    const updated = ocm(home, "update", "mp")
+    if (updated.status !== 0) {
+      throw new Error(`the local update must succeed with the folded pair dropped, got exit ${updated.status}:\n${updated.stdout}\n${updated.stderr}`)
+    }
+    if (updated.stdout.includes("already up to date")) {
+      throw new Error(`the update that dropped the folded pair must not report "already up to date":\n${updated.stdout}`)
+    }
+    const dropLine = updated.stdout.split("\n").find((l) =>
+      l.includes("case-kit") && l.includes("uninstalled") && l.includes("differ only in case")
+      && l.includes("plugins/case-Kit") && l.includes("plugins/case-kit"))
+    if (!dropLine) {
+      throw new Error(`expected a drop line "  case-kit   uninstalled — plugins/case-Kit and plugins/case-kit differ only in case" in:\n${updated.stdout}`)
+    }
+    expect(updated.stdout).toContain("restart opencode to activate")
+    expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+    const plugins = readRegistry(home).marketplaces.mp.plugins
+    if (plugins["case-kit"]) throw new Error(`expected no case-kit record in ${registryFile(home)} after the drop, got ${JSON.stringify(plugins["case-kit"])}`)
+    assertAbsent(commandLink(home, "case-kit", "run.md"))
+  } finally {
+    if (detach) spawnSync("hdiutil", ["detach", detach, "-force"], { encoding: "utf8", timeout: 60_000 })
+  }
+}, 240_000)
 }
 
 // update hygiene: an unchanged update writes nothing — absorbed from test/phase26-update-hygiene.mjs
@@ -2855,5 +2895,39 @@ phase("brief 39 §5: an environmental failure inside the sync's record refresh s
   if (!existsSync(link)) throw new Error(`expected the command link at ${link} — the sync must run through the record path, not exit 0 vacuously`)
   expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes) // invariant: config safety
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+}, 240_000)
+}
+
+// brief 45 §3 (F260): on update a withheld component is a standing state the
+// user may have chosen — a warning with exit 0, never a partial install. The
+// outcome records why it was skipped, so the exit code is decided by the
+// record, never by matching warning text
+{
+phase("an update over a hand-written file at a component's destination exits 0 with the warning only, and the outcome carries the unowned-destination skip", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND, "lint.md": COMMAND } } } })
+  const added = ocm(home, "add", mp)
+  if (added.status !== 0) throw new Error(`ocm add mp exited ${added.status}: ${added.stderr}`)
+  const dest = commandLink(home, "adw", "commit.md")
+  rmSync(dest)
+  writeFileSync(dest, "# my own commit command\n") // the user keeps their file over ocm's link
+  const updated = ocm(home, "update", "mp")
+  if (updated.status !== 0) {
+    throw new Error(`the update over the user's file must exit 0 — a standing skip is never a partial install — got ${updated.status}:\n${updated.stdout}\n${updated.stderr}`)
+  }
+  expect(updated.stderr).toContain(`skipped ${dest}: not managed by ocm — re-run with --force to displace it`)
+  const out = `${updated.stdout}\n${updated.stderr}`
+  if (out.includes("partially")) throw new Error(`an update must not report a partial install:\n${out}`)
+  expect(readFileSync(dest, "utf8")).toBe("# my own commit command\n") // invariant: ownership
+
+  const asJson = ocm(home, "update", "mp", "--json")
+  if (asJson.status !== 0) throw new Error(`ocm update mp --json exited ${asJson.status}: ${asJson.stderr}`)
+  const outcomes = JSON.parse(asJson.stdout).marketplaces[0].outcomes
+  const skipped = outcomes.find((o) => o.type === "command" && o.plugin === "adw" && o.component === "commit.md")
+  if (!skipped) throw new Error(`expected a skipped outcome for adw:commit.md in the --json report: ${JSON.stringify(outcomes)}`)
+  if (skipped.state !== "skipped") throw new Error(`expected the adw:commit.md outcome to be skipped, got ${JSON.stringify(skipped)}`)
+  if (skipped.skip !== "unowned-dest") {
+    throw new Error(`expected skip: "unowned-dest" on the withheld outcome — the field that tells an unowned-destination skip from other skips — got ${JSON.stringify(skipped)}`)
+  }
 }, 240_000)
 }

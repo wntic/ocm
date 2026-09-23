@@ -1,6 +1,6 @@
 import { relative } from "node:path"
 import { git } from "../git"
-import { queueFact, reportMutationWarnings } from "../report"
+import { outcomesNeedRestart, queueFact, reportMutationWarnings } from "../report"
 import { componentRoot, digestChanges } from "../../loader/core.js"
 import type { CoreOutcome } from "../../loader/core.js"
 import type { DiscoveredPlugin, MarketplaceEntry, MarketplacePlugin } from "../types"
@@ -315,9 +315,10 @@ export function renderMarketplace(report: MarketplaceReport, quiet: boolean, hea
       console.log(file.mark === "!" ? `    ${file.mark} ${file.path} — ${file.reason}` : `    ${file.mark} ${file.path}`)
     }
   }
-  // spec 23 §5: anything created or removed needs a restart — a removal
-  // leaves the stale command live until then
-  if (report.outcomes?.some((outcome) => outcome.state === "created" || outcome.state === "removed")) {
+  // spec 23 §5: anything created, removed or refreshed needs a restart — a
+  // removal leaves the stale command live until then, and nothing reloads
+  // in-session
+  if (outcomesNeedRestart(report.outcomes)) {
     console.log("  restart opencode to activate")
   }
 }

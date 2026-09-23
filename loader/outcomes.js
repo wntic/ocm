@@ -11,6 +11,7 @@ export function linkOutcome(st, type, plugin, component, source, dest, status, w
   }
   const outcome = { type, plugin, component, source, dest, state, reason }
   if (st.ctx.displacements.has(dest)) outcome.displaced = st.ctx.displacements.get(dest)
+  if (st.ctx.withheld.has(dest)) outcome.skip = "unowned-dest"
   st.outcomes.push(outcome)
 }
 

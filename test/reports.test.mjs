@@ -48,6 +48,10 @@ const commandLink = (home, plugin, file) => join(cfg(home), "commands", `${plugi
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`
 
+// the restart notice is a standalone line; the TUI plugin's own text embeds
+// the phrase, so a substring count would lie
+const noticeCount = (output) => output.split("\n").filter((l) => l.trim() === "restart opencode to activate").length
+
 const COMMAND = "---\ndescription: commit helper\n---\n\nCommit body.\n"
 
 const SKILL = "---\nname: style\ndescription: style guidance\n---\n\n# Style\n\nBody.\n"
@@ -64,10 +68,6 @@ const USER_PLUGIN = 'export default { id: "mine", server: async () => ({}) }\n'
 
 // truthful reports — absorbed from test/phase23-truthful-reports.mjs
 {
-// the restart notice is a standalone line; the TUI plugin's own text embeds
-// the phrase, so a substring count would lie
-const noticeCount = (output) => output.split("\n").filter((l) => l.trim() === "restart opencode to activate").length
-
 phase("1. ocm init prints its success lines on stdout, and neither stream carries a red-classified escape", async (home) => {
   const result = ocm(home, ["init"])
   expect(result.status).toBe(0)
@@ -379,3 +379,75 @@ phase("14. ocm list on that home still migrates the old-layout cache into the na
   expect(readFileSync(join(cfg(home), "ocm", "core.js"), "utf8")).not.toContain("ocm-version: 0.0.1")
 })
 }
+
+// brief 45 §5 (F257): nothing reloads in-session, so a refreshed body needs
+// a restart exactly as a created one does — a refreshed-only update prints
+// the notice
+phase("15. an update whose only change is a refreshed command body prints the restart notice", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { kit: { "plugin.json": PLUGIN_JSON, commands: { "work.md": COMMAND } } } })
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp"]).status).toBe(0)
+  writeFileSync(join(remote, "plugins", "kit", "commands", "work.md"), `${COMMAND}<!-- v2 -->\n`)
+  commitAll(remote, "edit the command body upstream")
+  const result = ocm(home, ["update", "mp"])
+  expect(result.status).toBe(0)
+  // the fixture must have produced a refreshed outcome and nothing else: a
+  // ~ line for the command, no created (+) or removed (-) lines — otherwise
+  // the notice would print today and the test would lie
+  const fileLines = result.output.split("\n").filter((line) => /^    [+~!-] /.test(line))
+  if (!fileLines.includes("    ~ commands/work.md")) {
+    throw new Error(`expected a "~ commands/work.md" file line in the update report:\n${result.output}`)
+  }
+  const createdOrRemoved = fileLines.filter((line) => /^    [+-] /.test(line))
+  if (createdOrRemoved.length) {
+    throw new Error(`expected no created (+) or removed (-) file lines in the update report, got:\n${createdOrRemoved.join("\n")}`)
+  }
+  if (noticeCount(result.output) !== 1) {
+    throw new Error(`expected the restart notice on the refreshed-only update:\n${result.output}`)
+  }
+})
+
+// brief 45 §1 (F208, F259): the install headline is derived from what the
+// run materialized, not the record snapshot taken before the derive — a
+// reinstall after an uninstall names its counts instead of "()"
+phase("16. an install after an uninstall names the materialized counts in the headline, singular where one", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "commit.md": COMMAND },
+    skills: {
+      style: { "SKILL.md": SKILL },
+      format: { "SKILL.md": "---\nname: format\ndescription: format guidance\n---\n\n# Format\n\nBody.\n" },
+    },
+  } } })
+  expect(ocm(home, ["add", mp]).status).toBe(0)
+  expect(ocm(home, ["uninstall", "adw"]).status).toBe(0)
+  const result = ocm(home, ["install", "adw"])
+  expect(result.status).toBe(0)
+  assertFileExists(commandLink(home, "adw", "commit.md")) // the install worked; only the headline is in question
+  const headline = result.stdout.split("\n").find((l) => l.includes("installed adw@mp"))
+  if (!headline) throw new Error(`expected an "installed adw@mp" headline on stdout:\n${result.output}`)
+  expect(headline).toBe("installed adw@mp (1 command, 2 skills)")
+})
+
+// brief 45 §8.5 (F211): the add per-plugin line is derived from what
+// materialized — a skill skipped for an author defect (no frontmatter name)
+// is not counted, and a count of one is singular
+phase("17. add of a marketplace with a nameless skill exits 0 and counts only the materialized skill, singular", async (home) => {
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "commit.md": COMMAND },
+    skills: {
+      good: { "SKILL.md": SKILL },
+      bad: { "SKILL.md": "# No frontmatter\n\nBody.\n" },
+    },
+  } } })
+  const added = ocm(home, ["add", mp])
+  expect(added.status).toBe(0) // an author defect is not a partial install (brief 45 §3)
+  expect(added.stderr).toContain("no name in frontmatter") // fixture validity: the skill really was skipped
+  const line = added.stdout.split("\n").find((l) => l.trim().startsWith("adw ("))
+  if (!line) throw new Error(`expected an "adw (...)" per-plugin line on stdout:\n${added.output}`)
+  expect(line).toBe("  adw (1 command, 1 skill)")
+  expect(lstatSync(join(rootCacheDir(home), "links", "mp", "skills", "adw--good")).isDirectory()).toBe(true) // the counted skill materialized
+})

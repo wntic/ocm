@@ -880,9 +880,10 @@ test("20. a hand-written file at a rendered command's dest is refused; --force d
     const mp = marketplace(home, { adw: { "plugin.json": PLUGIN_JSON, commands: { "deploy.md": ROOTED_COMMAND } } })
     expect(ocm(home, "add", mp, "--explicit").status).toBe(0)
     // invariant: ownership — without --force, no ownership proof means no
-    // touch; a refusal is never fatal to the operation
+    // touch; brief 45 §3 makes the withheld component a partial install, exit 1
     const plain = ocm(home, "install", "adw")
-    expect(plain.status).toBe(0)
+    expect(plain.status).toBe(1)
+    expect(plain.stdout).toContain("installed adw@mp partially — 1 component withheld")
     expect(readFileSync(commandDest, "utf8")).toBe("# my own deploy command\n")
     expect(`${plain.stdout}\n${plain.stderr}`).toContain(commandDest)
     const forced = ocm(home, "install", "adw", "--force")

@@ -46,6 +46,8 @@ export interface CoreOutcome {
   // brief 31 §6: for a created outcome whose dest held a user's file, the
   // displaced cache target that file moved to
   displaced?: string
+  // brief 45 §3: set when a component was withheld because its dest held a file ocm does not own — the partial-install signal
+  skip?: "unowned-dest"
 }
 
 // brief 31 §2: the per-component outcome record every report is derived
@@ -256,6 +258,9 @@ export interface CoreGrantResult {
 export interface CoreDenyResult {
   report: CoreMaterializeReport
   wasV1: boolean
+  // brief 45 §2: whether the deny revoked a grant — the untrust headline is
+  // derived from the record transition, recorded where it happens
+  wasGranted: boolean
 }
 
 export interface CorePinResult {

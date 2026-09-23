@@ -59,6 +59,8 @@ function buildCtx(name, dir, registry, entry, warnings, options) {
     // brief 31 §6: dest → displaced cache target for every takeover this
     // run, so an outcome can state where the user's file went
     displacements: new Map(),
+    // brief 45 §3: dests takeOver declined this run — the partial-install signal
+    withheld: new Set(),
   }
 }
 
