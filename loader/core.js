@@ -29,6 +29,7 @@ export { dirClashes, discoverPlugins, manifestOnlyMessages, mcpShapeError, readM
 export { displacedRecords, displayPath, restoreDisplaced } from "./displaced.js"
 export { git, isGitRepo } from "./git.js"
 export { foldedComponentGroups, foldedDirPairs, pluginLimitViolation } from "./limits.js"
+export { isRenderedFile } from "./links.js"
 export { marketplaceGateFindings, pluginGateFindings } from "./manifest-gate.js"
 export { lintCrossTool } from "./lint.js"
 export { tryRegistryLock, withRegistryLock } from "./lock.js"

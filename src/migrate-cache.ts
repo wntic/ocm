@@ -21,7 +21,7 @@ import {
 } from "node:fs"
 import type { Dirent } from "node:fs"
 import { dirname, join } from "node:path"
-import { readRegistry, writeJsonAtomic } from "../loader/core.js"
+import { isRenderedFile, readRegistry, writeJsonAtomic } from "../loader/core.js"
 import { loadRegistryForWrite, saveRegistryIfChanged } from "./registry"
 import {
   OCM_CACHE_DIR,
@@ -395,9 +395,10 @@ function repointSymlinks(): void {
 }
 
 // brief 43 §3: a completed migration may remove a re-created old-path
-// links/<name> tree only when every leaf proves it ours — a live symlink
-// resolving into a clone this root's registry names. Anything that fails
-// stays for reportUnreferencedOldCache to warn about; marketplaces/ and
+// links/<name> tree only when the name is one this root's registry holds and
+// every leaf proves it ours — a live symlink resolving into a clone the
+// registry names, or a file carrying ocm's rendered marker. Anything that
+// fails stays for reportUnreferencedOldCache to warn about; marketplaces/ and
 // displaced/ at the old path are never touched here.
 function removeOwnedOldLinks(): void {
   const oldLinks = join(OCM_CACHE_DIR, "links")
@@ -407,24 +408,26 @@ function removeOwnedOldLinks(): void {
   } catch {
     return
   }
+  const marketplaces = readRegistry().marketplaces
   const clones: string[] = []
-  for (const entry of Object.values(readRegistry().marketplaces)) {
+  for (const entry of Object.values(marketplaces)) {
     try {
       clones.push(realpathSync(entry.dir))
     } catch {}
   }
   for (const child of children) {
     const tree = join(oldLinks, child)
-    if (!ownedLinksTree(tree, clones)) continue
+    if (!Object.hasOwn(marketplaces, child) || !ownedLinksTree(tree, clones)) continue
     rmSync(tree, { recursive: true })
     console.log(`removed ${tree} (regenerable old-layout mirror)`)
   }
   try { rmdirSync(oldLinks) } catch {}
 }
 
-// the strict proof: every leaf a live symlink into an owned clone, and at
-// least one such leaf seen — a rendered SKILL.md regular file fails it, so a
-// 0.6.1 loader's materialized mirror is never ours to remove
+// every leaf proves it ours, and at least one leaf is seen. A mirror is
+// symlinks plus rendered SKILL.md files (loader/materialize.js), so both
+// count; a regular file without the marker — anything a person put there —
+// fails the whole tree
 function ownedLinksTree(tree: string, clones: string[]): boolean {
   let entries: Dirent[]
   try {
@@ -441,7 +444,11 @@ function ownedLinksTree(tree: string, clones: string[]): boolean {
       owned = true
       continue
     }
-    if (!entry.isSymbolicLink()) return false
+    if (!entry.isSymbolicLink()) {
+      if (!entry.isFile() || !isRenderedFile(path)) return false
+      owned = true
+      continue
+    }
     let resolved: string
     try {
       resolved = realpathSync(path)

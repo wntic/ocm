@@ -1066,14 +1066,14 @@ phase("16. done means done: a 0.6.1 loader re-creating links/<mp> at the old pat
   const done = JSON.parse(readFileSync(stateFile, "utf8"))
   if (done.state !== "done") throw new Error(`expected the state file at ${stateFile} to read done after the migration, got ${done.state}`)
 
-  // the 0.6.1-loader scenario: a small links tree re-appears at the old path
+  // the 0.6.1-loader scenario: the mirror re-appears at the old path in the
+  // shape 0.6.1 writes it — a rendered SKILL.md carrying ocm's marker
   writeTree(join(oldCache, "links", MP, "skills", "adw--python-style"), {
-    "SKILL.md": `---\nname: "adw:python-style"\ndescription: python-style guidance\n---\n\n# python-style\n\nre-created by an old loader\n`,
+    "SKILL.md": `---\nname: "adw:python-style"\ndescription: python-style guidance\n---\n\n# python-style\n<!-- ocm: rendered from plugins/adw/skills/python-style/SKILL.md @ 0000000 -->\n`,
   })
   const stateBytes = readFileSync(stateFile, "utf8")
   const stateMtime = statSync(stateFile).mtimeMs
   const registryBytes = readFileSync(registryFile(home), "utf8")
-  const tree = snapTree(join(oldCache, "links"))
 
   const second = ocm(home, "list")
   const output = `${second.stdout}\n${second.stderr}`
@@ -1087,10 +1087,12 @@ phase("16. done means done: a 0.6.1 loader re-creating links/<mp> at the old pat
   expect(readFileSync(stateFile, "utf8")).toBe(stateBytes)
   expect(statSync(stateFile).mtimeMs).toBe(stateMtime)
   expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
-  assertTreeUnchanged(tree, [join(oldCache, "links")], "the re-created old-path links tree")
-  // the unreferenced-old-cache warning about the re-created tree is expected
-  // here and is deliberately not asserted against — only the migration
-  // itself must not run
+  // §3 converges it: the re-created mirror is provably ours and goes, so
+  // the unreferenced-old-cache warning stops instead of repeating forever
+  assertAbsent(join(oldCache, "links", MP))
+  if (second.stderr.includes(join(oldCache, "links"))) {
+    throw new Error(`the old-path links tree still warns after its only mirror was removed:\n${second.stderr}`)
+  }
 }, 300_000)
 
 phase("17. an already-migrated 0.7.0 home (no state file, old layout gone) is a no-op and grows no state file", async (home) => {
@@ -1182,6 +1184,26 @@ phase("18. a post-migration old-path mirror into this root's own clones is remov
   const config = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
   expect(config.model).toBe("claude-sonnet-4-6")
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# user command\n")
+}, 300_000)
+
+// §3's other half: a rendered file proves nothing about *whose* mirror it
+// is, so the name must be one this root's registry holds — and a regular
+// file without the marker is something a person put there
+phase("18b. an old-path tree is kept when it holds an unmarked file, or when its name is not in this root's registry", async (home) => {
+  const { oldCache } = buildOldCacheHome(home)
+  const first = ocm(home, "list")
+  if (first.status !== 0) throw new Error(`ocm list exited ${first.status}:\n${first.stdout}\n${first.stderr}`)
+  const marker = "<!-- ocm: rendered from plugins/x/skills/y/SKILL.md @ 0000000 -->\n"
+  writeTree(join(oldCache, "links", MP, "skills", "adw--python-style"), { "SKILL.md": `# rendered\n${marker}` })
+  writeTree(join(oldCache, "links", MP, "skills", "adw--notes"), { "SKILL.md": "# my own notes\n" })
+  writeTree(join(oldCache, "links", "mp--stranger", "skills", "x--y"), { "SKILL.md": `# theirs\n${marker}` })
+  const before = snapTree(join(oldCache, "links"))
+  const second = ocm(home, "list")
+  if (second.status !== 0) throw new Error(`second ocm list exited ${second.status}:\n${second.stdout}\n${second.stderr}`)
+  if (second.stdout.split("\n").some((line) => line.startsWith("removed "))) {
+    throw new Error(`neither tree is provably ours, but something was removed:\n${second.stdout}`)
+  }
+  assertTreeUnchanged(before, [join(oldCache, "links")], "the old-path links tree")
 }, 300_000)
 
 test("3. ocm/core.js imports nothing outside node:* (static check)", () => {

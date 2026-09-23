@@ -314,6 +314,7 @@ export declare function lintCrossTool(marketplaceDir: string): string[]
 export declare function isGitRepo(dir: string): boolean
 export declare function git(args: string[], cwd?: string): Promise<{ ok: boolean; stdout: string; stderr: string }>
 export declare function pullRepo(entry: CoreMarketplaceEntry, name: string): Promise<CorePullResult>
+export declare function isRenderedFile(path: string): boolean
 export declare function readRegistry(): CoreRegistry
 export declare function registryWriterVersion(): string | null
 export declare function versionCompare(a: string, b: string): number
