@@ -5,7 +5,7 @@
 // removed as stray, even when the records lag (F8).
 import { existsSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { displacedRecords, isRenderedFile, setSkillsPath } from "../../loader/core.js"
+import { componentRoot, displacedRecords, isRenderedFile, setSkillsPath } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { OCM_DISPLACED_DIR, OCM_DISPLACED_RECORD_FILE, OCM_LINKS_DIR, OCM_LOADER_NAME, OCM_REGISTRY_FILE, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_PLUGINS_DIR } from "../paths"
 import { error, fixed, warning, type Finding } from "../findings"
@@ -74,6 +74,22 @@ export function checkStrays(registry: CoreRegistry, findings: Finding[], fix: bo
   }
 }
 
+// F270 (brief 47): the rendered-file half of the change-5 veto — the marker
+// names the source relative to the root that rendered it, so a source that
+// still exists under any registered root means stale records, not an orphan
+function renderedSourceRegistered(path: string, registry: CoreRegistry): boolean {
+  let content: string
+  try {
+    content = readFileSync(path, "utf8")
+  } catch {
+    return false
+  }
+  const match = content.match(/^<!-- ocm: rendered from (.+) @ .* -->$/m)
+  if (!match) return false
+  const source = match[1]!
+  return Object.values(registry.marketplaces).some((entry) => existsSync(join(componentRoot(entry), source)))
+}
+
 // brief 33 §1 change 2: the orphan sweep for <plugin>:<file> links in
 // commands/ and agents/ — live links no verb can remove once the registry
 // record is gone. Symlinks and rendered files enter; broken links are
@@ -106,8 +122,12 @@ export function checkOrphanLinks(registry: CoreRegistry, findings: Finding[], fi
       if (target !== null && !existsSync(path)) continue
       if (claimed.has(name.slice(0, colon))) continue
       // change 5: a link into a registered marketplace's root is never an
-      // orphan, whatever the per-plugin records say
-      if (target !== null && insideRegisteredRoot(target, registry)) {
+      // orphan, whatever the per-plugin records say; F270 (brief 47): so is a
+      // rendered file whose marker still resolves under a registered root
+      if (
+        (target !== null && insideRegisteredRoot(target, registry)) ||
+        (target === null && renderedSourceRegistered(path, registry))
+      ) {
         findings.push(error(`${path}: registry records are stale — run ocm update`))
       } else if (ocmOwned(path, target, registry)) {
         if (!registryUsable) cannotVerifyOwnership(path, findings)

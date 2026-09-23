@@ -1985,4 +1985,62 @@ phase("43. an unregistered links tree with no skills dir: doctor reports the tre
   }
   if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
 }, 600_000)
+
+// F270 (brief 47): the rendered-file half of the phase-35 veto — a rendered
+// command whose plugin record is hand-deleted while the marketplace entry
+// remains still has its source inside a registered root, so it is stale
+// records, never an orphan; before this, --fix removed and re-materialized
+// it in the same run, and every run repeated the cycle
+phase("44. a rendered command whose plugin record is hand-deleted but whose marketplace entry remains: reported as stale records, never removed, and --fix converges on nothing", async (home) => {
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { "greet-kit": { "plugin.json": PLUGIN_JSON, commands: { "greet.md": ROOTED_COMMAND } } } })
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp"]).status).toBe(0)
+  const rendered = join(cfg(home), "commands", "greet-kit:greet.md")
+  const stat = lstatSync(rendered)
+  if (stat.isSymbolicLink()) throw new Error(`expected a regular rendered file at ${rendered}, found a symlink — the fixture does not exercise the rendered path`)
+  if (!stat.isFile()) throw new Error(`expected a regular file at ${rendered}`)
+  if (!readFileSync(rendered, "utf8").includes("ocm: rendered from ")) {
+    throw new Error(`the file at ${rendered} lacks the rendered marker — the fixture does not exercise the rendered path`)
+  }
+  const bytes = readFileSync(rendered, "utf8")
+  writeTree(join(cfg(home), "commands"), { "mine.md": "# my own command\n" })
+  const registry = readRegistry(home)
+  delete registry.marketplaces.mp.plugins["greet-kit"] // the marketplace entry stays — F270
+  writeFileSync(registryFile(home), json(registry))
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a stale-records finding:\n${diagnosed.output}`)
+  const lines = diagnosed.output.split("\n").filter((l) => l.includes("greet-kit:greet.md"))
+  if (!lines.some((l) => l.includes("registry records are stale — run ocm update"))) {
+    throw new Error(`expected a stale-records finding naming greet-kit:greet.md:\n${diagnosed.output}`)
+  }
+  for (const line of lines) {
+    if (line.includes("no marketplace owns")) throw new Error(`a rendered file whose source lives in a registered root must never be reported as an orphan:\n${line}`)
+  }
+  // twice: the F270 bug repeated the remove/re-materialize cycle every run
+  for (const run of [1, 2]) {
+    const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+    if (fixed.status !== 1) throw new Error(`fix run ${run} exited ${fixed.status}, expected 1 — the stale-records error must persist:\n${fixed.output}`)
+    if (!existsSync(rendered)) throw new Error(`the rendered file at ${rendered} must survive fix run ${run} untouched`)
+    expect(readFileSync(rendered, "utf8")).toBe(bytes)
+    for (const line of fixedLines(fixed.output)) {
+      if (line.includes("greet-kit:greet.md")) throw new Error(`fix run ${run} claims a fix naming greet-kit:greet.md — a stale-records veto removes nothing:\n${line}`)
+    }
+    if (fixed.output.includes("re-materialized")) throw new Error(`fix run ${run} re-materializes components — the F270 remove/re-materialize loop:\n${fixed.output}`)
+  }
+  assertFileExists(join(cloneDir(home), "plugins", "greet-kit", "commands", "greet.md")) // the clone is untouched
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // ownership
+  if (existsSync(configFile(home))) {
+    try { JSON.parse(readFileSync(configFile(home), "utf8")) } catch (err) { throw new Error(`${configFile(home)} no longer parses after doctor --fix: ${err}`) }
+  }
+  const forbidden = []
+  const stack = [home]
+  while (stack.length) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".claude" || entry.name === ".agents") forbidden.push(join(dir, entry.name))
+      if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
+}, 600_000)
 }
