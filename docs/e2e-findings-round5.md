@@ -1052,3 +1052,43 @@ it is a harness that permitted it. Round 6 puts a shim named `ocm` first on
 the raw binary is unreachable from the test session; the guard function
 becomes redundant, which is the point. The disclosure itself was handled
 correctly and in full — that part of the protocol worked.
+
+---
+
+# v0.7.1 upgrade verification (2026-09-23)
+
+Run against `main` at 6c4d4b8 (briefs 42 and 43 merged), upgrading homes
+built by **published 0.6.1** in place — the condition the unit tests cannot
+reproduce. Every call went through a function refusing any `$HOME` outside
+`/tmp/ocm-e2e5/v071/homes/`; the real home was not touched.
+
+| Scenario | Finding | Result |
+|---|---|---|
+| upgrade, then CLI three times | F245 | **fixed** — one migration, then silent; nothing left at the old path; `skills.paths` and the displaced record point into the namespace; doctor exit 0 |
+| 0.6.1 TUI first (round 5's order), then CLI three times | F245 | **fixed** — same result |
+| interrupted after the moves, before any rewrite (state `in-progress`) | F244 | **fixed** — resumes, doctor exit 0 |
+| interrupted after the registry rewrite (the F244 window) | F244 | **fixed** — resumes, displaced record repointed, doctor exit 0 |
+| dual root, default root upgrades first | F247, F210/F248 | **fixed** — each root keeps its own clone, doctor exit 0 in both |
+| dual root, XDG root upgrades first | F247, F210/F248 | **fixed** — same |
+| newer-written home, older binary, stale loader | F232 | **fixed** — `list`/`doctor` warn and skip; loader bytes unchanged; `--version` writes nothing |
+
+Interrupts were built by hand: the whole command takes ~80 ms and the
+migration finishes inside the first 30, so a timed `kill -9` never landed
+in the window on this machine.
+
+**Not reachable, so no follow-up:** the same marketplace in two roots of a
+0.6.1 home. 0.6.1 cannot produce that state — the second `add` clones into
+the directory the first root occupies, fails, and its cleanup deletes the
+first root's clone. That is the shared-cache defect 0.7.0's per-root cache
+already ended.
+
+**Known residual, not fixed in v0.7.1:** a home that hit F244 *on 0.7.0*
+— no state file, all four trees already moved whole — is not repaired,
+because 0.7.1 sees neither a recorded state nor an old layout. It keeps a
+stale `skills.paths` entry and a displaced record naming the old path; the
+displaced copy itself is intact in the namespace and doctor names it.
+`doctor --fix` repairs the three broken command links. Reaching this state
+needed a kill inside a ~30 ms window of the first 0.7.0 command, so the
+population is near zero; a repair that also runs the rewrites when
+`skills.paths` or a displaced record still names the old layout is a small
+brief if anyone reports it.
