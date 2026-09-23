@@ -13,7 +13,7 @@ import { insideRegisteredRoot, ocmOwned, removePath } from "./doctor-links"
 
 // brief 33 §2 (F85): a run that cannot read the registry must not promise a
 // removal it would not perform — the finding names the registry repair instead
-export function cannotVerifyOwnership(path: string, findings: Finding[]): void {
+function cannotVerifyOwnership(path: string, findings: Finding[]): void {
   findings.push(
     error(
       `${path}: cannot verify ownership — the registry is unreadable (see the error above)\n` +

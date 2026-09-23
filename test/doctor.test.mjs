@@ -1785,12 +1785,23 @@ phase("39. a stale collision record naming a removed marketplace: the stale find
   if (forbidden.length) throw new Error(`expected nothing under ~/.claude or ~/.agents, found: ${forbidden.join(", ")}`)
 }, 600_000)
 
-// brief 46 §1, state 3: with an unreadable registry the invalid-MCP finding
-// must not promise a removal the run would not perform — it says ownership
-// cannot be verified and names the registry repair, reusing the
-// cannotVerifyOwnership wording from doctor-orphans.ts (states 1 and 2 are
-// phase 19's)
-phase("40. an unreadable registry plus a shape-invalid ocm-- MCP key: doctor --fix prints the cannot-verify wording instead of a removal promise, removes nothing, and the config bytes are unchanged", async (home) => {
+// brief 46 §1: with an unreadable registry the invalid-MCP finding keeps its
+// diagnosis — the entry is invalid whoever owns it, and opencode will not
+// start — and trades only its remedy: the removal promise becomes the
+// registry repair it waits on
+function expectInvalidMcpUnverifiable(output, registry) {
+  const lines = output.split("\n")
+  const at = lines.findIndex((l) => l.includes("ocm--adw--legacy") && l.includes("invalid MCP entry") && l.includes("opencode would refuse to start"))
+  if (at < 0) throw new Error(`the diagnosis for ocm--adw--legacy must survive an unreadable registry:\n${output}`)
+  if (lines[at].includes("(ocm doctor --fix)")) throw new Error(`a run that cannot remove the key must not promise it:\n${lines[at]}`)
+  const remedy = lines[at + 1] ?? ""
+  if (!(remedy.includes("cannot verify ownership") && remedy.includes("the registry is unreadable") && remedy.includes(registry) && remedy.includes("then run ocm doctor --fix"))) {
+    throw new Error(`expected the registry repair on the line after the diagnosis:\n${output}`)
+  }
+}
+
+// brief 46 §1, state 3 (states 1 and 2 are phase 19's)
+phase("40. an unreadable registry plus a shape-invalid ocm-- MCP key: doctor keeps the diagnosis, names the registry repair instead of a removal promise, removes nothing, and the config bytes are unchanged", async (home) => {
   // config safety: the user's keys predate every ocm write
   const userConfig = { model: "claude-sonnet-4-6", mcp: { "user-server": { type: "local", command: ["echo"] } } }
   writeTree(cfg(home), { "opencode.json": json(userConfig) })
@@ -1816,18 +1827,7 @@ phase("40. an unreadable registry plus a shape-invalid ocm-- MCP key: doctor --f
 
   const fixRun = ocm(home, ["doctor", "--fix"], 300_000)
   if (fixRun.status !== 1) throw new Error(`ocm doctor --fix exited ${fixRun.status}, expected 1 with an unreadable registry:\n${fixRun.output}`)
-  const lines = fixRun.output.split("\n")
-  for (const line of lines) {
-    if (line.includes("ocm--adw--legacy") && line.includes("opencode would refuse to start")) {
-      throw new Error(`a run that removes nothing must not promise the removal for ocm--adw--legacy:\n${line}`)
-    }
-  }
-  if (!lines.some((l) => l.includes("ocm--adw--legacy") && l.includes("cannot verify ownership") && l.includes("the registry is unreadable"))) {
-    throw new Error(`expected a cannot-verify finding naming ocm--adw--legacy:\n${fixRun.output}`)
-  }
-  if (!lines.some((l) => l.includes(registryFile(home)) && l.includes("then run ocm doctor --fix"))) {
-    throw new Error(`expected a recovery line naming ${registryFile(home)}:\n${fixRun.output}`)
-  }
+  expectInvalidMcpUnverifiable(fixRun.output, registryFile(home))
   // nothing removed, nothing "repaired"
   expect(readFileSync(configPath, "utf8")).toBe(configBytes)
   expect(readFileSync(registryFile(home), "utf8")).toBe("{\n")
@@ -1838,15 +1838,7 @@ phase("40. an unreadable registry plus a shape-invalid ocm-- MCP key: doctor --f
   // state 3 is not --fix-specific: the plain run prints the same wording
   const plain = ocm(home, ["doctor"], 300_000)
   if (plain.status !== 1) throw new Error(`ocm doctor exited ${plain.status}, expected 1 with an unreadable registry:\n${plain.output}`)
-  const plainLines = plain.output.split("\n")
-  for (const line of plainLines) {
-    if (line.includes("ocm--adw--legacy") && line.includes("opencode would refuse to start")) {
-      throw new Error(`the plain run must not promise the removal for ocm--adw--legacy:\n${line}`)
-    }
-  }
-  if (!plainLines.some((l) => l.includes("ocm--adw--legacy") && l.includes("cannot verify ownership") && l.includes("the registry is unreadable"))) {
-    throw new Error(`expected a cannot-verify finding naming ocm--adw--legacy in the plain run:\n${plain.output}`)
-  }
+  expectInvalidMcpUnverifiable(plain.output, registryFile(home))
 }, 600_000)
 
 // brief 46 §2: since brief 41 a command body referencing a plugin-root
