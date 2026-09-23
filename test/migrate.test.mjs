@@ -2,7 +2,7 @@
 // automatically, and the published bin resolves.
 
 import { spawnSync } from "node:child_process"
-import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
@@ -242,6 +242,9 @@ function migratedState(home, skillsDir) {
     registryFile(home), join(cfg(home), "tui.json"), join(cfg(home), "opencode.json"),
     ...readdirSync(skillsDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => join(skillsDir, e.name, "SKILL.md")),
   ]
+  // brief 43 §1: the migration state file, when a migration wrote one
+  const stateFile = join(rootCacheDir(home), "cache-migration.json")
+  if (existsSync(stateFile)) files.push(stateFile)
   // brief 38: the namespaced cache — the clone and the whole links tree,
   // symlinks by target
   const cache = []
@@ -334,10 +337,13 @@ phase("5. an old-layout cache referenced by the registry migrates into the names
   const output = `${result.stdout}\n${result.stderr}`
   if (result.status !== 0) throw new Error(`ocm list exited ${result.status} on the old-layout cache:\n${output}`)
 
-  // every old-layout item left ~/.cache/ocm/ and lives in the namespace: the
-  // clone with its history, the links tree, the displaced copy, the records
-  // file and the unconsumable stamp
-  const items = ["marketplaces", "links", "displaced", "displaced-records.json", "last-sync.json"]
+  // every old-layout item this root owns left ~/.cache/ocm/ and lives in the
+  // namespace: the clone with its history, the links tree, the displaced
+  // copy and the records file. The sync stamp is a throttle shared by every
+  // root: it is copied into the namespace and the original stays at the old
+  // path — observable here because the fixture's stamp is invalid JSON, so
+  // foldSyncStamp cannot have consumed it before the cache migration ran
+  const items = ["marketplaces", "links", "displaced", "displaced-records.json"]
   for (const item of items) assertAbsent(join(oldCache, item))
   const nsClone = join(ns, "marketplaces", MP)
   git(nsClone, ["rev-parse", "HEAD"]) // throws if the clone's history did not survive the move
@@ -345,6 +351,8 @@ phase("5. an old-layout cache referenced by the registry migrates into the names
   assertFileExists(join(join(ns, "displaced", TS), dest))
   assertFileExists(join(ns, "displaced-records.json"))
   assertFileExists(join(ns, "last-sync.json"))
+  assertFileExists(join(oldCache, "last-sync.json"))
+  expect(readFileSync(join(oldCache, "last-sync.json"), "utf8")).toBe("not json\n")
 
   // recorded absolute paths rewritten: the registry dir, the displaced
   // record's dir (its dest points into the config dir and stays), and
@@ -374,13 +382,29 @@ phase("5. an old-layout cache referenced by the registry migrates into the names
     expect(realpathSync(link)).toBe(realpathSync(source))
   }
 
-  // one moved line per item, on stdout, naming both paths
+  // one moved line per owned item, on stdout, naming both paths: the clone
+  // and the links mirror move per marketplace, not as whole top-level
+  // directories. The displaced copy's line is not exact-line-asserted — its
+  // move is proven by the path assertions above
   const moved = result.stdout.split("\n").filter((line) => line.startsWith("moved "))
-  for (const item of items) {
-    const line = `moved ${join(oldCache, item)} -> ${join(ns, item)}`
+  for (const [from, to] of [
+    [join(oldCache, "marketplaces", MP), join(ns, "marketplaces", MP)],
+    [join(oldCache, "links", MP), join(ns, "links", MP)],
+  ]) {
+    const line = `moved ${from} -> ${to}`
     if (!moved.includes(line)) throw new Error(`expected "${line}" in stdout:\n${result.stdout}`)
   }
-  if (moved.length !== items.length) throw new Error(`expected ${items.length} moved lines, got:\n${moved.join("\n")}`)
+  // the stamp is copied, never moved: no moved line names it
+  for (const line of moved) {
+    if (line.includes("last-sync.json")) throw new Error(`the shared sync stamp must not be reported moved:\n${line}`)
+  }
+  // everything at the old layout was this root's, so nothing warns about
+  // leftovers (the convergence property)
+  for (const line of result.stderr.split("\n")) {
+    if (/left (?:alone|in place)|another config root/i.test(line)) {
+      throw new Error(`everything in this single-root home was ours, but a warning names leftovers:\n${line}`)
+    }
+  }
 
   // invariants: user keys and files survive (config safety, ownership); a
   // user file at the cache root stays at its exact old path; one inside the
@@ -414,6 +438,9 @@ function cacheState(home) {
     }
   }
   for (const part of ["marketplaces", "links", "displaced"]) walk(join(ns, part))
+  // brief 43 §1: the migration state file, when a migration wrote one
+  const stateFile = join(ns, "cache-migration.json")
+  if (existsSync(stateFile)) entries.push([stateFile, readFileSync(stateFile, "utf8"), statSync(stateFile).mtimeMs])
   for (const path of [
     join(ns, "displaced-records.json"), join(ns, "last-sync.json"),
     registryFile(home), join(cfg(home), "opencode.json"), join(cfg(home), "tui.json"),
@@ -670,6 +697,492 @@ phase("10. an old-layout links tree the registry does not hold is left in place 
   // ownership: the user's hand-written command survives byte-identical
   expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# user command\n")
 })
+
+// brief 43 §2 (F247): the cache migration moves marketplaces, not
+// directories. Two config roots can share one old-layout cache, each
+// registry naming a different marketplace — each root's migration must move
+// only its own clone and mirror, and what remains at the old path is
+// unattributable: reported, never touched.
+
+// the file-level ocm() cannot set the child's XDG_CONFIG_HOME, and the
+// dual-root phases need exactly that. withFakeHome deletes the variable from
+// the environment, so every XDG-root spawn must set it explicitly
+function ocmEnv(home, args, env = {}, timeout = 120_000) {
+  const r = spawnSync(process.execPath, [OCM_BIN, ...args], {
+    env: { ...process.env, HOME: home, ...env }, encoding: "utf8", timeout,
+  })
+  return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" }
+}
+
+// bytes and symlink targets of everything under one or more trees, base64 so
+// binary git internals compare exactly — used to prove a tree neither moved,
+// changed nor grew
+function snapTree(...dirs) {
+  const entries = new Map()
+  const walk = (dir) => {
+    entries.set(dir, "dir")
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.isSymbolicLink()) entries.set(path, `link:${readlinkSync(path)}`)
+      else entries.set(path, readFileSync(path).toString("base64"))
+    }
+  }
+  for (const dir of dirs) walk(dir)
+  return entries
+}
+
+// compares a before-snapshot against the trees' current state; a root dir
+// that no longer exists reads as an empty tree, so a swallowed marketplace
+// fails as "deleted or moved" rather than an ENOENT
+function assertTreeUnchanged(before, dirs, what) {
+  const after = dirs.every((dir) => existsSync(dir)) ? snapTree(...dirs) : new Map()
+  for (const [path, value] of before) {
+    if (!after.has(path)) throw new Error(`${what}: ${path} was deleted or moved by the cache migration`)
+    if (after.get(path) !== value) throw new Error(`${what}: ${path} was modified by the cache migration`)
+  }
+  for (const path of after.keys()) {
+    if (!before.has(path)) throw new Error(`${what}: unexpected new entry at ${path}`)
+  }
+}
+
+const MP_A = "mp--alpha"
+const MP_B = "mp--beta"
+
+// one marketplace's half of the shared cache: a git clone plus its mirror
+function sharedMarketplace(oldCache, mp, plugin, skill) {
+  const clone = join(oldCache, "marketplaces", mp)
+  gitRepo(clone, { plugins: { [plugin]: {
+    commands: { "commit.md": `---\ndescription: ${plugin} commit helper\n---\n\nBody.\n` },
+    skills: { [skill]: { "SKILL.md": SKILL(skill) } },
+  } } })
+  writeTree(join(oldCache, "links", mp, "skills", `${plugin}--${skill}`), {
+    "SKILL.md": `---\nname: "${plugin}:${skill}"\ndescription: ${skill} guidance\n---\n\n# ${skill}\n\nUse the house style.\n<!-- ocm: rendered from plugins/${plugin}/skills/${skill}/SKILL.md @ ${shortSha(clone)} -->\n`,
+  })
+  return { mp, plugin, skill, clone, sha: git(clone, ["rev-parse", "HEAD"]) }
+}
+
+// the v2 registry shape for one marketplace of the shared cache, its dir
+// pointing at the old-layout clone
+function sharedRegistry(market) {
+  return {
+    version: 2,
+    marketplaces: {
+      [market.mp]: {
+        url: `https://github.com/example/${market.mp}`,
+        dir: market.clone, local: false, addedAt: ADDED_AT, mode: "auto",
+        ref: null, revision: null, syncIntervalMs: null,
+        trust: { code: "granted" }, lastSync: null,
+        plugins: {
+          [market.plugin]: {
+            source: `plugins/${market.plugin}`,
+            components: { command: ["commit.md"], skill: [market.skill] },
+            enabled: true, installedAt: ADDED_AT, version: null, manifest: {},
+          },
+        },
+      },
+    },
+  }
+}
+
+// one config root: a registry naming only its marketplace, a skills.paths
+// entry for its old mirror, and a command link into the old clone
+function sharedRoot(rootDir, market, oldSkills) {
+  writeTree(rootDir, {
+    ocm: { "registry.json": `${JSON.stringify(sharedRegistry(market), null, 2)}\n` },
+    "opencode.json": `${JSON.stringify({ model: "claude-sonnet-4-6", skills: { paths: [oldSkills] } }, null, 2)}\n`,
+    commands: { "mine.md": "# user command\n" },
+  })
+  const commandLink = join(rootDir, "commands", `${market.plugin}:commit.md`)
+  symlinkSync(join(market.clone, "plugins", market.plugin, "commands", "commit.md"), commandLink)
+  return { dir: rootDir, oldSkills, commandLink }
+}
+
+function buildDualRootHome(home) {
+  const oldCache = join(home, ".cache", "ocm")
+  const xdg = join(home, "xdg")
+  const alpha = sharedMarketplace(oldCache, MP_A, "adw", "python-style")
+  const beta = sharedMarketplace(oldCache, MP_B, "beta", "lint-style")
+  const defaultRoot = sharedRoot(cfg(home), alpha, join(oldCache, "links", MP_A, "skills"))
+  const xdgRoot = sharedRoot(join(xdg, "opencode"), beta, join(oldCache, "links", MP_B, "skills"))
+  return { oldCache, xdg, alpha, beta, defaultRoot, xdgRoot }
+}
+
+// one root's post-migration state: clone with git history, mirror, registry
+// dir repointed, command link resolving into the namespace, skills.paths
+// rewritten. Config safety and ownership: the user's model key and
+// hand-written command survive byte-identical
+function assertRootMigrated(home, xdg, market, root) {
+  const ns = rootCacheDir(home, xdg)
+  const nsClone = join(ns, "marketplaces", market.mp)
+  const head = git(nsClone, ["rev-parse", "HEAD"])
+  if (head !== market.sha) throw new Error(`expected ${market.mp}'s git history at ${nsClone} (HEAD ${market.sha}), got ${head}`)
+  assertFileExists(join(ns, "links", market.mp, "skills", `${market.plugin}--${market.skill}`, "SKILL.md"))
+  const registry = JSON.parse(readFileSync(join(root.dir, "ocm", "registry.json"), "utf8"))
+  if (registry.marketplaces[market.mp].dir !== nsClone) {
+    throw new Error(`expected the registry dir for ${market.mp} to be repointed to ${nsClone}, got ${registry.marketplaces[market.mp].dir}`)
+  }
+  const resolved = realpathSync(root.commandLink)
+  const expected = realpathSync(join(nsClone, "plugins", market.plugin, "commands", "commit.md"))
+  if (resolved !== expected) throw new Error(`expected ${root.commandLink} to resolve to ${expected}, got ${resolved}`)
+  const config = JSON.parse(readFileSync(join(root.dir, "opencode.json"), "utf8"))
+  const nsSkills = join(ns, "links", market.mp, "skills")
+  if (config.skills.paths.includes(root.oldSkills)) {
+    throw new Error(`skills.paths still holds the old-layout path ${root.oldSkills}: ${JSON.stringify(config.skills.paths)}`)
+  }
+  if (config.skills.paths.filter((p) => p === nsSkills).length !== 1) {
+    throw new Error(`expected skills.paths to hold ${nsSkills} exactly once: ${JSON.stringify(config.skills.paths)}`)
+  }
+  expect(config.model).toBe("claude-sonnet-4-6")
+  expect(readFileSync(join(root.dir, "commands", "mine.md"), "utf8")).toBe("# user command\n")
+}
+
+// scoped to the old-layout item paths: the stranded-install notice names
+// config roots, not the cache, and must not trip this check
+const assertNoOldCacheWarning = (stderr, oldCache, when) => {
+  const line = stderr.split("\n").find((l) =>
+    ["marketplaces", "links", "displaced", "displaced-records.json"].some((item) => l.includes(join(oldCache, item))),
+  )
+  if (line) throw new Error(`${when}: a warning still names an old-layout path:\n${line}`)
+}
+
+phase("11. dual roots sharing one old-layout cache: the default root's migration moves only its own marketplace, and the XDG root's follows intact", async (home) => {
+  const d = buildDualRootHome(home)
+  const theirs = snapTree(join(d.oldCache, "marketplaces", MP_B), join(d.oldCache, "links", MP_B))
+  const first = ocm(home, "list")
+  if (first.status !== 0) throw new Error(`ocm list exited ${first.status} on the default root:\n${first.stdout}\n${first.stderr}`)
+  assertRootMigrated(home, undefined, d.alpha, d.defaultRoot)
+  assertTreeUnchanged(theirs, [join(d.oldCache, "marketplaces", MP_B), join(d.oldCache, "links", MP_B)], `the XDG root's marketplace ${MP_B}`)
+  const second = ocmEnv(home, ["list"], { XDG_CONFIG_HOME: d.xdg })
+  if (second.status !== 0) throw new Error(`ocm list exited ${second.status} on the XDG root:\n${second.stdout}\n${second.stderr}`)
+  assertRootMigrated(home, d.xdg, d.beta, d.xdgRoot)
+  // convergence: everything either root owned has moved, so the second run
+  // warns about nothing left at the old path
+  assertNoOldCacheWarning(second.stderr, d.oldCache, "after both roots migrated")
+}, 600_000)
+
+phase("12. dual roots sharing one old-layout cache: the XDG root's migration moves only its own marketplace, and the default root's follows intact", async (home) => {
+  const d = buildDualRootHome(home)
+  const theirs = snapTree(join(d.oldCache, "marketplaces", MP_A), join(d.oldCache, "links", MP_A))
+  const first = ocmEnv(home, ["list"], { XDG_CONFIG_HOME: d.xdg })
+  if (first.status !== 0) throw new Error(`ocm list exited ${first.status} on the XDG root:\n${first.stdout}\n${first.stderr}`)
+  assertRootMigrated(home, d.xdg, d.beta, d.xdgRoot)
+  assertTreeUnchanged(theirs, [join(d.oldCache, "marketplaces", MP_A), join(d.oldCache, "links", MP_A)], `the default root's marketplace ${MP_A}`)
+  const second = ocm(home, "list")
+  if (second.status !== 0) throw new Error(`ocm list exited ${second.status} on the default root:\n${second.stdout}\n${second.stderr}`)
+  assertRootMigrated(home, undefined, d.alpha, d.defaultRoot)
+  assertNoOldCacheWarning(second.stderr, d.oldCache, "after both roots migrated")
+}, 600_000)
+
+// brief 43 §2: a displaced record belongs to this root only when its
+// marketplace is one of this root's. The other root's record — and the copy
+// it names — stay in the old records file at the old path.
+phase("13. a displaced record for another root's marketplace is not moved: our record and copy migrate, theirs stay in the old records file at the old path", async (home) => {
+  const { oldCache, dest } = buildOldCacheHome(home)
+  const ns = rootCacheDir(home)
+  const theirMp = "mp--theirs"
+  const theirDest = join(cfg(home), "agents", "beta:reviewer.md")
+  const theirCopy = join(oldCache, "displaced", TS, theirDest)
+  mkdirSync(dirname(theirCopy), { recursive: true })
+  writeFileSync(theirCopy, "# another root's reviewer\n")
+  const oldRecords = join(oldCache, "displaced-records.json")
+  const records = JSON.parse(readFileSync(oldRecords, "utf8"))
+  records.push({ marketplace: theirMp, plugin: "beta", dest: theirDest, dir: join(oldCache, "displaced", TS) })
+  writeFileSync(oldRecords, `${JSON.stringify(records, null, 2)}\n`)
+
+  const result = ocm(home, "list")
+  if (result.status !== 0) throw new Error(`ocm list exited ${result.status}:\n${result.stdout}\n${result.stderr}`)
+
+  // ours moved: the copy under the namespace displaced dir, the record in
+  // the namespace records file with dir rewritten to the namespace path
+  assertFileExists(join(ns, "displaced", TS, dest))
+  expect(JSON.parse(readFileSync(join(ns, "displaced-records.json"), "utf8"))).toEqual([
+    { marketplace: MP, plugin: "adw", dest, dir: join(ns, "displaced", TS) },
+  ])
+  // theirs did not: the copy byte-identical at the old path, the record
+  // still in the old records file — which no longer names ours, or the
+  // migration would re-fire forever
+  assertFileExists(theirCopy)
+  expect(readFileSync(theirCopy, "utf8")).toBe("# another root's reviewer\n")
+  expect(JSON.parse(readFileSync(oldRecords, "utf8"))).toEqual([
+    { marketplace: theirMp, plugin: "beta", dest: theirDest, dir: join(oldCache, "displaced", TS) },
+  ])
+  // config safety and ownership: the user's keys and hand-written command
+  // survive the rewrites byte-identical
+  const config = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
+  expect(config.model).toBe("claude-sonnet-4-6")
+  expect(config.skills.paths).toContain(join(home, "my-skills"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# user command\n")
+  // the old file no longer naming our record is what stops the migration
+  // re-firing: a second run reports no migration work (the unreferenced
+  // warning about their leftovers is expected, and is not migration work)
+  const second = ocm(home, "list")
+  if (second.status !== 0) throw new Error(`second ocm list exited ${second.status}:\n${second.stdout}\n${second.stderr}`)
+  const secondOutput = `${second.stdout}\n${second.stderr}`
+  if (/migrat|moved|relink/i.test(secondOutput)) throw new Error(`the second run reported migration work:\n${secondOutput}`)
+}, 300_000)
+
+// brief 43 §2: what remains at the old path is by definition unattributable
+// — reportUnreferencedOldCache says so without touching it. Nothing under
+// old-path marketplaces/ or displaced/ is ever deleted or moved except the
+// items this root's registry and records name.
+phase("14. unattributable leftovers warn and survive: the stranger clone and the stray displaced copy stay byte-identical at their old paths", async (home) => {
+  const { oldCache } = buildOldCacheHome(home)
+  writeTree(join(oldCache, "marketplaces", "stranger-mp"), { "README.md": "# a stranger's clone\n" })
+  const strayCopy = join(oldCache, "displaced", "2026-09-02T00-00-00-000Z", join(cfg(home), "agents", "stranger:reviewer.md"))
+  mkdirSync(dirname(strayCopy), { recursive: true })
+  writeFileSync(strayCopy, "# a stranger's displaced original\n")
+
+  const before = {
+    marketplaces: snapTree(join(oldCache, "marketplaces")),
+    displaced: snapTree(join(oldCache, "displaced")),
+  }
+  const result = ocm(home, "list")
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 0) throw new Error(`ocm list exited ${result.status}:\n${output}`)
+
+  // the strangers survive byte-identical at their exact old paths
+  assertFileExists(join(oldCache, "marketplaces", "stranger-mp", "README.md"))
+  expect(readFileSync(join(oldCache, "marketplaces", "stranger-mp", "README.md"), "utf8")).toBe("# a stranger's clone\n")
+  assertFileExists(strayCopy)
+  expect(readFileSync(strayCopy, "utf8")).toBe("# a stranger's displaced original\n")
+  // the negative, explicitly: apart from this root's own clone and displaced
+  // copy, nothing under the old marketplaces/ or displaced/ trees was
+  // deleted, moved or modified
+  const owned = (path) => [join(oldCache, "marketplaces", MP), join(oldCache, "displaced", TS)].some(
+    (root) => path === root || path.startsWith(`${root}/`),
+  )
+  for (const item of ["marketplaces", "displaced"]) {
+    const after = snapTree(join(oldCache, item))
+    for (const [path, value] of after) {
+      if (!before[item].has(path)) throw new Error(`a new entry appeared under the old ${item} tree: ${path}`)
+      if (before[item].get(path) !== value) throw new Error(`${path} was modified by the cache migration`)
+    }
+    for (const path of before[item].keys()) {
+      if (!after.has(path) && !owned(path)) {
+        throw new Error(`${path} was deleted or moved by the cache migration — only ${MP}'s clone and this root's own displaced copy were ours to move`)
+      }
+    }
+  }
+  // and the leftovers are reported, not silently kept
+  for (const item of ["marketplaces", "displaced"]) {
+    const path = join(oldCache, item)
+    const line = result.stderr.split("\n").find((l) => l.includes(path))
+    if (!line) throw new Error(`expected a stderr line naming ${path}:\n${result.stderr}`)
+    if (!/left (?:alone|in place)|another config root/i.test(line)) {
+      throw new Error(`the line for ${path} does not say it was left alone / may belong to another config root:\n${line}`)
+    }
+  }
+  // config safety and ownership: the user's keys and hand-written command
+  // survive the rewrites byte-identical
+  const config = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
+  expect(config.model).toBe("claude-sonnet-4-6")
+  expect(config.skills.paths).toContain(join(home, "my-skills"))
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# user command\n")
+}, 300_000)
+
+// brief 43 §1 (F244/F245): cacheMigrationNeeded() read the rewrites' end
+// state, so a process killed after the moves and the registry-dir rewrite
+// read as finished forever, and a 0.6.1 loader re-creating links/<name> at
+// the old path read as never-started forever. The migration now writes a
+// state file under the namespace cache root: absent → the old-layout
+// condition decides; in-progress → resume; done → never again.
+
+phase("15. a migration interrupted after the registry-dir rewrite resumes on the next command and finishes, marking the state done", async (home) => {
+  const { oldCache, oldSkills, dest } = buildOldCacheHome(home)
+  const ns = rootCacheDir(home)
+  // the interrupted window, built by hand (a kill -9 race does not belong in
+  // the suite): the four renames, the stamp copy and the registry-dir rewrite
+  // ran; the other three rewrites never did
+  for (const [from, to] of [
+    [join(oldCache, "marketplaces", MP), join(ns, "marketplaces", MP)],
+    [join(oldCache, "links", MP), join(ns, "links", MP)],
+    [join(oldCache, "displaced"), join(ns, "displaced")],
+    [join(oldCache, "displaced-records.json"), join(ns, "displaced-records.json")],
+  ]) {
+    mkdirSync(dirname(to), { recursive: true })
+    renameSync(from, to)
+  }
+  copyFileSync(join(oldCache, "last-sync.json"), join(ns, "last-sync.json"))
+  // the displaced tree moved wholesale, so only marketplaces/ and links/ keep
+  // an emptied parent to prune
+  for (const part of ["marketplaces", "links"]) rmdirSync(join(oldCache, part))
+  const registry = JSON.parse(readFileSync(registryFile(home), "utf8"))
+  registry.marketplaces[MP].dir = join(ns, "marketplaces", MP)
+  writeFileSync(registryFile(home), `${JSON.stringify(registry, null, 2)}\n`)
+  const stateFile = join(ns, "cache-migration.json")
+  writeFileSync(stateFile, `${JSON.stringify({ state: "in-progress", marketplaces: [MP] }, null, 2)}\n`)
+
+  const result = ocm(home, "list")
+  const output = `${result.stdout}\n${result.stderr}`
+  if (result.status !== 0) throw new Error(`ocm list exited ${result.status} on the interrupted home:\n${output}`)
+
+  // skills.paths finished: no dead old-layout entry, the namespace one present
+  const config = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
+  const nsSkills = join(ns, "links", MP, "skills")
+  if (config.skills.paths.includes(oldSkills)) {
+    throw new Error(`skills.paths still holds the dead old-layout path ${oldSkills}: ${JSON.stringify(config.skills.paths)}`)
+  }
+  if (config.skills.paths.filter((p) => p === nsSkills).length !== 1) {
+    throw new Error(`expected skills.paths to hold ${nsSkills} exactly once: ${JSON.stringify(config.skills.paths)}`)
+  }
+  expect(config.model).toBe("claude-sonnet-4-6")
+  expect(config.skills.paths).toContain(join(home, "my-skills"))
+
+  // the displaced record's dir finished: it names the namespace displaced path
+  expect(JSON.parse(readFileSync(join(ns, "displaced-records.json"), "utf8"))).toEqual([
+    { marketplace: MP, plugin: "adw", dest, dir: join(ns, "displaced", TS) },
+  ])
+
+  // links still resolve into the namespace clone: the config-dir command
+  // link and the mirror-internal reference.md symlink
+  const nsClone = join(ns, "marketplaces", MP)
+  for (const [link, source] of [
+    [join(cfg(home), "commands", "adw:commit.md"), join(nsClone, "plugins", "adw", "commands", "commit.md")],
+    [join(nsSkills, "adw--python-style", "reference.md"), join(nsClone, "plugins", "adw", "skills", "python-style", "reference.md")],
+  ]) {
+    const target = readlinkSync(link)
+    if (!target.startsWith(`${nsClone}/`)) throw new Error(`expected ${link} -> somewhere under ${nsClone}, found ${target}`)
+    expect(realpathSync(link)).toBe(realpathSync(source))
+  }
+
+  // the state file now reads done, and the resume warned about no hand moves
+  const state = JSON.parse(readFileSync(stateFile, "utf8"))
+  if (state.state !== "done") {
+    throw new Error(`expected the state file at ${stateFile} to read done after the resume:\n${readFileSync(stateFile, "utf8")}`)
+  }
+  if (output.includes("move it by hand")) throw new Error(`the resume reported a collision to move by hand:\n${output}`)
+
+  // ownership: the user's hand-written command survives the resume
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# user command\n")
+}, 300_000)
+
+phase("16. done means done: a 0.6.1 loader re-creating links/<mp> at the old path does not re-trigger the migration", async (home) => {
+  const { oldCache } = buildOldCacheHome(home)
+  const first = ocm(home, "list")
+  if (first.status !== 0) throw new Error(`ocm list exited ${first.status}:\n${first.stdout}\n${first.stderr}`)
+  const stateFile = join(rootCacheDir(home), "cache-migration.json")
+  assertFileExists(stateFile)
+  const done = JSON.parse(readFileSync(stateFile, "utf8"))
+  if (done.state !== "done") throw new Error(`expected the state file at ${stateFile} to read done after the migration, got ${done.state}`)
+
+  // the 0.6.1-loader scenario: a small links tree re-appears at the old path
+  writeTree(join(oldCache, "links", MP, "skills", "adw--python-style"), {
+    "SKILL.md": `---\nname: "adw:python-style"\ndescription: python-style guidance\n---\n\n# python-style\n\nre-created by an old loader\n`,
+  })
+  const stateBytes = readFileSync(stateFile, "utf8")
+  const stateMtime = statSync(stateFile).mtimeMs
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const tree = snapTree(join(oldCache, "links"))
+
+  const second = ocm(home, "list")
+  const output = `${second.stdout}\n${second.stderr}`
+  if (second.status !== 0) throw new Error(`second ocm list exited ${second.status}:\n${output}`)
+  if (second.stdout.split("\n").some((line) => line.startsWith("moved "))) {
+    throw new Error(`done must mean done, but the second run moved something:\n${second.stdout}`)
+  }
+  if (output.includes("move it by hand")) {
+    throw new Error(`the re-created old-path links tree was treated as a migration collision:\n${output}`)
+  }
+  expect(readFileSync(stateFile, "utf8")).toBe(stateBytes)
+  expect(statSync(stateFile).mtimeMs).toBe(stateMtime)
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
+  assertTreeUnchanged(tree, [join(oldCache, "links")], "the re-created old-path links tree")
+  // the unreferenced-old-cache warning about the re-created tree is expected
+  // here and is deliberately not asserted against — only the migration
+  // itself must not run
+}, 300_000)
+
+phase("17. an already-migrated 0.7.0 home (no state file, old layout gone) is a no-op and grows no state file", async (home) => {
+  buildOldCacheHome(home)
+  const first = ocm(home, "list")
+  if (first.status !== 0) throw new Error(`ocm list exited ${first.status}:\n${first.stdout}\n${first.stderr}`)
+  // precondition: the first run moved the old layout away — a no-op check
+  // against an unmigrated cache is vacuous
+  assertAbsent(join(home, ".cache", "ocm", "marketplaces"))
+  // 0.7.0 wrote no state file — removing one matches that home exactly
+  const stateFile = join(rootCacheDir(home), "cache-migration.json")
+  rmSync(stateFile, { force: true })
+  const before = cacheState(home)
+  const second = ocm(home, "list")
+  if (second.status !== 0) throw new Error(`second ocm list exited ${second.status}:\n${second.stdout}\n${second.stderr}`)
+  const output = `${second.stdout}\n${second.stderr}`
+  if (/migrat|moved|relink/i.test(output)) throw new Error(`the second run reported migration work:\n${output}`)
+  expect(cacheState(home)).toEqual(before)
+  assertAbsent(stateFile)
+}, 300_000)
+
+// brief 43 §3 (F245's residue): once the state file says done the migration
+// never runs again, but a 0.6.1 loader's re-created links/<name> tree still
+// sits at the old path and reportUnreferencedOldCache warns about it on every
+// command. A completed migration may remove such a tree only when it can
+// prove the tree is its own: every leaf a live symlink resolving into a
+// clone this root's registry names. Anything that fails the proof stays and
+// keeps warning; old-path marketplaces/ and displaced/ are never touched.
+phase("18. a post-migration old-path mirror into this root's own clones is removed; one into a clone this root does not own is kept", async (home) => {
+  const { oldCache } = buildOldCacheHome(home)
+  const first = ocm(home, "list")
+  if (first.status !== 0) throw new Error(`ocm list exited ${first.status}:\n${first.stdout}\n${first.stderr}`)
+  const ns = rootCacheDir(home)
+  const stateFile = join(ns, "cache-migration.json")
+  const done = JSON.parse(readFileSync(stateFile, "utf8"))
+  if (done.state !== "done") throw new Error(`expected the state file at ${stateFile} to read done, got ${done.state}`)
+
+  // ours: a 0.6.1-style mirror at the old path, its one leaf a live symlink
+  // into this root's namespace clone
+  const nsReference = join(ns, "marketplaces", MP, "plugins", "adw", "skills", "python-style", "reference.md")
+  assertFileExists(nsReference)
+  const ours = join(oldCache, "links", MP, "skills", "adw--python-style", "reference.md")
+  mkdirSync(dirname(ours), { recursive: true })
+  symlinkSync(nsReference, ours)
+  // theirs: a stranger's clone at the old path, and a mirror pointing into it
+  const theirClone = join(oldCache, "marketplaces", "mp--theirs")
+  writeTree(theirClone, { plugins: { beta: { skills: { "lint-style": { "reference.md": "# their references\n" } } } } })
+  const theirs = join(oldCache, "links", "mp--theirs", "skills", "beta--lint-style", "reference.md")
+  mkdirSync(dirname(theirs), { recursive: true })
+  const theirTarget = join(theirClone, "plugins", "beta", "skills", "lint-style", "reference.md")
+  symlinkSync(theirTarget, theirs)
+  // a stray displaced copy, so the displaced negative below is real
+  const strayCopy = join(oldCache, "displaced", "2026-09-02T00-00-00-000Z", join(cfg(home), "agents", "stranger:reviewer.md"))
+  mkdirSync(dirname(strayCopy), { recursive: true })
+  writeFileSync(strayCopy, "# a stranger's displaced original\n")
+
+  const stateBytes = readFileSync(stateFile, "utf8")
+  const before = {
+    marketplaces: snapTree(join(oldCache, "marketplaces")),
+    displaced: snapTree(join(oldCache, "displaced")),
+  }
+  const second = ocm(home, "list")
+  const output = `${second.stdout}\n${second.stderr}`
+  if (second.status !== 0) throw new Error(`second ocm list exited ${second.status}:\n${output}`)
+
+  // ours removed, one stdout line naming the tree; theirs kept at its exact
+  // old path with an identical symlink target
+  assertAbsent(join(oldCache, "links", MP))
+  if (!second.stdout.split("\n").some((line) => line.startsWith("removed ") && line.includes(join(oldCache, "links", MP)))) {
+    throw new Error(`expected a "removed " line naming ${join(oldCache, "links", MP)} in stdout:\n${second.stdout}`)
+  }
+  assertFileExists(theirs)
+  expect(readlinkSync(theirs)).toBe(theirTarget)
+  // the old links dir survives (theirs remains) and the warning still fires
+  assertFileExists(join(oldCache, "links"))
+  const line = second.stderr.split("\n").find((l) => l.includes(join(oldCache, "links")))
+  if (!line) throw new Error(`expected a stderr line naming ${join(oldCache, "links")}:\n${second.stderr}`)
+  if (!/left (?:alone|in place)|another config root/i.test(line)) {
+    throw new Error(`the line does not say the tree was left alone / may belong to another config root:\n${line}`)
+  }
+  // the cleanup does not rewrite the state file
+  expect(readFileSync(stateFile, "utf8")).toBe(stateBytes)
+  // the cleanup is links-only: nothing under old-path marketplaces/ or
+  // displaced/ was deleted, moved or modified
+  assertTreeUnchanged(before.marketplaces, [join(oldCache, "marketplaces")], "the old-path marketplaces tree")
+  assertTreeUnchanged(before.displaced, [join(oldCache, "displaced")], "the old-path displaced tree")
+  // config safety and ownership: the user's keys and hand-written command
+  // survive byte-identical
+  const config = JSON.parse(readFileSync(join(cfg(home), "opencode.json"), "utf8"))
+  expect(config.model).toBe("claude-sonnet-4-6")
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# user command\n")
+}, 300_000)
 
 test("3. ocm/core.js imports nothing outside node:* (static check)", () => {
   // walk every module ocm/core.js pulls in: a bare specifier must be a node:*

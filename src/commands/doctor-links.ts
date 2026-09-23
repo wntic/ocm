@@ -13,7 +13,7 @@ import {
 } from "../../loader/core.js"
 import type { CoreRegistry } from "../../loader/core.js"
 import { materializeLinks } from "../install"
-import { HOME, OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
+import { HOME, OCM_CACHE_DIR, OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { error, fixed, type Finding } from "../findings"
 
 function errText(err: unknown): string {
@@ -59,6 +59,11 @@ export function removePath(path: string, findings: Finding[]): void {
 
 export function checkBrokenLinks(registry: CoreRegistry, findings: Finding[], fix: boolean): void {
   const managed = managedRoots(registry)
+  // brief 43 §4: an interrupted migration leaves links targeting the old
+  // clone path of a marketplace the registry still names — the exact links
+  // repointSymlinks re-points. They are ocm's for the label, but --fix
+  // repairs them through re-materialization, not removal.
+  const oldLayout = Object.keys(registry.marketplaces).map((name) => join(OCM_CACHE_DIR, "marketplaces", name))
   for (const dir of [OPENCODE_COMMANDS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_PLUGINS_DIR]) {
     let entries: string[]
     try {
@@ -75,9 +80,11 @@ export function checkBrokenLinks(registry: CoreRegistry, findings: Finding[], fi
         continue
       }
       if (existsSync(path)) continue
-      if (!managed.some((root) => resolvesInside(target, root))) {
+      const ocms = managed.some((root) => resolvesInside(target, root))
+      const moved = oldLayout.some((root) => insideDir(target, root))
+      if (!ocms && !moved) {
         findings.push(error(`${path}: broken symlink → ${target} (not ocm's, left in place)`))
-      } else if (fix) {
+      } else if (ocms && fix) {
         removePath(path, findings)
       } else {
         findings.push(error(`${path}: broken symlink → ${target}`))

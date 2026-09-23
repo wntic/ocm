@@ -1083,4 +1083,58 @@ phase("25. ownership through doctor --fix: user keys, skills entry, command and 
   expect(existing().map((p) => readFileSync(p, "utf8"))).toEqual(before)
   if (fixedLines(again.output).length) throw new Error(`a second --fix must claim no fixes:\n${again.output}`)
 }, 600_000)
+
+// realpath on both sides: macOS temp dirs sit behind /var -> /private/var
+function assertResolves(dest, source) {
+  if (!existsSync(dest) || !lstatSync(dest).isSymbolicLink()) throw new Error(`expected a symlink at ${dest}`)
+  expect(realpathSync(dest)).toBe(realpathSync(source))
+}
+
+// brief 43 §4 (F244, second half): an interrupted migration — killed after
+// the clone move and registry rewrite but before the symlinks were repointed
+// — leaves the registry and clone at the new cache layout while the command
+// symlink still targets the old flat one. Doctor labeled that link
+// "(not ocm's, left in place)" while --fix repaired it anyway; the label must
+// match what --fix believes, and a genuinely foreign broken link must keep
+// both the label and its place on disk.
+phase("26. an interrupted-migration home: doctor labels ocm's own broken command link as ocm's, not (not ocm's, left in place), and --fix repairs it while the foreign broken link keeps the label and stays untouched", async (home) => {
+  expect(ocm(home, ["init"]).status).toBe(0)
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } } })
+  expect(ocm(home, ["add", `file://${remote}`, "--name", "mp"]).status).toBe(0)
+  const link = join(cfg(home), "commands", "adw:commit.md")
+  assertResolves(link, join(cloneDir(home), "plugins", "adw", "commands", "commit.md"))
+  // the post-kill state, built by hand: the clone stays at the new layout
+  // path, the link is re-pointed at the old flat one, which must not exist
+  const oldTarget = join(home, ".cache", "ocm", "marketplaces", "mp", "plugins", "adw", "commands", "commit.md")
+  if (existsSync(oldTarget)) throw new Error(`the old-layout target ${oldTarget} must not exist on a fresh add`)
+  rmSync(link)
+  symlinkSync(oldTarget, link)
+  // a genuinely foreign broken link: nothing ocm owns is its target
+  const foreign = join(cfg(home), "commands", "user-gone.md")
+  symlinkSync(join(home, "gone", "user.md"), foreign)
+
+  const diagnosed = ocm(home, ["doctor"], 300_000)
+  if (diagnosed.status !== 1) throw new Error(`ocm doctor exited ${diagnosed.status}, expected 1 with a broken ocm link:\n${diagnosed.output}`)
+  const moved = diagnosed.output.split("\n").find((l) => l.includes("adw:commit.md") && l.includes("broken symlink"))
+  if (!moved) throw new Error(`expected a broken-symlink finding naming adw:commit.md:\n${diagnosed.output}`)
+  if (moved.includes("not ocm's")) {
+    throw new Error(`doctor disowns its own interrupted-migration link while --fix repairs it:\n${moved}`)
+  }
+  const foreignLine = diagnosed.output.split("\n").find((l) => l.includes("user-gone.md") && l.includes("broken symlink"))
+  if (!foreignLine) throw new Error(`expected a broken-symlink finding naming user-gone.md:\n${diagnosed.output}`)
+  if (!foreignLine.includes("(not ocm's, left in place)")) {
+    throw new Error(`the foreign broken link must keep the (not ocm's, left in place) label:\n${foreignLine}`)
+  }
+
+  // consistency with --fix: the run that repairs the link holds the same
+  // ownership belief the report states — the foreign link stays an error
+  const fixed = ocm(home, ["doctor", "--fix"], 300_000)
+  if (!fixed.output.split("\n").some((l) => l.includes("user-gone.md") && l.includes("not ocm's"))) {
+    throw new Error(`the foreign link's not-ocm's error must persist through --fix:\n${fixed.output}`)
+  }
+  if (fixed.status !== 1) throw new Error(`ocm doctor --fix exited ${fixed.status}, expected 1 with the foreign link still an error:\n${fixed.output}`)
+  assertResolves(link, join(cloneDir(home), "plugins", "adw", "commands", "commit.md"))
+  if (!lstatSync(foreign).isSymbolicLink()) throw new Error(`the foreign broken link at ${foreign} must survive --fix untouched`)
+}, 600_000)
 }

@@ -6,12 +6,14 @@
 // the pre-spec-03 skill mapping from the old-layout symlinks before the old
 // layout moves.
 import {
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   rmdirSync,
@@ -33,18 +35,56 @@ import {
   OPENCODE_PLUGINS_DIR,
 } from "./paths"
 
-// the stamp moves with the rest but never counts as the old layout: it is not
-// proof anyone references the cache
+// the stamp is copied with the rest, never moved, and never counts as the old
+// layout: it is not proof anyone references the cache
 const OLD_ITEMS = ["marketplaces", "links", "displaced", "displaced-records.json"]
+
+const OLD_DISPLACED_DIR = join(OCM_CACHE_DIR, "displaced")
+const OLD_DISPLACED_PREFIX = `${OLD_DISPLACED_DIR}/`
+
+// brief 43 §1: the migration records its progress instead of inferring it
+// from the rewrites' end state — a kill after the moves reads as finished
+// forever, and an old loader re-creating links/<name> at the old path reads
+// as never started
+const MIGRATION_STATE_FILE = join(OCM_ROOT_CACHE_DIR, "cache-migration.json")
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+// tolerant read: absent or unparseable reads as absent, so a corrupt state
+// file falls back to the old-layout condition instead of throwing
+function readMigrationState(): { state: "in-progress" | "done"; marketplaces: string[] } | undefined {
+  let raw: unknown
+  try {
+    raw = JSON.parse(readFileSync(MIGRATION_STATE_FILE, "utf8"))
+  } catch {
+    return undefined
+  }
+  if (!isRecord(raw) || (raw.state !== "in-progress" && raw.state !== "done")) return undefined
+  const marketplaces = Array.isArray(raw.marketplaces) ? raw.marketplaces.filter((name): name is string => typeof name === "string") : []
+  return { state: raw.state, marketplaces }
+}
+
+function writeMigrationState(state: "in-progress" | "done", marketplaces: string[]): void {
+  writeJsonAtomic(MIGRATION_STATE_FILE, `${JSON.stringify({ state, marketplaces }, null, 2)}\n`)
 }
 
 // must agree with migrateLegacyCache exactly: the old layout on disk plus the
 // active root's registry referencing it. Tolerant read — a corrupt registry
 // cannot reference anything and must not throw here.
 export function cacheMigrationNeeded(): boolean {
+  // brief 43 §1: recorded state decides before the layout does — done means
+  // the old layout can never re-trigger the migration, in-progress means a
+  // killed run resumes however the rewrites ended
+  const recorded = readMigrationState()
+  if (recorded !== undefined) {
+    if (recorded.state === "in-progress") return true
+    // brief 43 §3: done never migrates again, but a re-created old-path
+    // links tree may still be provably ours to remove — the proof runs
+    // under the same lock, so it triggers the block without re-running it
+    return existsSync(join(OCM_CACHE_DIR, "links"))
+  }
   // The registry naming an old path is the whole condition. The moves run
   // before the rewrites, so a crash between them leaves the old directories
   // gone and the registry still pointing at them; also requiring the
@@ -81,11 +121,11 @@ export function cacheMigrationNeeded(): boolean {
 // a pre-spec-03 whole-dir skill symlink under the old links tree. It is an
 // owned relic whose mapping relinkSkills already printed in this same run;
 // moving it into the namespace would re-trigger the relink migration on every
-// later run forever, so it is taken down, not moved. Only for names the
-// registry knows — an unknown name's links are not ours to touch.
-function takeDownLegacySkillLinks(): void {
+// later run forever, so it is taken down, not moved. Only for names this
+// root's registry named — an unknown name's links are not ours to touch.
+function takeDownLegacySkillLinks(names: string[]): void {
   const root = join(OCM_CACHE_DIR, "marketplaces")
-  for (const name of Object.keys(readRegistry().marketplaces)) {
+  for (const name of names) {
     const skillsDir = join(OCM_CACHE_DIR, "links", name, "skills")
     let entries: string[]
     try {
@@ -134,6 +174,104 @@ function moveItem(from: string, to: string): boolean {
     rmdirSync(from)
   } catch {}
   return true
+}
+
+// brief 43 §2: the clone and the links mirror move per registry name, not as
+// whole directories — what remains at the old path may belong to another
+// config root and is reportUnreferencedOldCache's to describe, not ours to move
+function moveOwnedMarketplaces(names: string[]): void {
+  for (const name of names) {
+    for (const part of ["marketplaces", "links"]) {
+      const from = join(OCM_CACHE_DIR, part, name)
+      if (!existsSync(from)) continue
+      const to = join(OCM_ROOT_CACHE_DIR, part, name)
+      if (moveItem(from, to)) console.log(`moved ${from} -> ${to}`)
+    }
+  }
+}
+
+// brief 43 §2: a displaced record is ours by the same test the predicate
+// uses — its marketplace sits in this root's registry. Our copies move and
+// our records leave the old file (keeping them there would re-fire
+// cacheMigrationNeeded forever); the rest may be another root's and stays.
+function moveOwnedDisplaced(names: string[]): void {
+  const oldFile = join(OCM_CACHE_DIR, "displaced-records.json")
+  let records: unknown
+  try {
+    records = JSON.parse(readFileSync(oldFile, "utf8"))
+  } catch {
+    return
+  }
+  if (!Array.isArray(records)) return
+  const ours: Record<string, unknown>[] = []
+  const theirs: unknown[] = []
+  for (const record of records) {
+    if (isRecord(record) && typeof record.marketplace === "string" && names.includes(record.marketplace)) ours.push(record)
+    else theirs.push(record)
+  }
+  if (ours.length === 0) return
+  for (const record of ours) moveDisplacedCopy(record)
+  appendDisplacedRecords(ours)
+  if (theirs.length > 0) writeJsonAtomic(oldFile, `${JSON.stringify(theirs, null, 2)}\n`)
+  else rmSync(oldFile, { force: true })
+}
+
+// move the copy one record names, then prune the emptied ancestors. A dir
+// outside the old displaced prefix is a crash-window relic already naming the
+// namespace — moving its copy would move it onto itself.
+function moveDisplacedCopy(record: Record<string, unknown>): void {
+  if (typeof record.dir !== "string" || typeof record.dest !== "string") return
+  if (!record.dir.startsWith(OLD_DISPLACED_PREFIX)) return
+  const dir = join(OCM_DISPLACED_DIR, record.dir.slice(OLD_DISPLACED_PREFIX.length))
+  const from = join(record.dir, record.dest)
+  const to = join(dir, record.dest)
+  if (existsSync(from) && moveItem(from, to)) console.log(`moved ${from} -> ${to}`)
+  pruneEmptiedAncestors(from)
+  record.dir = dir
+}
+
+// rmdir-on-empty only, never a recursive delete: a stranger's copy in the
+// same tree stops the walk, so nothing but emptied directories ever leaves
+function pruneEmptiedAncestors(path: string): void {
+  let dir = dirname(path)
+  for (;;) {
+    try {
+      rmdirSync(dir)
+    } catch {
+      return
+    }
+    if (dir === OLD_DISPLACED_DIR) return
+    dir = dirname(dir)
+  }
+}
+
+// merge ours into the namespace records file, deduped: a crash between the
+// copy move and this append re-processes the same records, and while the
+// moves skip what already moved, the append must not duplicate
+function appendDisplacedRecords(ours: Record<string, unknown>[]): void {
+  let existing: unknown[] = []
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(OCM_DISPLACED_RECORD_FILE, "utf8"))
+    if (Array.isArray(parsed)) existing = parsed
+  } catch {}
+  const seen = new Set(existing.map((record) => JSON.stringify(record)))
+  const added = ours.filter((record) => {
+    const key = JSON.stringify(record)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  if (added.length > 0) writeJsonAtomic(OCM_DISPLACED_RECORD_FILE, `${JSON.stringify([...existing, ...added], null, 2)}\n`)
+}
+
+// the sync stamp is a throttle shared by every root in the old layout:
+// copied, never moved — another root's early sync is cheap, a stolen throttle
+// is not. A valid stamp was already consumed by foldSyncStamp; this carries
+// an unconsumable one out of the shared cache, without a moved line.
+function copySyncStamp(): void {
+  const from = join(OCM_CACHE_DIR, "last-sync.json")
+  const to = join(OCM_ROOT_CACHE_DIR, "last-sync.json")
+  if (existsSync(from) && !existsSync(to)) copyFileSync(from, to)
 }
 
 function rewriteRegistryDirs(): void {
@@ -256,19 +394,93 @@ function repointSymlinks(): void {
   walk(OCM_LINKS_DIR)
 }
 
+// brief 43 §3: a completed migration may remove a re-created old-path
+// links/<name> tree only when every leaf proves it ours — a live symlink
+// resolving into a clone this root's registry names. Anything that fails
+// stays for reportUnreferencedOldCache to warn about; marketplaces/ and
+// displaced/ at the old path are never touched here.
+function removeOwnedOldLinks(): void {
+  const oldLinks = join(OCM_CACHE_DIR, "links")
+  let children: string[]
+  try {
+    children = readdirSync(oldLinks)
+  } catch {
+    return
+  }
+  const clones: string[] = []
+  for (const entry of Object.values(readRegistry().marketplaces)) {
+    try {
+      clones.push(realpathSync(entry.dir))
+    } catch {}
+  }
+  for (const child of children) {
+    const tree = join(oldLinks, child)
+    if (!ownedLinksTree(tree, clones)) continue
+    rmSync(tree, { recursive: true })
+    console.log(`removed ${tree} (regenerable old-layout mirror)`)
+  }
+  try { rmdirSync(oldLinks) } catch {}
+}
+
+// the strict proof: every leaf a live symlink into an owned clone, and at
+// least one such leaf seen — a rendered SKILL.md regular file fails it, so a
+// 0.6.1 loader's materialized mirror is never ours to remove
+function ownedLinksTree(tree: string, clones: string[]): boolean {
+  let entries: Dirent[]
+  try {
+    entries = readdirSync(tree, { withFileTypes: true })
+  } catch {
+    return false
+  }
+  let owned = false
+  for (const entry of entries) {
+    const path = join(tree, entry.name)
+    if (entry.isDirectory()) {
+      // a passing subtree saw an owned leaf below
+      if (!ownedLinksTree(path, clones)) return false
+      owned = true
+      continue
+    }
+    if (!entry.isSymbolicLink()) return false
+    let resolved: string
+    try {
+      resolved = realpathSync(path)
+    } catch {
+      return false
+    }
+    if (!clones.some((clone) => resolved === clone || resolved.startsWith(`${clone}/`))) return false
+    owned = true
+  }
+  return owned
+}
+
 export function migrateLegacyCache(): void {
-  if (!cacheMigrationNeeded()) return
-  takeDownLegacySkillLinks()
-  for (const item of [...OLD_ITEMS, "last-sync.json"]) {
-    const from = join(OCM_CACHE_DIR, item)
-    if (!existsSync(from)) continue
-    const to = join(OCM_ROOT_CACHE_DIR, item)
-    if (moveItem(from, to)) console.log(`moved ${from} -> ${to}`)
+  const recorded = readMigrationState()
+  if (recorded?.state === "done") {
+    removeOwnedOldLinks()
+    return
+  }
+  if (recorded === undefined && !cacheMigrationNeeded()) return
+  // on resume the recorded names decide what is ours — the registry-dir
+  // rewrite may already have run, so the registry can no longer attribute
+  // the old layout's contents
+  const names = recorded ? recorded.marketplaces : Object.keys(readRegistry().marketplaces)
+  writeMigrationState("in-progress", names)
+  takeDownLegacySkillLinks(names)
+  moveOwnedMarketplaces(names)
+  moveOwnedDisplaced(names)
+  copySyncStamp()
+  // prune what the per-name moves emptied — rmdir throws on non-empty, which
+  // is the safety. Without it a fully-migrated home warns forever through
+  // reportUnreferencedOldCache, which fires on existsSync of the old paths
+  for (const part of ["marketplaces", "links", "displaced"]) {
+    try { rmdirSync(join(OCM_CACHE_DIR, part)) } catch {}
   }
   rewriteRegistryDirs()
   rewriteSkillsPaths()
   rewriteDisplacedRecords()
   repointSymlinks()
+  writeMigrationState("done", names)
 }
 
 // an old-layout cache no registry references is never deleted — it may belong
