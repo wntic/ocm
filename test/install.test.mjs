@@ -208,7 +208,8 @@ phase("5. install --force displaces an unowned file into ~/.cache/ocm/displaced/
   const [mp] = addMp(home, { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, agents: { "reviewer.md": AGENT } } }, "--explicit")
   // invariant: ownership — without --force, no ownership proof means no touch
   const plain = ocm(home, "install", "adw")
-  expect(plain.status).toBe(0) // a refusal is never fatal to the operation
+  expect(plain.status).toBe(1) // brief 45 §3: a withheld component is not an install
+  expect(`${plain.stdout}\n${plain.stderr}`).toContain("installed adw@mp partially — 2 components withheld")
   expect(readFileSync(commandDest, "utf8")).toBe("# my own commit command\n")
   expect(readFileSync(agentDest, "utf8")).toBe("# my own reviewer\n")
   expect(`${plain.stdout}\n${plain.stderr}`).toContain(commandDest)
@@ -344,6 +345,86 @@ phase("10. install --force over a user's file states the displacement in the hea
   if (!copies.length) throw new Error(`expected the displaced original under ${displacedRoot(home)}`)
   const notices = `${forced.stdout}\n${forced.stderr}`.split("\n").filter((l) => l.trim() === "restart opencode to activate")
   if (notices.length !== 1) throw new Error(`expected exactly one restart notice on the displacing install:\n${forced.stdout}\n${forced.stderr}`)
+})
+
+// brief 45 §3 (F260): a withheld component is not an install — the run exits
+// 1 and the headline says partial, naming the count withheld; the stderr
+// warning names the file and the --force remedy (the 0.7.0 wording, restored)
+phase("install with a hand-written file at one component's destination exits 1 and says partially with the count withheld, the file untouched", async (home) => {
+  const dest = join(cfg(home), "commands", "adw:a.md")
+  writeTree(cfg(home), { commands: { "adw:a.md": GREET } }) // invariant: ownership — the user's file predates every ocm run
+  const [mp] = addMp(home, { adw: { "plugin.json": PLUGIN_JSON, commands: { "a.md": COMMAND, "b.md": COMMAND } } }, "--explicit")
+  const plain = ocm(home, "install", "adw")
+  expect(plain.status).toBe(1)
+  const out = `${plain.stdout}\n${plain.stderr}`
+  if (!out.includes("installed adw@mp partially — 1 component withheld")) {
+    throw new Error(`expected the partial headline "installed adw@mp partially — 1 component withheld" in:\n${out}`)
+  }
+  expect(plain.stderr).toContain(`skipped ${dest}: not managed by ocm — re-run with --force to displace it`)
+  expect(readFileSync(dest, "utf8")).toBe(GREET) // invariant: ownership — no ownership proof, no touch
+  assertResolves(join(cfg(home), "commands", "adw:b.md"), join(mp, "plugins", "adw", "commands", "b.md")) // the sibling materialized
+})
+
+// brief 45 §3: --force is the remedy, so a displacing install is a full one —
+// exit 0, the headline names the materialized counts, never "partially".
+// brief 45 §6 (F261): the displacement is an event of the report, not a
+// warning — exactly one line on stdout, absent from stderr
+phase("install --force over the unowned file exits 0 with the full headline — the remedy is not a partial install", async (home) => {
+  writeTree(cfg(home), { commands: { "adw:a.md": GREET } })
+  const [mp] = addMp(home, { adw: { "plugin.json": PLUGIN_JSON, commands: { "a.md": COMMAND, "b.md": COMMAND } } }, "--explicit")
+  const forced = ocm(home, "install", "adw", "--force")
+  expect(forced.status).toBe(0)
+  const out = `${forced.stdout}\n${forced.stderr}`
+  if (!forced.stdout.includes("installed adw@mp (2 commands)")) {
+    throw new Error(`expected the full headline "installed adw@mp (2 commands)" on stdout:\n${out}`)
+  }
+  expect(out).not.toContain("partially")
+  // exactly one component (adw:a.md) is displaced, so exactly one line
+  const displacementLines = forced.stdout.split("\n").filter((l) => l.includes("displaced your"))
+  if (displacementLines.length !== 1) {
+    throw new Error(`expected exactly one "displaced your" line on stdout, got ${displacementLines.length}:\n${out}`)
+  }
+  if (forced.stderr.includes("displaced your")) {
+    throw new Error(`the displacement is an event of the report, not a warning — "displaced your" must not appear on stderr:\n${forced.stderr}`)
+  }
+  assertResolves(join(cfg(home), "commands", "adw:a.md"), join(mp, "plugins", "adw", "commands", "a.md"))
+  assertResolves(join(cfg(home), "commands", "adw:b.md"), join(mp, "plugins", "adw", "commands", "b.md"))
+})
+
+// brief 45 §3: a trust-blocked component is the user's own decision, already
+// asked and answered — not a partial install; and per §1 the headline counts
+// only what materialized, so the blocked executable is not counted
+phase("install of a plugin with a trust-blocked executable exits 0 with the materialized counts — a trust decision is not a partial install", async (home) => {
+  const [mp] = addMp(home, { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND }, plugin: { "hook.js": JS_PLUGIN } } }, "--explicit")
+  // non-TTY: the trust prompt hits EOF and stays undecided, so hook.js is blocked
+  const result = ocm(home, "install", "adw")
+  expect(result.status).toBe(0)
+  const out = `${result.stdout}\n${result.stderr}`
+  const headline = result.stdout.split("\n").find((l) => l.includes("installed adw@mp"))
+  if (!headline) throw new Error(`expected an "installed adw@mp" headline on stdout:\n${out}`)
+  expect(headline).toBe("installed adw@mp (1 command)")
+  expect(out).not.toContain("partially")
+  assertResolves(commandLink(home), join(mp, "plugins", "adw", "commands", "commit.md"))
+  assertAbsent(join(cfg(home), "plugins", "ocm--adw--hook.js")) // fixture validity: the executable really was blocked
+})
+
+// brief 45 §3 (F260) on add: the plugin the user just asked for was withheld
+// a component — the add reports every plugin, exits 1 once at the end, and
+// the registry entry stands (the add itself succeeded)
+phase("add where a component collides with an unowned file exits 1 and reports the plugin partial", async (home) => {
+  const dest = join(cfg(home), "commands", "adw:commit.md")
+  writeTree(cfg(home), { commands: { "adw:commit.md": GREET } }) // invariant: ownership — the user's file predates the add
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND, "lint.md": COMMAND } } } })
+  const added = ocm(home, "add", mp)
+  expect(added.status).toBe(1)
+  const out = `${added.stdout}\n${added.stderr}`
+  if (!out.includes("  adw installed partially — 1 component withheld")) {
+    throw new Error(`expected the partial per-plugin line "  adw installed partially — 1 component withheld" in:\n${out}`)
+  }
+  expect(readRegistry(home).marketplaces.mp.plugins.adw).toBeDefined()
+  expect(readFileSync(dest, "utf8")).toBe(GREET) // invariant: ownership — no ownership proof, no touch
+  assertResolves(join(cfg(home), "commands", "adw:lint.md"), join(mp, "plugins", "adw", "commands", "lint.md")) // the sibling materialized
 })
 }
 

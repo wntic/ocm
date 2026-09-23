@@ -164,6 +164,9 @@ export async function untrust(name: string): Promise<void> {
   const result = denyTrust(name)
   reportMutationWarnings(result.report, { marketplace: name })
   reportRestart(result.report)
-  console.log(`marketplace "${name}" no longer trusted; executable components removed`)
+  const removed = result.report.outcomes.some((o) => o.state === "removed")
+  if (removed) console.log(`marketplace "${name}" no longer trusted; executable components removed`)
+  else if (result.wasGranted) console.log(`marketplace "${name}" no longer trusted; it ships nothing executable, nothing was removed`)
+  else console.log(`marketplace "${name}" was not trusted; nothing changed`)
   reportUpgrade(result.wasV1)
 }

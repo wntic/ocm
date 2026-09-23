@@ -104,6 +104,9 @@ function mirrorSkill(st, plugin, rel, sourceDir, mirrorDir, mirrorName, transfor
   for (const [displacedDest, target] of st.ctx.displacements) {
     if (displacedDest.startsWith(`${mirrorDir}/`)) outcome.displaced = target
   }
+  for (const withheldDest of st.ctx.withheld) {
+    if (withheldDest.startsWith(`${mirrorDir}/`)) outcome.skip = "unowned-dest"
+  }
   st.outcomes.push(outcome)
   for (const entry of mirrored.removed) {
     removedOutcome(st, "skill", plugin.name, `${rel}/${entry}`, join(mirrorDir, entry))

@@ -12,7 +12,7 @@ import {
 } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import { containsSkillMd } from "./discovery.js"
-import { appendDisplacement, displayPath } from "./displaced.js"
+import { appendDisplacement } from "./displaced.js"
 import { errorMessage } from "./error-message.js"
 
 const RENDERED_MARKER = "ocm: rendered from "
@@ -37,7 +37,8 @@ function owningPlugin(target) {
 // displacement is recorded so a later teardown can restore it (spec 21).
 function takeOver(dest, ctx, plugin) {
   if (!ctx.force) {
-    ctx.warnings.push(`skipped ${dest}: not managed by ocm`)
+    ctx.warnings.push(`skipped ${dest}: not managed by ocm — re-run with --force to displace it`)
+    ctx.withheld.add(dest)
     return false
   }
   const target = join(ctx.displacedDir, dest)
@@ -50,7 +51,6 @@ function takeOver(dest, ctx, plugin) {
   }
   appendDisplacement({ marketplace: ctx.name, plugin, dest, dir: ctx.displacedDir })
   ctx.displacements.set(dest, target)
-  ctx.warnings.push(`displaced your ${displayPath(dest)} → ${target}`)
   return true
 }
 

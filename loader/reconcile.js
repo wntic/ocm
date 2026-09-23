@@ -97,6 +97,13 @@ export function reconcilePluginRecords(registry, name, root, options = {}) {
     const pair = folded.get(candidate.name)
     if (!pair) return true
     warnings.push(`plugins/${pair[0]} and plugins/${pair[1]} differ only in case — plugin "${candidate.name}" skipped; ask the author to rename one and update again`)
+    // brief 45 §4 (F221): record the drop so the update reports an
+    // uninstalled item instead of "already up to date". Installed-only,
+    // mirroring the manifest gate below — a never-installed candidate was
+    // never on disk, so an "uninstalled" line for it would be a lie.
+    if (entry.plugins[candidate.name]?.installedAt != null) {
+      dropped.push({ name: candidate.name, reason: `plugins/${pair[0]} and plugins/${pair[1]} differ only in case` })
+    }
     return false
   })
   // spec 19 / brief 29 §3: a plugin failing the manifest gate is refused —

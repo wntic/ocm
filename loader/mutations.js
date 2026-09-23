@@ -166,6 +166,9 @@ export function denyTrust(name) {
   const { registry, wasV1 } = loadRegistryForWrite()
   const entry = registry.marketplaces[name]
   if (!entry) throw new Error(`marketplace "${name}" not found (ocm list)`)
+  // brief 45 §2: the untrust headline needs the record transition, recorded
+  // where it happens — whether this deny revoked a grant
+  const wasGranted = entry.trust.code === "granted"
   let saved = false
   if (entry.trust.code !== "denied" || entry.trustPending) {
     denyEntry(entry)
@@ -174,7 +177,7 @@ export function denyTrust(name) {
   }
   const root = componentRoot(entry)
   const report = materialize(name, root, { enabled: enabledPlugins(entry, root) })
-  return { report, wasV1: wasV1 && saved }
+  return { report, wasV1: wasV1 && saved, wasGranted }
 }
 
 export { denyTrust as revokeTrust }

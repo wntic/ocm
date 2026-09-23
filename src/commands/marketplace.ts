@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { addMarketplace, denyTrust, duplicateRefusal, grantTrust, isGitUrl, normaliseMarketplaceName, parseSource, pinMarketplace, readRegistry, removeMarketplace, skipTrust } from "../../loader/core.js"
-import type { CoreAddResult, CoreMaterializeReport } from "../../loader/core.js"
+import type { CoreAddResult, CoreMaterializeReport, CoreOutcome } from "../../loader/core.js"
 import { installLoader, reportTuiPlugin } from "../loader"
 import { git, requireGit } from "../git"
 import { OCM_LINKS_DIR, OPENCODE_GLOBAL_CONFIG } from "../paths"
-import { queueFact, reportRestart, reportUpgrade, reportWarnings } from "../report"
+import { queueFact, reportRestart, reportUpgrade, reportWarnings, componentSummary, outcomeComponents } from "../report"
 import { printTrustListing, promptTrust } from "./trust-prompt"
 
 export interface AddOptions {
@@ -87,10 +87,13 @@ export async function add(source: string, options: AddOptions = {}): Promise<voi
   }
   reportWarnings([...new Set(warnings)])
   // spec 23 §6: the headline precedes the notices
-  reportAdded(result, skillsNotWritten)
+  const partial = reportAdded(result, skillsNotWritten, reports.flatMap((report) => report.outcomes))
   if (tuiInstalled) reportTuiPlugin()
   reportRestart(reports)
   reportUpgrade(result.wasV1)
+  // brief 45 §3: a withheld component is not an install — exit 1 once at
+  // the end, after every plugin line has printed
+  if (partial) process.exitCode = 1
 }
 
 // undefined and valid are both fine: only a present-but-unparseable config
@@ -110,17 +113,31 @@ function configIsCorrupt(): boolean {
   }
 }
 
-function reportAdded(result: CoreAddResult, skillsNotWritten: boolean): void {
+// brief 45 §1/§3 (F211, F260): the per-plugin line is derived from the run's
+// outcomes — what materialized, singular where one; a withheld component
+// makes the plugin partial. Explicit mode is an availability listing, so it
+// keeps discovery's counts. Returns whether any plugin was partial
+function reportAdded(result: CoreAddResult, skillsNotWritten: boolean, allOutcomes: CoreOutcome[]): boolean {
   console.log(`added marketplace "${result.name}"`)
+  let partial = false
   for (const plugin of result.plugins) {
-    const parts: string[] = []
-    if (plugin.components.agent) parts.push(`${plugin.components.agent.length} agents`)
-    if (plugin.components.command) parts.push(`${plugin.components.command.length} commands`)
-    if (plugin.components.skill && !skillsNotWritten) parts.push(`${plugin.components.skill.length} skills`)
-    if (plugin.components.plugin) parts.push(`${plugin.components.plugin.length} plugins`)
-    if (plugin.components.mcp) parts.push(`${plugin.components.mcp.length} mcp servers`)
-    const available = result.mode === "explicit" ? " — available, not installed" : ""
-    console.log(`  ${plugin.name} (${parts.join(", ")})${available}`)
+    const mine = allOutcomes.filter((o) => o.plugin === plugin.name)
+    const withheld = mine.filter((o) => o.skip === "unowned-dest")
+    if (withheld.length > 0) {
+      partial = true
+      console.log(`  ${plugin.name} installed partially — ${withheld.length} component${withheld.length === 1 ? "" : "s"} withheld`)
+      continue
+    }
+    if (result.mode === "explicit") {
+      console.log(`  ${plugin.name} (${componentSummary(plugin.components)}) — available, not installed`)
+      continue
+    }
+    const components = outcomeComponents(mine)
+    // brief 31 §4: a config that does not parse swallowed the skills.paths
+    // write — the skill is not counted as installed
+    if (skillsNotWritten) delete components.skill
+    const summary = componentSummary(components)
+    console.log(`  ${plugin.name}${summary ? ` (${summary})` : ""}`)
   }
   // spec 23 §8: in explicit mode nothing is installed — the closing line
   // names the verb that activates
@@ -129,6 +146,7 @@ function reportAdded(result: CoreAddResult, skillsNotWritten: boolean): void {
   } else {
     console.log("commands and agents are available as /<plugin>:<name> in every project")
   }
+  return partial
 }
 
 export function remove(name: string): void {

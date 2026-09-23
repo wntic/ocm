@@ -2,7 +2,7 @@
 // trusted, and an update that changes a trusted file blocks it.
 
 import { spawnSync } from "node:child_process"
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
@@ -307,6 +307,55 @@ phase("8. ocm untrust of a marketplace whose only executable component is an mcp
   const again = ocm(home, "untrust", "mp")
   expect(again.status).toBe(0)
   expect(`${again.stdout}\n${again.stderr}`.split("\n").filter((l) => l.trim() === "restart opencode to activate")).toEqual([])
+})
+
+// brief 45 §2 (F209): the untrust headline is a function of the outcomes and
+// the record transition — three cases, three lines — and it agrees with the
+// restart notice: "removed" wording only where the notice prints
+
+phase("9. untrust that removed executable components prints the removed headline and one restart notice", async (home) => {
+  const [mp] = addAt(home, "mp", trustedTree(), "--trust")
+  assertResolves(pluginLink(home), join(mp, "plugins", "adw", "plugin", "notify.js"))
+  const result = ocm(home, "untrust", "mp")
+  expect(result.status).toBe(0)
+  const output = `${result.stdout}\n${result.stderr}`
+  expect(output).toContain('marketplace "mp" no longer trusted; executable components removed')
+  const notices = output.split("\n").filter((l) => l.trim() === "restart opencode to activate")
+  if (notices.length !== 1) throw new Error(`expected exactly one restart notice on the untrust:\n${output}`)
+  assertAbsent(pluginLink(home)) // something was removed, so the wording is true
+  expect(mcpKeys(home)["ocm--adw--db"]).toBeUndefined()
+})
+
+phase("10. untrust of a grant left with nothing executable says nothing was removed and prints no restart notice", async (home) => {
+  const [mp] = addAt(home, "mp", trustedTree(), "--trust")
+  assertResolves(pluginLink(home), join(mp, "plugins", "adw", "plugin", "notify.js"))
+  // the executables vanish after the grant; the update cleans the stale link
+  // and key while the grant stands — nothing executable remains to re-prompt
+  rmSync(join(mp, "plugins", "adw", "plugin", "notify.js"))
+  rmSync(join(mp, "plugins", "adw", "mcp.json"))
+  const updated = ocm(home, "update", "mp")
+  if (updated.status !== 0) throw new Error(`ocm update mp exited ${updated.status}: ${updated.stderr}`)
+  assertAbsent(pluginLink(home))
+  expect(mcpKeys(home)["ocm--adw--db"]).toBeUndefined()
+  expect(readRegistry(home).marketplaces.mp.trust.code).toBe("granted")
+  const result = ocm(home, "untrust", "mp")
+  expect(result.status).toBe(0)
+  const output = `${result.stdout}\n${result.stderr}`
+  expect(output).toContain('marketplace "mp" no longer trusted; it ships nothing executable, nothing was removed')
+  expect(output).not.toContain("executable components removed")
+  expect(output.split("\n").filter((l) => l.trim() === "restart opencode to activate")).toEqual([])
+  expect(readRegistry(home).marketplaces.mp.trust.code).toBe("denied")
+})
+
+phase("11. untrust of a marketplace never trusted says nothing changed and prints no restart notice", async (home) => {
+  addAt(home, "mp", trustedTree(), "--no-trust")
+  const result = ocm(home, "untrust", "mp")
+  expect(result.status).toBe(0)
+  const output = `${result.stdout}\n${result.stderr}`
+  expect(output).toContain('marketplace "mp" was not trusted; nothing changed')
+  expect(output).not.toContain("executable components removed")
+  expect(output.split("\n").filter((l) => l.trim() === "restart opencode to activate")).toEqual([])
+  expect(readRegistry(home).marketplaces.mp.trust.code).toBe("denied")
 })
 }
 

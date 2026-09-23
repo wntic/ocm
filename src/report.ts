@@ -1,8 +1,34 @@
 import { OCM_REGISTRY_FILE } from "./paths"
 import { approvedComponents, componentKey, componentRoot, enabledPlugins, executableComponents, readRegistry } from "../loader/core.js"
-import type { CoreMaterializeReport } from "../loader/core.js"
+import type { CoreMaterializeReport, CoreOutcome, CorePluginComponents } from "../loader/core.js"
 
 const BLOCKED_PREFIX = "blocked (untrusted): "
+
+export function componentSummary(components: CorePluginComponents): string {
+  const parts: string[] = []
+  for (const [type, files] of Object.entries(components)) {
+    if (files?.length) parts.push(`${files.length} ${type}${files.length === 1 ? "" : "s"}`)
+  }
+  return parts.join(", ")
+}
+
+// brief 45 §1: the components a run materialized, derived from its outcomes
+// the same way deriveComponents derives the registry record
+// (loader/marketplace.js)
+export function outcomeComponents(outcomes: CoreOutcome[]): CorePluginComponents {
+  const components: CorePluginComponents = {}
+  for (const type of ["command", "agent", "skill", "plugin", "mcp"] as const) {
+    const names = [
+      ...new Set(
+        outcomes
+          .filter((o) => o.type === type && (o.state === "created" || o.state === "current" || o.state === "refreshed"))
+          .map((o) => o.component),
+      ),
+    ].sort()
+    if (names.length) components[type] = names
+  }
+  return components
+}
 
 // brief 31 §7: one fact, once per run. A fact is keyed (kind, subject), not
 // by its rendered string — F107 is two phrasings of one fact
@@ -67,12 +93,16 @@ export function reportMutationWarnings(report: CoreMaterializeReport, scope: { m
 }
 
 // brief 31 §6: the notice follows what the outcomes say moved — anything
-// created, removed or refreshed needs a restart to take effect
+// created, removed or refreshed needs a restart to take effect (brief 45 §5:
+// nothing reloads in-session, so a refreshed body needs one exactly as a
+// created one does)
+export function outcomesNeedRestart(outcomes: CoreOutcome[] | null): boolean {
+  return (outcomes ?? []).some((o) => o.state === "created" || o.state === "removed" || o.state === "refreshed")
+}
+
 export function reportRestart(reports: CoreMaterializeReport | CoreMaterializeReport[]): void {
   const list = Array.isArray(reports) ? reports : [reports]
-  const changed = list.some((report) =>
-    report.outcomes.some((o) => o.state === "created" || o.state === "removed" || o.state === "refreshed"))
-  if (changed) restartNeeded = true
+  if (list.some((report) => outcomesNeedRestart(report.outcomes))) restartNeeded = true
 }
 
 // brief 31 §7 (F100): a pending-trust fact is run-level — at flush, every

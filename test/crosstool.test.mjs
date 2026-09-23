@@ -191,7 +191,10 @@ phase("2. a plugin with only commands.claude/ and skills/ installs its skill and
   } } })
   const added = ocm(home, "add", mp)
   expect(added.status).toBe(0)
-  expect(added.stdout).toContain("adw (1 skills)") // the report counts no commands
+  // brief 45 §8.5 (F211): the per-plugin line counts what materialized, singular where one
+  const pluginLine = added.stdout.split("\n").find((l) => l.trim().startsWith("adw ("))
+  if (!pluginLine) throw new Error(`expected an "adw (...)" per-plugin line in:\n${added.stdout}`)
+  expect(pluginLine).toBe("  adw (1 skill)") // the report counts no commands
   const components = readRegistry(home).marketplaces.mp.plugins.adw.components
   expect(components.command).toBeUndefined()
   expect(components.skill).toEqual(["python-style"])
