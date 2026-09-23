@@ -6,18 +6,22 @@ import { errorMessage as message } from "./error-message.js"
 
 const NOTICE = "restart opencode to activate"
 
-// the widget library offers three fixed dialog widths; content is wrapped to
-// the smallest one that fits both the content and the terminal (spec 22 §2)
+// the widget library offers three fixed dialog widths; the dialog takes the
+// largest one that fits the terminal (brief 36 §4)
 const BUCKETS = [
   ["medium", 60],
   ["large", 88],
   ["xlarge", 116],
 ]
 
-// measured: a select row inside a bucket frame holds 9 columns less than the
-// frame — borders, padding and the selection gutter — so a medium row
-// ellipsizes past 51 characters (spec 22 §2)
-const ROW_CHROME = 9
+// brief 36 §4: 12 is the brief's expected value, not a measurement — 9 is
+// known wrong (rows ellipsized at 80×24 in the user's observed pass). The
+// true value is confirmed only by the manual calibration checklist the human
+// runs after this brief: sentinel rows exactly frame − ROW_CHROME characters
+// wide, ending in "|", must show every sentinel in a real 80×24 terminal
+// (opencode 1.18.31). Tests assert self-consistency against the constant,
+// not its absolute truth.
+const ROW_CHROME = 12
 
 function componentSummary(record) {
   const parts = []
@@ -73,14 +77,21 @@ export function dialogSize(lines, terminal) {
   return { width, height: Math.min(wrapped.length, terminal.height - 2) }
 }
 
-// Wraps lines to the smallest bucket that fits them and the terminal; a body
-// over the terminal's cap gets a viewport the caller scrolls. The widget
-// clamps frame widths to terminal − 2, so a bucket wider than that renders
-// clipped (spec 22 §2).
+// brief 36 §4: the largest bucket the terminal fits, never smaller — content
+// need no longer shrinks the dialog
+function largestBucket(width) {
+  let bucket = BUCKETS[0]
+  for (const entry of BUCKETS) if (entry[1] <= width - 2) bucket = entry
+  return bucket
+}
+
+// Wraps lines to the largest bucket that fits the terminal; a body over the
+// terminal's cap gets a viewport the caller scrolls. The widget clamps frame
+// widths to terminal − 2, so a bucket wider than that renders clipped
+// (brief 36 §4).
 export function fit(lines) {
   const terminal = terminalSize()
-  const need = dialogSize(lines, terminal)
-  const bucket = BUCKETS.find(([, columns]) => need.width <= columns && columns <= terminal.width - 2) ?? BUCKETS[0]
+  const bucket = largestBucket(terminal.width)
   // never below the chrome the rows themselves need (see wrapText)
   const frame = Math.max(ROW_CHROME + 1, Math.min(bucket[1], terminal.width - 2))
   const wrapped = lines.flatMap((line) => wrapText(line, frame - ROW_CHROME))
@@ -142,9 +153,31 @@ export function backView(api) {
   if (previous) previous()
 }
 
+// brief 36 §4: the choke point every select dialog builds its wrapped props
+// through — the bucket is the largest the terminal fits, and the title, every
+// option title and every description is wrapped to its row budget. Pure: the
+// terminal arrives as a plain { width, height }, never from process.stdout.
+export function selectProps(props, terminal) {
+  const bucket = largestBucket(terminal.width)
+  const budget = Math.max(1, Math.min(bucket[1], terminal.width - 2) - ROW_CHROME)
+  const options = []
+  for (const option of props.options ?? []) {
+    const titleLines = wrapText(option.title ?? "", budget)
+    const descriptionLines = option.description === undefined ? null : wrapText(option.description, budget)
+    const { description, ...rest } = option
+    options.push(descriptionLines?.length === 1 ? { ...option, title: titleLines[0] } : { ...rest, title: titleLines[0] })
+    for (const line of titleLines.slice(1)) options.push({ title: line, value: option.value })
+    if (descriptionLines?.length > 1) {
+      for (const line of descriptionLines) options.push({ title: line, value: option.value, disabled: true })
+    }
+  }
+  return { props: { ...props, title: wrapText(props.title ?? "", budget).join("\n"), options }, size: bucket[0] }
+}
+
 export function select(api, props) {
+  const built = selectProps(props, terminalSize())
   api.ui.dialog.replace(
-    () => api.ui.DialogSelect(props),
+    () => api.ui.DialogSelect(built.props),
     () =>
       queueMicrotask(() => {
         // Escape pops the dialog before the microtask runs; a forward
@@ -152,11 +185,7 @@ export function select(api, props) {
         if (api.ui.dialog.depth === 0) backView(api)
       }),
   )
-  const lines = [
-    ...String(props.title ?? "").split("\n"),
-    ...(props.options ?? []).map((option) => `${option.title ?? ""} ${option.description ?? ""}`),
-  ]
-  api.ui.dialog.setSize(fit(lines).size)
+  api.ui.dialog.setSize(built.size)
 }
 
 export function toast(api, variant, text) {

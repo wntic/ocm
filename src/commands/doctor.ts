@@ -216,6 +216,8 @@ function checkMarketplaces(registry: CoreRegistry, findings: Finding[], fix: boo
       const first = lastSync.error?.split("\n").map((line) => line.trim()).find(Boolean) ?? "unknown error"
       findings.push(error(`marketplace "${name}": last sync failed ${minutes}m ago: ${first}`))
     }
+    // brief 36 §6: a stored sync warning is exit-code-neutral — the sync itself succeeded
+    for (const text of lastSync?.warnings ?? []) findings.push(warning(`marketplace "${name}": last sync warned: ${text}`))
   }
 }
 

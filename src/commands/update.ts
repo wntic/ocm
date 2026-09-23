@@ -139,6 +139,9 @@ async function updateOne(registry: Registry, name: string, trust?: boolean): Pro
       saveRegistry(registry)
       const links = materializeLinks(name, entry, false, views.paths)
       report.warnings.push(...links.warnings)
+      // brief 36 §6: the same field the startup sync stores, persisted by the
+      // saveRegistryIfChanged below
+      entry.lastSync.warnings = report.warnings
       // brief 31 §3: the records are derived from what materialized, then
       // saved again — two writes, one lock (spec 27 §1)
       deriveComponents(registry, name, links.outcomes)
@@ -198,7 +201,7 @@ async function updateOne(registry: Registry, name: string, trust?: boolean): Pro
   } catch (err) {
     report.ok = false
     report.error = errorMessage(err)
-    entry.lastSync = { at: new Date().toISOString(), ok: false, error: report.error }
+    entry.lastSync = { at: new Date().toISOString(), ok: false, error: report.error, warnings: report.warnings }
     try {
       saveRegistry(registry)
     } catch {}
