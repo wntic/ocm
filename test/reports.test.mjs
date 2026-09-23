@@ -2,7 +2,7 @@
 // never claiming work that did not happen.
 
 import { spawnSync } from "node:child_process"
-import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "bun:test"
@@ -279,5 +279,103 @@ phase("11. ocm add on a fresh home: the headline precedes the loader and TUI lin
   // phrase today, so noticeCount would pass and lie
   const occurrences = added.output.split("restart opencode to activate").length - 1
   if (occurrences !== 1) throw new Error(`expected exactly one "restart opencode to activate" in the add output, got ${occurrences}:\n${added.output}`)
+})
+}
+
+// brief 42 §1 (F246, F256): the version and help cases dispatch before the
+// migration block, the old-cache report and the stale-loader refresh
+{
+const OLD_MP = "mp--one"
+
+// a home where every pre-dispatch write would fire: the registry names an
+// old-layout cache (brief 38's pre-migration shape) and the installed loader
+// carries a stale stamp, so the migration block and the refresh both trigger
+// for any command that reaches them
+function buildMigratingHome(home) {
+  const init = ocm(home, ["init"])
+  if (init.status !== 0) throw new Error(`ocm init exited ${init.status} on the fixture home:\n${init.output}`)
+  const core = join(cfg(home), "ocm", "core.js")
+  writeFileSync(core, readFileSync(core, "utf8").replace(/\/\/ ocm-version: [^\n]*/, "// ocm-version: 0.0.1 deadbeef"))
+  writeTree(join(home, ".cache", "ocm", "marketplaces", OLD_MP), {
+    plugins: { adw: { "plugin.json": PLUGIN_JSON, commands: { "commit.md": COMMAND } } },
+  })
+  writeTree(cfg(home), {
+    ocm: { "registry.json": json({ version: 2, marketplaces: { [OLD_MP]: {
+      url: "https://github.com/example/mp",
+      dir: join(home, ".cache", "ocm", "marketplaces", OLD_MP),
+      local: false, addedAt: "2026-09-01T00:00:00.000Z", mode: "auto",
+      ref: null, revision: null, syncIntervalMs: null,
+      trust: { code: "none" }, lastSync: null, plugins: {},
+    } } }) },
+  })
+}
+
+// the disk facts a read-only query must leave untouched: the cache layout,
+// every loader file's mtime, and the registry's exact bytes
+function diskSnapshot(home) {
+  const layout = []
+  const mtimes = {}
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      layout.push(`${entry.isDirectory() ? "dir" : entry.isSymbolicLink() ? "link" : "file"} ${path}`)
+      if (entry.isDirectory()) walk(path)
+      else mtimes[path] = statSync(path).mtimeMs
+    }
+  }
+  walk(join(home, ".cache", "ocm"))
+  walk(join(cfg(home), "plugins"))
+  walk(join(cfg(home), "ocm"))
+  return { layout: layout.sort(), mtimes, registry: readFileSync(join(cfg(home), "ocm", "registry.json"), "utf8") }
+}
+
+// piecewise, so a failure names the path that changed rather than "objects differ"
+function assertDiskUntouched(home, before) {
+  const after = diskSnapshot(home)
+  if (after.registry !== before.registry) {
+    throw new Error(`${join(cfg(home), "ocm", "registry.json")} was rewritten:\n${after.registry}`)
+  }
+  for (let i = 0; i < Math.max(before.layout.length, after.layout.length); i++) {
+    if (before.layout[i] !== after.layout[i]) {
+      throw new Error(`expected ${before.layout[i] ?? "(no more entries)"}, found ${after.layout[i] ?? "(nothing)"} — the disk changed under a read-only query`)
+    }
+  }
+  for (const [path, mtime] of Object.entries(before.mtimes)) {
+    if (after.mtimes[path] !== mtime) throw new Error(`${path} was rewritten (mtime ${mtime} -> ${after.mtimes[path]})`)
+  }
+}
+
+phase("12. ocm --version and ocm -v on a home needing migration with a stale loader print the version and write nothing", async (home) => {
+  buildMigratingHome(home)
+  for (const flag of ["--version", "-v"]) {
+    const before = diskSnapshot(home)
+    const result = ocm(home, [flag])
+    assertDiskUntouched(home, before)
+    expect(result.status).toBe(0)
+    expect(result.stdout.trim()).toBe(VERSION)
+  }
+})
+
+phase("13. ocm help, --help, -h and bare ocm on the same home print usage and write nothing", async (home) => {
+  buildMigratingHome(home)
+  for (const args of [["help"], ["--help"], ["-h"], []]) {
+    const before = diskSnapshot(home)
+    const result = ocm(home, args)
+    assertDiskUntouched(home, before)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain("usage:")
+  }
+})
+
+// the control: a read-only command outside the six moved cases still runs
+// the migrations and the refresh — the fixture must genuinely trigger both
+phase("14. ocm list on that home still migrates the old-layout cache into the namespace and refreshes the stale loader", async (home) => {
+  buildMigratingHome(home)
+  const result = ocm(home, ["list"])
+  expect(result.status).toBe(0)
+  assertAbsent(join(home, ".cache", "ocm", "marketplaces", OLD_MP))
+  assertFileExists(join(rootCacheDir(home), "marketplaces", OLD_MP, "plugins", "adw", "plugin.json"))
+  expect(readRegistry(home).marketplaces[OLD_MP].dir).toBe(join(rootCacheDir(home), "marketplaces", OLD_MP))
+  expect(readFileSync(join(cfg(home), "ocm", "core.js"), "utf8")).not.toContain("ocm-version: 0.0.1")
 })
 }

@@ -82,12 +82,18 @@ export function strandedMessage(stranded: StrandedRoot): string {
   )
 }
 
+// two live installs are a user decision, not a stranding — doctor's findings
+// path stays as quiet as the notice below when this root holds a registry
+export function activeRootHoldsRegistry(): boolean {
+  return existsSync(OCM_REGISTRY_FILE)
+}
+
 // brief 28 §2.3: the mutating commands warn once before proceeding — the
-// mutation is never refused. Only when the active root holds no registry:
-// two live installs are a user decision, not a stranding. Returns whether
-// the notice printed, so read-only commands can drop hints it contradicts.
+// mutation is never refused. Only when the active root holds no registry.
+// Returns whether the notice printed, so read-only commands can drop hints
+// it contradicts.
 export function reportStrandedNotice(): boolean {
-  if (existsSync(OCM_REGISTRY_FILE)) return false
+  if (activeRootHoldsRegistry()) return false
   const first = strandedRoots()[0]
   if (!first) return false
   console.error(`warning: an ocm install is stranded in another config root\n${stateLines(first)}`)

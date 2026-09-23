@@ -106,14 +106,21 @@ function preflightWritable(files: string[]): void {
 // spec 27 §4: a home written by a newer ocm refuses the next downgrade
 // before any write — forward-only, published pre-0.6 binaries have no guard
 function refuseNewerHome(): void {
-  const writer = registryWriterVersion()
+  const writer = newerHomeWriter()
   if (!writer) return
-  const self = packageVersion()
-  if (versionCompare(writer, self) <= 0) return
   throw new Error(
-    `error: this installation was last written by ocm ${writer}; you are running ${self}\n` +
+    `error: this installation was last written by ocm ${writer}; you are running ${packageVersion()}\n` +
       "  upgrade with `npm i -g @wntic/ocm`, or run the newer ocm",
   )
+}
+
+// one source of truth for "this home is newer than me": the writer version
+// the registry records, when it is ahead of this binary
+function newerHomeWriter(): string | null {
+  const writer = registryWriterVersion()
+  if (!writer) return null
+  if (versionCompare(writer, packageVersion()) <= 0) return null
+  return writer
 }
 
 // the §4 guard runs before the §1 lock: a refusal writes nothing, takes no
@@ -140,6 +147,16 @@ async function refreshStaleLoader(command: string | undefined): Promise<void> {
   const status = loaderStatus()
   if (!status.some((file) => file.state !== "missing")) return
   if (!status.some((file) => file.state !== "current")) return
+  // brief 42 §2 F232: refreshing would rewrite a newer home's loader downward
+  // — warn and leave it stale instead, taking no lock
+  const newer = newerHomeWriter()
+  if (newer) {
+    console.error(
+      `warning: skipping the loader refresh: this installation was last written by ocm ${newer}; you are running ${packageVersion()}\n` +
+        "  upgrade with `npm i -g @wntic/ocm`, or run the newer ocm",
+    )
+    return
+  }
   const previous = registryWriterVersion()
   await withRegistryLock(`ocm ${command}`, () => {
     installLoader(false, false)
@@ -155,6 +172,16 @@ export async function main(argv: string[]): Promise<void> {
   try {
     const [command, ...rest] = argv
     const { positional, flags, values } = parseArgs(rest)
+    // brief 42 §1: a read-only query must not migrate or refresh anything —
+    // it answers from the CLI itself and writes nothing
+    if (command === undefined || command === "help" || command === "--help" || command === "-h") {
+      console.log(HELP)
+      return
+    }
+    if (command === "--version" || command === "-v") {
+      console.log(packageVersion())
+      return
+    }
     // migrations run under the lock whatever command triggered them, including
     // a read-only one; an unneeded migration never touches the lock
     if (migrationNeeded()) {
@@ -168,16 +195,6 @@ export async function main(argv: string[]): Promise<void> {
     await refreshStaleLoader(command)
 
     switch (command) {
-      case undefined:
-      case "help":
-      case "--help":
-      case "-h":
-        console.log(HELP)
-        break
-      case "--version":
-      case "-v":
-        console.log(packageVersion())
-        break
       case "init":
         reportStrandedNotice()
         preflightWritable([OPENCODE_TUI_CONFIG])
