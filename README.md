@@ -11,7 +11,7 @@ or `.claude/` directories.
 
 ```bash
 npm install -g @wntic/ocm          # latest
-npm install -g @wntic/ocm@1.0.0    # a specific version
+npm install -g @wntic/ocm@1.0.1    # a specific version
 ```
 
 Or with bun:
