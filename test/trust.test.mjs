@@ -357,6 +357,32 @@ phase("11. untrust of a marketplace never trusted says nothing changed and print
   expect(output.split("\n").filter((l) => l.trim() === "restart opencode to activate")).toEqual([])
   expect(readRegistry(home).marketplaces.mp.trust.code).toBe("denied")
 })
+
+phase("12. untrust of a grant whose executable components are not installed says none were installed and prints no restart notice", async (home) => {
+  const [mp] = addAt(home, "mp", trustedTree(), "--trust")
+  assertResolves(pluginLink(home), join(mp, "plugins", "adw", "plugin", "notify.js"))
+  // both executable components drift; the non-TTY update unlinks them
+  // pending approval while the grant stands — the tree still ships them,
+  // but none is installed at untrust time
+  writeFileSync(join(mp, "plugins", "adw", "plugin", "notify.js"), JS_PLUGIN_CHANGED)
+  writeFileSync(join(mp, "plugins", "adw", "mcp.json"), mcpJson(MCP_COMMAND_CHANGED))
+  const updated = ocm(home, "update", "mp")
+  if (updated.status !== 0) throw new Error(`ocm update mp exited ${updated.status}: ${updated.stderr}`)
+  assertAbsent(pluginLink(home))
+  expect(mcpKeys(home)["ocm--adw--db"]).toBeUndefined()
+  expect(readRegistry(home).marketplaces.mp.trust.code).toBe("granted")
+  const result = ocm(home, "untrust", "mp")
+  expect(result.status).toBe(0)
+  const output = `${result.stdout}\n${result.stderr}`
+  expect(output).toContain('marketplace "mp" no longer trusted; none of its executable components were installed, nothing was removed')
+  expect(output).not.toContain("it ships nothing executable")
+  expect(output.split("\n").filter((l) => l.trim() === "restart opencode to activate")).toEqual([])
+  expect(readRegistry(home).marketplaces.mp.trust.code).toBe("denied")
+  // invariant: idempotence — a second untrust writes nothing
+  const bytes = readFileSync(registryFile(home), "utf8")
+  expect(ocm(home, "untrust", "mp").status).toBe(0)
+  expect(readFileSync(registryFile(home), "utf8")).toBe(bytes)
+})
 }
 
 // the trust flow: add-time decisions, fingerprints, what stays blocked — absorbed from test/phase16-trust-flow.mjs

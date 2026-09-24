@@ -57,5 +57,6 @@ export {
 export { incumbentMarketplace } from "./collisions.js"
 export { denyTrust, grantTrust, resolvePlugin, revokeTrust, setEnabled, skipTrust } from "./mutations.js"
 export { mcpTrustLine } from "./mcp-line.js"
+export { untrustHeadline } from "./untrust-line.js"
 export { removeMcpKeys, removeMcpKeysExact } from "./mcp.js"
 export { searchPlugins } from "./search.js"

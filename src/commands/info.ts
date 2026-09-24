@@ -1,11 +1,10 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { componentRoot, discoverPlugins } from "../../loader/core.js"
-import type { CorePluginComponents } from "../../loader/core.js"
 import { OCM_LINKS_DIR, OPENCODE_AGENTS_DIR, OPENCODE_COMMANDS_DIR, OPENCODE_GLOBAL_CONFIG, OPENCODE_PLUGINS_DIR } from "../paths"
 import { loadRegistry } from "../registry"
-import type { MarketplaceEntry, MarketplacePlugin, PluginManifest, Registry } from "../types"
-import { age, driftedComponents, pendingExecutables, shipsNoExecutables, wrapLine } from "./display"
+import type { ComponentType, MarketplaceEntry, MarketplacePlugin, PluginManifest, Registry } from "../types"
+import { age, bareComponents, driftedComponents, pendingExecutables, shipsNoExecutables, wrapLine } from "./display"
 
 export interface InfoOptions {
   json?: boolean
@@ -49,7 +48,7 @@ interface ResultingComponent {
 // the components the plugin ships, read from its directory when the tree
 // exists: the record carries only what materialized, while info's rows
 // answer "what would run", linked or not (spec 25 §3)
-function shippedComponents(entry: MarketplaceEntry, record: MarketplacePlugin): CorePluginComponents {
+function shippedComponents(entry: MarketplaceEntry, record: MarketplacePlugin): Partial<Record<ComponentType, string[]>> {
   const dir = join(componentRoot(entry), record.source)
   if (existsSync(dir)) {
     const found = discoverPlugins(dir)[0]?.components
@@ -58,11 +57,13 @@ function shippedComponents(entry: MarketplaceEntry, record: MarketplacePlugin): 
   return record.components
 }
 
-// the resulting opencode names, not the source filenames: "what do I type to
-// use this" is the question info exists to answer (spec 09)
+// command/agent/skill rows carry their plugin-qualified opencode names, while
+// plugin and mcp rows spell the bare names the displays share — the real key
+// or path survives in the target (spec 09, brief 48 §6)
 function resultingComponents(marketplace: string, plugin: string, entry: MarketplaceEntry, record: MarketplacePlugin): ResultingComponent[] {
   const out: ResultingComponent[] = []
   const components = shippedComponents(entry, record)
+  const bare = bareComponents(components)
   for (const file of components.command ?? []) {
     out.push({
       type: "command",
@@ -87,18 +88,18 @@ function resultingComponents(marketplace: string, plugin: string, entry: Marketp
       target: join(OCM_LINKS_DIR, marketplace, "skills", `${plugin}--${rel.split("/").join("-")}`, "SKILL.md"),
     })
   }
-  for (const file of components.plugin ?? []) {
+  for (const file of bare.plugin ?? []) {
     out.push({
       type: "plugin",
-      name: `ocm--${plugin}--${file}`,
+      name: file,
       source: join(record.source, "plugin", file),
       target: join(OPENCODE_PLUGINS_DIR, `ocm--${plugin}--${file}`),
     })
   }
-  for (const server of components.mcp ?? []) {
+  for (const server of bare.mcp ?? []) {
     out.push({
       type: "mcp",
-      name: `ocm--${plugin}--${server}`,
+      name: server,
       source: join(record.source, "mcp.json"),
       target: `${OPENCODE_GLOBAL_CONFIG} (mcp)`,
     })
@@ -132,12 +133,13 @@ function trustState(marketplace: string, entry: MarketplaceEntry): string {
 
 // spec 25 §3: info renders disk, not registry fiction — the arrow form only
 // for targets that exist, "(not linked)" for absent ones. An mcp component
-// is linked iff its key sits in opencode.json
-function linked(component: ResultingComponent): boolean {
+// is linked iff its key sits in opencode.json; the row spells the bare
+// server name, so the key is composed here
+function linked(component: ResultingComponent, plugin: string): boolean {
   if (component.type === "mcp") {
     try {
       const config = JSON.parse(readFileSync(OPENCODE_GLOBAL_CONFIG, "utf8")) as { mcp?: Record<string, unknown> }
-      return Boolean(config.mcp?.[component.name])
+      return Boolean(config.mcp?.[`ocm--${plugin}--${component.name}`])
     } catch {
       return false
     }
@@ -201,7 +203,7 @@ export function info(arg: string, options: InfoOptions = {}): void {
       // brief 36 §1: type and name stay together; the arrow target moves as
       // one unit to a continuation line when the whole exceeds the budget
       const head = `${component.type.padEnd(8)}${component.name}`
-      const tail = linked(component) ? `→ ${component.target}` : "(not linked)"
+      const tail = linked(component, plugin) ? `→ ${component.target}` : "(not linked)"
       for (const line of wrapLine(4, [head, tail], "  ")) console.log(line)
     }
   }

@@ -146,6 +146,9 @@ export interface CoreMarketplaceEntry {
 export interface CoreRegistry {
   version: 2
   ocmVersion?: string
+  // brief 48 §5: whether ocm created the config root's tui.json — the
+  // provenance a later loader uninstall needs to delete it
+  tuiCreated?: boolean
   marketplaces: Record<string, CoreMarketplaceEntry>
 }
 
@@ -322,6 +325,7 @@ export declare function discoverPlugins(marketplaceDir: string): CoreDiscoveredP
 export declare function manifestOnlyMessages(marketplaceDir: string): string[]
 export declare function mcpShapeError(server: unknown): string | null
 export declare function mcpTrustLine(component: CoreExecutableComponent): string
+export declare function untrustHeadline(name: string, removed: boolean, wasGranted: boolean, shipsNoExecutables: boolean): string
 export declare function readMcpServers(file: string): Record<string, unknown> | null
 export declare function pluginGateFindings(marketplaceDir: string, plugin: CoreDiscoveredPlugin): CoreGateFinding[]
 export declare function marketplaceGateFindings(marketplaceDir: string, plugins: CoreDiscoveredPlugin[]): CoreGateFinding[]

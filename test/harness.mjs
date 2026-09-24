@@ -39,6 +39,7 @@ export async function withFakeHome(fn) {
   try {
     const ocm = {
       installLoader: () => runChild(home, LOADER_MODULE, "installLoader"),
+      uninstallLoader: () => runChild(home, LOADER_MODULE, "uninstallLoader"),
     }
     return await fn(home, ocm)
   } finally {
