@@ -89,6 +89,9 @@ Changes apply on the next opencode start — there is no reload API.
 - git
 - [bun](https://bun.com) on `PATH` (to run the CLI)
 
+Tested on macOS. Linux is expected to work but has not been tested; Windows
+is untested — ocm installs components as symlinks, which Windows restricts.
+
 ## License
 
 MIT
