@@ -104,7 +104,8 @@ const mcpJson = (servers) => `${JSON.stringify(servers, null, 2)}\n`
 
 const renames = (map) => `${JSON.stringify({ renames: map }, null, 2)}\n`
 
-const README = fileURLToPath(new URL("../README.md", import.meta.url))
+// T8 moved the Loader (auto-sync) section out of README.md into docs/reference.md.
+const REFERENCE = fileURLToPath(new URL("../docs/reference.md", import.meta.url))
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`
 
@@ -858,12 +859,12 @@ phase("4. a no-op update still writes the registry: lastSync.at advances (the re
   throw new Error(`the no-op update must still advance lastSync.at (spec 26 §3, F41 rejected) — ${registryFile(home)} still says ${atFirst}`)
 })
 
-phase("5. the README's auto-sync section documents the fire-and-forget sync (F40)", async () => {
-  const readme = readFileSync(README, "utf8")
-  const start = readme.indexOf("## Loader (auto-sync)")
-  if (start === -1) throw new Error(`expected a "## Loader (auto-sync)" section in ${README}`)
-  const end = readme.indexOf("\n## ", start + 1)
-  const section = readme.slice(start, end === -1 ? undefined : end)
+phase("5. the reference's auto-sync section documents the fire-and-forget sync (F40)", async () => {
+  const reference = readFileSync(REFERENCE, "utf8")
+  const start = reference.indexOf("## Loader (auto-sync)")
+  if (start === -1) throw new Error(`expected a "## Loader (auto-sync)" section in ${REFERENCE}`)
+  const end = reference.indexOf("\n## ", start + 1)
+  const section = reference.slice(start, end === -1 ? undefined : end)
   // prose-compatible fragments of spec 26 §2's three claims: background sync
   // serves long-lived sessions; a short-lived `opencode run`/`debug` invocation
   // may exit before it completes; `ocm update` is the deterministic path
@@ -878,7 +879,7 @@ phase("5. the README's auto-sync section documents the fire-and-forget sync (F40
   const missing = needles.filter(([needle]) => !section.includes(needle))
   if (missing.length) {
     throw new Error(
-      `${README} "## Loader (auto-sync)" does not state the background-sync contract — spec 26 §2:\n` +
+      `${REFERENCE} "## Loader (auto-sync)" does not state the background-sync contract — spec 26 §2:\n` +
         missing.map(([needle, claim]) => `  "${needle}" — ${claim}`).join("\n"),
     )
   }
