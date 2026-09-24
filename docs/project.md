@@ -29,7 +29,7 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.8.0 | briefs 32, 33, 44, 45, 46, 47 — error classification, doctor ownership, the materializer split, outcome-derived headlines, round 6's two mediums | published 2026-09-24 |
 | v0.9.0 | brief 36 — display & TUI, and a voice for the loader's startup sync | published 2026-09-24 |
 | v1.0.0 | brief 48 (the backlog of lows) and T7 (README and records) — nothing new in scope; the frozen list complete, the backlog empty | published 2026-09-24 |
-| v1.0.1 | brief 49 — the /ocm menu counts in the right number; manifest errors point at docs/authoring.md | tagged 2026-09-24 |
+| v1.0.1 | brief 49 — the /ocm menu counts in the right number; manifest errors point at docs/authoring.md | published 2026-09-24 |
 
 Rules:
 
