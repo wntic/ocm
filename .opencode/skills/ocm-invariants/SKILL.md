@@ -48,8 +48,8 @@ ocm modifies or removes a file only when it can prove it created it:
 
 A path with no ownership proof is **never** touched — not overwritten, not
 deleted, not moved. It is reported and skipped. The one exception is
-`--force`, which moves the displaced file to `~/.cache/ocm/displaced/` and
-prints the path.
+`--force`, which moves the displaced file to this config root's cache,
+`~/.cache/ocm/roots/<slug>/displaced/`, and prints the path.
 
 A hand-written `~/.config/opencode/commands/commit.md` must survive every ocm
 operation including `ocm remove`.
