@@ -41,7 +41,9 @@ Rules:
   allowed only in a minor while 0.x and must be listed in the brief's
   **Breaking** note. **The "no public users" justification has expired**:
   npm recorded 126 downloads of v0.6.1 and 152 of v0.6.0 in one week
-  (2026-09-22). Earlier breaking changes — brief 19's mandatory
+  (2026-09-22). The owner confirmed on 2026-09-24 that ocm had no users at
+  1.0 — the npm download counts were mirrors and the owner's own installs.
+  Earlier breaking changes — brief 19's mandatory
   `plugin.json` above all — were argued as cheap on that basis, and it was
   true when they were argued. From here a breaking change needs a
   migration story that works without the user reading a release note.

@@ -324,6 +324,18 @@ plugins install as they appear; `--explicit` (or `ocm mode <mp> explicit`)
 installs nothing until you name it. `uninstall` keeps the record, so
 re-installing is instant and offline.
 
+## Exit codes
+
+`0` success, `1` failure — and three distinctions that matter to scripts:
+
+- `ocm install` / `ocm add` exit 1 when a component was withheld by a file
+  ocm does not own — a partial install; `--force` takes it over. A
+  trust-blocked component is not partial (exit 0): the rest of the plugin
+  installed, the executable waits for `ocm trust`.
+- `ocm update` keeps exit 0 for a standing skip — a component still
+  withheld by a file ocm does not own is a warning, not a partial install.
+- `ocm doctor` exits 1 on any error finding; warnings alone exit 0.
+
 ## Precedence
 
 - **Project beats global.** ocm installs at user-global scope only; a
@@ -333,7 +345,8 @@ re-installing is instant and offline.
 - **Hand-authored files beat marketplace-installed ones.** ocm never
   overwrites a file it does not own: a collision is reported and skipped;
   `ocm install --force` takes over and names the displaced path (the file
-  moves to `~/.cache/ocm/displaced/`, it is never deleted).
+  moves to `~/.cache/ocm/roots/<slug>/displaced/`, it is never deleted;
+  `ocm doctor` prints the exact directory).
 - **Plugin names are globally unique across marketplaces.** Adding a
   marketplace that ships an already-provided name fails with both sources
   named; an upstream collision registers the newcomer disabled — the
@@ -438,7 +451,9 @@ On every opencode start the loader:
 2. re-materializes links, so newly added or removed upstream plugins are
    picked up;
 3. records `lastSync` per marketplace — a failed pull is recorded and never
-   touches that marketplace's links.
+   touches that marketplace's links. A sync's warnings are stored with it
+   and shown by `ocm list` (stderr) and `ocm doctor` (as warnings) until
+   the next sync replaces them.
 
 The startup sync is fire-and-forget: it serves long-lived sessions, where the
 fetch finishes in the background long before it matters. A short-lived
@@ -447,7 +462,9 @@ sync completes, leaving `lastSync` untouched. `ocm update` is the
 deterministic path when a sync must have happened.
 
 A sync makes the *next* opencode start current. Remove the loader any time
-with `ocm loader uninstall`.
+with `ocm loader uninstall` — it takes the TUI plugin and its `tui.json`
+entry with it, deleting `tui.json` itself only when ocm created it and
+nothing else remains.
 
 ## TUI integration (`/ocm`)
 
