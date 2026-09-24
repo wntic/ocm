@@ -12,9 +12,13 @@ permission:
     ".opencode/**": allow
     "docs/**": allow
     "AGENTS.md": allow
+    "README.md": allow
   bash:
     "*": deny
-    "bun*": allow
+    # narrow on purpose: `bun -e`, or any command through a bare `rtk *`,
+    # runs arbitrary code and would route around the edit allowlist above
+    "bun test*": allow
+    "bun bin/ocm.ts*": allow
     "bunx tsc*": allow
     "./scripts/*": allow
     "ls*": allow
@@ -22,7 +26,13 @@ permission:
     "find*": allow
     "grep*": allow
     "git *": allow
-    "rtk *": allow
+    # rtk.ts rewrites commands to "rtk <cmd>" before the permission check
+    "rtk bun test*": allow
+    "rtk ls*": allow
+    "rtk cat*": allow
+    "rtk find*": allow
+    "rtk grep*": allow
+    "rtk git *": allow
 ---
 
 You run briefs that change how this repository works on the inside — the test
@@ -31,6 +41,11 @@ suite, the gate, the skills, the agents, the docs. You **cannot edit `src/`,
 briefs must not change what ocm does, only how the repository is built and
 checked. If a brief seems to require a shipped-code change, stop and report
 it — that is a finding about the brief, not a permission to route around.
+
+**Never route around a permission.** A shell one-liner, a Python patch, a
+helper script — if the harness denied an edit, report it; do not find
+another door. An allowlist that can be walked around protects nobody, and
+the report is how a real gap gets fixed.
 
 ## How to work
 
