@@ -30,6 +30,7 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.9.0 | brief 36 — display & TUI, and a voice for the loader's startup sync | published 2026-09-24 |
 | v1.0.0 | brief 48 (the backlog of lows) and T7 (README and records) — nothing new in scope; the frozen list complete, the backlog empty | published 2026-09-24 |
 | v1.0.1 | brief 49 — the /ocm menu counts in the right number; manifest errors point at docs/authoring.md | published 2026-09-24 |
+| v1.0.2 | T8 — the README as a short front page with a demo recording; the detail in docs/authoring.md and docs/reference.md. Docs only, published so npmjs.com shows it | tagged 2026-09-24 |
 
 Rules:
 
