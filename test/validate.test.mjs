@@ -56,7 +56,9 @@ const manifest = (plugins) => json({ name: "mp", plugins })
 
 const LONG = "a".repeat(65)
 
-const README = fileURLToPath(new URL("../README.md", import.meta.url))
+// T8 moved the validate rules out of README.md; the documented contract now
+// lives in docs/authoring.md.
+const AUTHORING = fileURLToPath(new URL("../docs/authoring.md", import.meta.url))
 
 const readRegistry = (home) => JSON.parse(readFileSync(registryFile(home), "utf8"))
 
@@ -424,13 +426,13 @@ phase("5. a marketplace with plugins/ but zero plugins stays valid: zero finding
   }
 })
 
-phase("6. the README states every rule validate enforces (the documented contract)", async () => {
-  const readme = readFileSync(README, "utf8")
+phase("6. the authoring guide states every rule validate enforces (the documented contract)", async () => {
+  const authoring = readFileSync(AUTHORING, "utf8")
   // One needle per rule `ocm validate` enforces, derived from the error and
   // warning strings in src/commands/validate.ts, src/commands/validate-files.ts
   // and src/manifest-lint.ts (the cross-tool warnings live in loader/lint.js,
   // reached through validate). Fragments are prose-compatible — the invariant
-  // is "the rule is stated in the README", never "the error string is quoted".
+  // is "the rule is stated in the authoring guide", never "the error string is quoted".
   const needles = [
     // error-severity rules
     ["kebab-case", "plugin directory name charset (validate.ts: \"rename to kebab-case\")"],
@@ -472,10 +474,10 @@ phase("6. the README states every rule validate enforces (the documented contrac
     // the rule of thumb itself
     ["documented contract", "the rule-of-thumb sentence (spec 24 §3)"],
   ]
-  const missing = needles.filter(([needle]) => !readme.includes(needle))
+  const missing = needles.filter(([needle]) => !authoring.includes(needle))
   if (missing.length) {
     throw new Error(
-      `README.md does not state these validate rules — spec 24 §3: validate enforces the documented contract, nothing else:\n` +
+      `${AUTHORING} does not state these validate rules — spec 24 §3: validate enforces the documented contract, nothing else:\n` +
         missing.map(([needle, rule]) => `  "${needle}" — ${rule}`).join("\n"),
     )
   }
