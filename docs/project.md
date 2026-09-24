@@ -28,7 +28,7 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v0.7.1 | briefs 42, 43 — a read-only command writes nothing; the cache migration is resumable and moves only what it owns | published 2026-09-23 |
 | v0.8.0 | briefs 32, 33, 44, 45, 46, 47 — error classification, doctor ownership, the materializer split, outcome-derived headlines, round 6's two mediums | published 2026-09-24 |
 | v0.9.0 | brief 36 — display & TUI, and a voice for the loader's startup sync | published 2026-09-24 |
-| v1.0.0 | no new scope — the first release to meet the bar below after v0.9.0 | planned |
+| v1.0.0 | brief 48 (the backlog of lows) and T7 (README and records) — nothing new in scope; the frozen list complete, the backlog empty | tagged 2026-09-24 |
 
 Rules:
 
