@@ -26,7 +26,7 @@ export function openMainMenu(api) {
   select(api, {
     title: "ocm",
     options: [
-      { title: "Browse plugins", value: "browse", description: `${plugins} plugins across ${marketplaces.length} marketplaces` },
+      { title: "Browse plugins", value: "browse", description: `${plugins} plugin${plugins === 1 ? "" : "s"} across ${marketplaces.length} marketplace${marketplaces.length === 1 ? "" : "s"}` },
       { title: "Search", value: "search", description: "Find a plugin by name, tag or command" },
       { title: "Marketplaces", value: "marketplaces", description: "Add, update, remove" },
       { title: "Update all", value: "update-all", description: "Pull every marketplace now" },

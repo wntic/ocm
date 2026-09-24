@@ -1127,3 +1127,68 @@ test("2. untrustHeadline returns the CLI's untrust line in every untrust state",
     expect(untrustHeadline("mp", false, true, false)).toBe('marketplace "mp" no longer trusted; none of its executable components were installed, nothing was removed')
   })
 })
+
+// brief 49: the main menu's Browse line pluralises both counted nouns.
+// openMainMenu reads the registry, so the module must load in a child on the
+// fake $HOME — an in-process import would read the real home (see harness).
+const MENU_RUNNER = `
+const [uiUrl] = process.argv.slice(2)
+const recording = { options: [], error: null }
+const api = {
+  ui: {
+    DialogSelect: (props) => {
+      for (const option of props?.options ?? []) {
+        recording.options.push({ title: String(option?.title ?? ""), value: option?.value, description: String(option?.description ?? "") })
+      }
+    },
+    dialog: { replace: (render) => render?.(), clear: () => {}, setSize: () => {}, size: "medium", depth: 0, open: true },
+  },
+}
+try {
+  const mod = await import(uiUrl)
+  if (typeof mod.openMainMenu !== "function") {
+    recording.error = "loader/ui.js does not export openMainMenu(api)"
+  } else {
+    mod.openMainMenu(api)
+  }
+} catch (err) {
+  recording.error = err instanceof Error ? err.stack : String(err)
+}
+process.stdout.write(JSON.stringify(recording))
+`
+function menuDrive(home) {
+  const runner = join(home, "menu-runner.mjs")
+  writeFileSync(runner, MENU_RUNNER)
+  const uiUrl = pathToFileURL(join(REPO_ROOT, "loader", "ui.js")).href
+  const result = spawnSync(process.execPath, [runner, uiUrl], {
+    env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 60_000,
+  })
+  if (result.status !== 0) throw new Error(`menu drive exited ${result.status}: ${result.stderr}`)
+  try {
+    return JSON.parse(result.stdout)
+  } catch {
+    throw new Error(`the menu must not print; stdout was:\n${result.stdout}`)
+  }
+}
+
+// brief 49: singular when the count is 1, for both nouns — the README
+// recording showed "3 plugins across 1 marketplaces"
+test("3. the main menu's Browse description pluralises both counted nouns: 1 plugin across 1 marketplace, 3 plugins across 1 marketplace, 1 plugin across 2 marketplaces", async () => {
+  await withFakeHome(async (home) => {
+    const plugin = demoEntry().plugins.adw
+    const cases = [
+      [demoRegistry(), "1 plugin across 1 marketplace"],
+      [demoRegistry({ plugins: { adw: plugin, beta: plugin, gamma: plugin } }), "3 plugins across 1 marketplace"],
+      [{ version: 2, marketplaces: { a: demoEntry(), b: demoEntry({ plugins: {} }) } }, "1 plugin across 2 marketplaces"],
+    ]
+    for (const [registry, expected] of cases) {
+      mkdirSync(join(cfg(home), "ocm"), { recursive: true })
+      writeFileSync(registryFile(home), `${JSON.stringify(registry, null, 2)}\n`)
+      const rec = menuDrive(home)
+      if (rec.error) throw new Error(`the main menu threw:\n${rec.error}`)
+      const browse = rec.options.find((o) => o.value === "browse")
+      if (!browse) throw new Error(`expected a Browse option in the main menu; recorded: ${JSON.stringify(rec.options)}`)
+      expect(browse.description).toBe(expected)
+    }
+  })
+})
