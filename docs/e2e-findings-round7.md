@@ -249,3 +249,13 @@ v0.9.0 bar: MET
   and is the one open item before v1.0.0.
 
 **v0.9.0 bar: MET.**
+
+## TUI check (owner, 2026-09-24)
+
+Brief 36's manual checklist run in a real terminal against published
+0.9.0 on a scratch home with `many-mp` (25 skills): the details view wraps
+at word boundaries with no `…`, the menu descriptions are readable in full
+at 80 columns, and the owner reports the remaining items fine. The one
+row that looked empty, `marketplace:`, is a whole path wrapped to the
+next row — by design, brief 36 §1. **F124 closed; nothing open before
+v1.0.0.**
