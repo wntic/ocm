@@ -124,7 +124,7 @@ function gateRefusal(name, findings) {
   if (!findings.length) return null
   const lines = findings.slice(0, 10).map((finding) => `  ${finding.message}`)
   if (findings.length > 10) lines.push(`  … and ${findings.length - 10} more`)
-  return `marketplace "${name}" is not installable — ${findings.length} manifest finding${findings.length === 1 ? "" : "s"}\n${lines.join("\n")}\n  each needs at least { "description": "…" }; see ocm validate and the README`
+  return `marketplace "${name}" is not installable — ${findings.length} manifest finding${findings.length === 1 ? "" : "s"}\n${lines.join("\n")}\n  each needs at least { "description": "…" }; see ocm validate and https://github.com/wntic/ocm/blob/main/docs/authoring.md`
 }
 
 // brief 29 §2: add's refusal chain as one function, so ocm scan runs exactly

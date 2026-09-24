@@ -1083,7 +1083,7 @@ phase("7. scan of a directory with no plugins explains the expected layout and p
   writeTree(empty, { "readme.md": "not a marketplace\n" })
   const scanned = ocm(home, ["scan", empty])
   expect(scanned.status).toBe(0)
-  for (const needle of ["no plugins found", "plugins/<name>", "see ocm validate and the README's marketplace format"]) {
+  for (const needle of ["no plugins found", "plugins/<name>", "see ocm validate and the marketplace format: https://github.com/wntic/ocm/blob/main/docs/authoring.md"]) {
     expect(scanned.output).toContain(needle)
   }
 })

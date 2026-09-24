@@ -1199,7 +1199,7 @@ phase("2. malformed plugin.json at add: exit 1, the refusal names the file and t
   for (const needle of [
     'marketplace "bad" is not installable — 1 manifest finding',
     "plugins/p1/plugin.json: not valid JSON — fix it or remove it; ocm requires this file to be readable",
-    'each needs at least { "description": "…" }; see ocm validate and the README',
+    'each needs at least { "description": "…" }; see ocm validate and https://github.com/wntic/ocm/blob/main/docs/authoring.md',
   ]) {
     if (!output.includes(needle)) throw new Error(`the refusal must contain ${JSON.stringify(needle)}:\n${output}`)
   }
