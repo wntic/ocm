@@ -1,6 +1,6 @@
 {
   "name": "@wntic/ocm",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Plugin marketplace for opencode: install skills, agents, commands, JS plugins and MCP servers from any git repo \u2014 once, globally, kept up to date",
   "keywords": [
     "opencode",

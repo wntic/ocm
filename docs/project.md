@@ -32,6 +32,7 @@ npm package `@wntic/ocm`; semver; currently 0.x.
 | v1.0.1 | brief 49 — the /ocm menu counts in the right number; manifest errors point at docs/authoring.md | published 2026-09-24 |
 | v1.0.2 | T8 — the README as a short front page with a demo recording; the detail in docs/authoring.md and docs/reference.md. Docs only, published so npmjs.com shows it | published 2026-09-24 |
 | v1.0.3 | brief 50 — without Bun, ocm says so instead of a shell error; the README states which platforms were tested | published 2026-09-24 |
+| v1.0.4 | the README opens with the problem ocm solves, a comparison and a 30-second try-it; LICENSE file; npm metadata linking back to GitHub. Docs and metadata only | tagged 2026-09-24 |
 
 Rules:
 
