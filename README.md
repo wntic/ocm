@@ -1,17 +1,51 @@
-# ocm — file-based plugin marketplace for opencode
+# ocm — plugin marketplace for opencode
 
-Distribute **skills, agents, commands, JS plugins and MCP servers** for
-[opencode](https://opencode.ai) via plain git repositories. Installed once at
-user-global scope — available in **every project**, even without `.opencode/`
-or `.claude/` directories.
+[![npm](https://img.shields.io/npm/v/@wntic/ocm?color=cb3837&logo=npm)](https://www.npmjs.com/package/@wntic/ocm)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/wntic/ocm/blob/main/LICENSE)
+[![for opencode](https://img.shields.io/badge/for-opencode-111)](https://opencode.ai)
+[![runtime: bun](https://img.shields.io/badge/runtime-bun-f9f1e1?logo=bun&logoColor=black)](https://bun.com)
+
+**Stop copy-pasting opencode skills, agents and commands between repos.**
+ocm installs them from any git repository — once, into your global opencode
+config — so they work in **every project** and stay current with one
+`ocm update`. Share a whole toolkit with your team as a single git URL.
 
 ![ocm demo](https://raw.githubusercontent.com/wntic/ocm/main/docs/demo.gif)
+
+**Try it in 30 seconds** with the example marketplace,
+[wntic/ocm-demo](https://github.com/wntic/ocm-demo):
+
+```bash
+npm install -g @wntic/ocm
+ocm add https://github.com/wntic/ocm-demo
+# restart opencode, then type /ocm — or /git-kit:commit
+```
+
+## Why ocm?
+
+opencode reads skills, agents and commands from a project's `.opencode/` and
+from your global `~/.config/opencode/`, and its `plugin` setting can load JS
+plugins from npm. What it does not have is a way to *distribute* them:
+
+| | Copy into each repo's `.opencode/` | Copy into `~/.config/opencode/` | npm `plugin` setting | **ocm** |
+|---|:-:|:-:|:-:|:-:|
+| Available in every project | — | ✓ | ✓ | ✓ |
+| Skills, agents, commands | ✓ | ✓ | — | ✓ |
+| JS plugins and MCP servers | by hand | by hand | JS only | ✓ |
+| Updates | by hand, per repo | by hand | npm versions | `ocm update`, plus auto-sync on start |
+| Share a toolkit with your team | commit it to every repo | — | one package per plugin | one git URL |
+| Asks before running a plugin's code | — | — | — | ✓ |
+| Your own files are never overwritten | — | — | — | ✓ |
+
+A marketplace is just a git repository — fork
+[ocm-demo](https://github.com/wntic/ocm-demo) to start your own, and see
+[Write a marketplace](https://github.com/wntic/ocm/blob/main/docs/authoring.md).
 
 ## Install
 
 ```bash
 npm install -g @wntic/ocm          # latest
-npm install -g @wntic/ocm@1.0.1    # a specific version
+npm install -g @wntic/ocm@1.0.3    # a specific version
 ```
 
 Or with bun:
@@ -94,4 +128,4 @@ is untested — ocm installs components as symlinks, which Windows restricts.
 
 ## License
 
-MIT
+[MIT](LICENSE)

@@ -1,7 +1,27 @@
 {
   "name": "@wntic/ocm",
   "version": "1.0.3",
-  "description": "File-based plugin marketplace for opencode: skills, agents, commands distributed via git repos",
+  "description": "Plugin marketplace for opencode: install skills, agents, commands, JS plugins and MCP servers from any git repo \u2014 once, globally, kept up to date",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "plugin-marketplace",
+    "marketplace",
+    "ai-agents",
+    "agent-skills",
+    "skills",
+    "mcp",
+    "claude-code",
+    "cli"
+  ],
+  "homepage": "https://github.com/wntic/ocm#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wntic/ocm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wntic/ocm/issues"
+  },
   "type": "module",
   "bin": {
     "ocm": "./bin/ocm.ts"
