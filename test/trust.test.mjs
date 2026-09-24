@@ -625,7 +625,7 @@ phase("10. two JS plugin files folding to one link are refused before any trust 
   }
   const result = ocm(home, ["add", `file://${remote}`, "--name", "mp", "--trust"])
   if (result.status !== 1) throw new Error(`expected exit 1 from the folded plugin-file add, got ${result.status}:\n${result.output}`)
-  for (const needle of ["differ only in case", "plugins/p/plugin/Run.js and plugins/p/plugin/run.js", "ocm--p--run.js"]) {
+  for (const needle of ["differ only in case", "plugin/Run.js", "plugin/run.js", "ocm--p--run.js"]) {
     expect(result.output).toContain(needle)
   }
   // refused before any write: no registry (so no trust record and no

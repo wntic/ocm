@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    name: gate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      # the probe asks the real opencode what it resolves; pinned to the
+      # version docs/opencode-contract.md was verified against, so a new
+      # opencode release is checked on purpose rather than turning CI red
+      - run: npm install -g opencode-ai@1.18.32
+      - run: opencode --version
+      - run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.invalid
+          git config --global init.defaultBranch main
+      - run: ./scripts/check.sh

@@ -1,5 +1,6 @@
 # ocm — plugin marketplace for opencode
 
+[![CI](https://github.com/wntic/ocm/actions/workflows/ci.yml/badge.svg)](https://github.com/wntic/ocm/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@wntic/ocm?color=cb3837&logo=npm)](https://www.npmjs.com/package/@wntic/ocm)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/wntic/ocm/blob/main/LICENSE)
 [![for opencode](https://img.shields.io/badge/for-opencode-111)](https://opencode.ai)
@@ -37,9 +38,9 @@ plugins from npm. What it does not have is a way to *distribute* them:
 | Asks before running a plugin's code | — | — | — | ✓ |
 | Your own files are never overwritten | — | — | — | ✓ |
 
-A marketplace is just a git repository — fork
-[ocm-demo](https://github.com/wntic/ocm-demo) to start your own, and see
-[Write a marketplace](https://github.com/wntic/ocm/blob/main/docs/authoring.md).
+A marketplace is just a git repository — start your own from the
+[ocm-demo template](https://github.com/new?template_name=ocm-demo&template_owner=wntic)
+and see [Write a marketplace](https://github.com/wntic/ocm/blob/main/docs/authoring.md).
 
 ## Install
 
@@ -123,8 +124,9 @@ Changes apply on the next opencode start — there is no reload API.
 - git
 - [bun](https://bun.com) on `PATH` (to run the CLI)
 
-Tested on macOS. Linux is expected to work but has not been tested; Windows
-is untested — ocm installs components as symlinks, which Windows restricts.
+Tested on macOS and Linux — CI runs the full test suite and a probe against
+the real opencode on both. Windows is untested: ocm installs components as
+symlinks, which Windows restricts.
 
 ## License
 

@@ -831,7 +831,7 @@ phase("11. a plugin shipping commands that differ only in case is refused whole;
   commitFoldedCommand(remote)
   const result = ocm(home, ["add", `file://${remote}`, "--name", "case-mp"])
   if (result.status !== 1) throw new Error(`expected exit 1 from the folded-command add, got ${result.status}:\n${result.output}`)
-  for (const needle of ["differ only in case", "plugins/case-kit/commands/Run.md and plugins/case-kit/commands/run.md", "both install as case-kit:run.md"]) {
+  for (const needle of ["differ only in case", "commands/Run.md", "commands/run.md", "both install as case-kit:run.md"]) {
     expect(result.output).toContain(needle)
   }
   assertAbsent(join(rootCacheDir(home), "marketplaces", "case-mp")) // the refused clone is cleaned up
