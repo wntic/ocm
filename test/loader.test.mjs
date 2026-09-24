@@ -92,7 +92,8 @@ test("1. installs exactly the repository's loader/ directory; plugins/ holds onl
     const root = cfg(home)
     for (const file of INSTALLED) assertFileExists(join(root, file))
     assertDirContains(join(root, "plugins"), ["ocm-loader.js"])
-    assertDirContains(join(root, "ocm"), OCM_FILES)
+    // installLoader records tui.json provenance in the registry (brief 48 §5)
+    assertDirContains(join(root, "ocm"), [...OCM_FILES, "registry.json"])
     // no stray files (e.g. leftover atomic-write temporaries) in the config dir
     assertDirContains(root, ["ocm", "plugins", "tui.json"])
   })
@@ -183,6 +184,45 @@ test("5. tui.json keeps theme and keybinds; the ocm entry is added once and only
     expectOk(await ocm.installLoader())
     expect(readFileSync(tuiPath, "utf8")).toBe(afterFirst)
     expect(statSync(tuiPath).mtimeMs).toBe(mtime)
+  })
+})
+
+test("5b. uninstall deletes tui.json only when the registry proves ocm created it; a user's file round-trips, unknown provenance is kept", async () => {
+  // shape 1: ocm-created tui.json — the registry records tuiCreated, so the
+  // file is deleted with the plugin entry
+  await withFakeHome(async (home, ocm) => {
+    const tuiPath = join(cfg(home), "tui.json")
+    expectOk(await ocm.installLoader())
+    expectOk(await ocm.uninstallLoader())
+    assertAbsent(tuiPath)
+  })
+
+  // shape 2: user-created tui.json — byte-identical round-trip
+  await withFakeHome(async (home, ocm) => {
+    const tuiPath = join(cfg(home), "tui.json")
+    mkdirSync(cfg(home), { recursive: true })
+    const original = `${JSON.stringify({ theme: "my-theme" }, null, 2)}\n`
+    writeFileSync(tuiPath, original)
+    expectOk(await ocm.installLoader())
+    expectOk(await ocm.uninstallLoader())
+    const bytes = readFileSync(tuiPath, "utf8")
+    if (bytes !== original) {
+      throw new Error(`expected the user's original bytes at ${tuiPath} after uninstall, found ${JSON.stringify(bytes)}`)
+    }
+  })
+
+  // shape 3: a home from before provenance was recorded — no tuiCreated in
+  // the registry, so the file is kept as "{}\n" rather than deleted
+  await withFakeHome(async (home, ocm) => {
+    const tuiPath = join(cfg(home), "tui.json")
+    const registryPath = join(cfg(home), "ocm", "registry.json")
+    expectOk(await ocm.installLoader())
+    const parsed = JSON.parse(readFileSync(registryPath, "utf8"))
+    delete parsed.tuiCreated
+    writeFileSync(registryPath, `${JSON.stringify(parsed, null, 2)}\n`)
+    expectOk(await ocm.uninstallLoader())
+    const bytes = readFileSync(tuiPath, "utf8")
+    if (bytes !== "{}\n") throw new Error(`expected "{}\n" at ${tuiPath} after uninstall, found ${JSON.stringify(bytes)}`)
   })
 })
 

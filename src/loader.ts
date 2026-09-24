@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { normalizeRegistry, parseRegistryStrict, writeJsonAtomic } from "../loader/core.js"
+import { loadRegistryForWrite, normalizeRegistry, parseRegistryStrict, saveRegistryIfChanged, writeJsonAtomic } from "../loader/core.js"
 import { queueNotice } from "./report"
 import { OCM_DIR, OCM_LEGACY_REGISTRY_FILE, OCM_LOADER_NAME, OPENCODE_PLUGINS_DIR, OPENCODE_TUI_CONFIG as TUI_CONFIG_FILE } from "./paths"
 
@@ -84,19 +84,49 @@ function ensureTuiPluginEntry(): boolean {
   }
   const entries = Array.isArray(plugin) ? plugin : []
   if (entries.includes(TUI_PLUGIN_ENTRY)) return false
+  const created = !existsSync(TUI_CONFIG_FILE)
   config.plugin = [...entries, TUI_PLUGIN_ENTRY]
   writeTuiConfig(config)
+  recordTuiProvenance(created)
   return true
 }
 
-function removeTuiPluginEntry(): void {
+// brief 48 §5 (F274): whether ocm created the current tui.json, recorded in
+// the registry — ocm's own state — so a later uninstall deletes only a file
+// it can prove it created. Conservative: a corrupt or v1 registry records
+// nothing, and an absent record never deletes.
+function recordTuiProvenance(created: boolean): void {
+  let loaded
+  try {
+    loaded = loadRegistryForWrite()
+  } catch {
+    // a corrupt registry refuses every mutation that could act on the record
+    return
+  }
+  if (loaded.wasV1) return // the v1 → v2 upgrade owns the registry's next write
+  if ((loaded.registry.tuiCreated === true) === created) return
+  loaded.registry.tuiCreated = created
+  saveRegistryIfChanged(loaded.registry)
+}
+
+function removeTuiPluginEntry(createdTui: boolean): void {
   const config = readTuiConfig()
   if (!config) return
   const plugin = config.plugin
   if (!Array.isArray(plugin)) return
   const filtered = plugin.filter((entry) => entry !== TUI_PLUGIN_ENTRY)
   if (filtered.length === plugin.length) return
-  config.plugin = filtered
+  if (filtered.length === 0) {
+    delete config.plugin
+    // brief 48 §5 (F274): an empty remainder plus recorded provenance is
+    // ocm's own file — delete it; anything less is the user's — keep it
+    if (createdTui && Object.keys(config).length === 0) {
+      rmSync(TUI_CONFIG_FILE, { force: true })
+      return
+    }
+  } else {
+    config.plugin = filtered
+  }
   writeTuiConfig(config)
 }
 
@@ -197,6 +227,7 @@ export function uninstallLoader(): void {
   // brief 39 §3 (F127): the teardown deletes the registry with ocm/, so it
   // must know what it is removing — a registry that does not parse refuses
   const registry = normalizeRegistry(parseRegistryStrict())
+  const createdTui = registry.tuiCreated === true
   for (const [name, entry] of Object.entries(registry.marketplaces)) {
     const plugins = Object.keys(entry.plugins ?? {})
     console.log(`removing marketplace record "${name}"${plugins.length ? ` (${plugins.join(", ")})` : ""}`)
@@ -205,6 +236,6 @@ export function uninstallLoader(): void {
     rmSync(join(OPENCODE_PLUGINS_DIR, name), { force: true })
   }
   rmSync(OCM_DIR, { recursive: true, force: true })
-  removeTuiPluginEntry()
+  removeTuiPluginEntry(createdTui)
   console.log("removed auto-sync loader")
 }

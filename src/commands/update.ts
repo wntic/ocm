@@ -9,7 +9,7 @@ import { installLoader, reportTuiPlugin } from "../loader"
 import { reportUpgrade } from "../report"
 import type { DiscoveredPlugin, MarketplaceEntry, Registry } from "../types"
 import { decideUpdateTrust } from "./trust"
-import { pluginFileChanges, pluginReports, renderMarketplace } from "./update-report"
+import { pluginFileChanges, pluginReports, renderMarketplace, revertedEdits } from "./update-report"
 import type { CollisionTransition, FileChange, MarketplaceReport } from "./update-report"
 
 export interface UpdateOptions {
@@ -196,7 +196,8 @@ async function updateOne(registry: Registry, name: string, trust?: boolean): Pro
         report.refused.length > 0 ||
         report.collisions.length > 0 ||
         report.plugins.length > 0 ||
-        links.outcomes.some((o) => o.state === "created")
+        links.outcomes.some((o) => o.state === "created") ||
+        revertedEdits(report)
     }
   } catch (err) {
     report.ok = false

@@ -1,7 +1,9 @@
 // The trust flows of the /ocm TUI dialog (spec 10b): the prompt renders the
 // same component list the CLI prints before a trust decision (spec 07).
+import { existsSync } from "node:fs"
 import { componentRoot, denyTrust, executableComponents, grantTrust, readRegistry, withRegistryLock } from "./core.js"
 import { mcpTrustLine } from "./mcp-line.js"
+import { untrustHeadline } from "./untrust-line.js"
 import { NOTICE, message, toast } from "./ui-dialog.js"
 import { confirm } from "./ui-modals.js"
 
@@ -48,6 +50,18 @@ export async function trustFlow(api, name, back) {
   back()
 }
 
+// brief 48 §4: the same "ships nothing executable" test the CLI's display
+// helper makes — the tree positively ships nothing, false when it cannot
+// be read
+function shipsNoExecutables(entry) {
+  try {
+    const root = componentRoot(entry)
+    return existsSync(root) && executableComponents(root, entry).length === 0
+  } catch {
+    return false
+  }
+}
+
 export async function untrustFlow(api, name, back) {
   const text = `stop trusting marketplace "${name}"?\n\nits executable components are removed from opencode`
   if (!(await confirm(api, name, text))) {
@@ -57,7 +71,9 @@ export async function untrustFlow(api, name, back) {
   try {
     const result = await withRegistryLock("ocm untrust " + name + " (tui)", () => denyTrust(name))
     if (result.report.warnings.length) toast(api, "warning", result.report.warnings.join("\n"))
-    toast(api, "success", `marketplace "${name}" no longer trusted — ${NOTICE}`)
+    const removed = result.report.outcomes.some((o) => o.state === "removed")
+    const entry = readRegistry().marketplaces?.[name]
+    toast(api, "success", `${untrustHeadline(name, removed, result.wasGranted, shipsNoExecutables(entry))}${removed ? ` — ${NOTICE}` : ""}`)
   } catch (err) {
     toast(api, "error", message(err))
   }

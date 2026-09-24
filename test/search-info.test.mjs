@@ -467,8 +467,10 @@ phase("3. info renders disk, not registry fiction: (not linked) for absent targe
   // denied: stuff links, executables do not, and the trust line says denied
   const denied = info("deny-kit")
   expect(lineWith(denied, "deny-kit:tdd")).toContain("→")
-  for (const needle of ["ocm--deny-kit--notify.js", "ocm--deny-kit--db"]) {
-    const line = lineWith(denied, needle)
+  // brief 48 §6: the rows spell the bare names list prints; the opencode key
+  // survives only in the target, which a (not linked) row does not print
+  for (const [type, name] of [["plugin", "notify.js"], ["mcp", "db"]]) {
+    const line = lineWith(denied, `${type.padEnd(8)}${name}`)
     expect(line).toContain("(not linked)")
     expect(line).not.toContain("→")
   }
@@ -476,7 +478,9 @@ phase("3. info renders disk, not registry fiction: (not linked) for absent targe
 
   // granted and unchanged: the arrow form, and "trust granted"
   const granted = info("ok-kit")
-  expect(lineWith(granted, "ocm--ok-kit--notify.js")).toContain("→")
+  const grantedPlugin = lineWith(granted, "plugin".padEnd(8) + "notify.js")
+  expect(grantedPlugin).toContain("→")
+  expect(grantedPlugin).toContain("ocm--ok-kit--notify.js") // the target names the real key
   const okTrust = trustLine(granted)
   expect(okTrust).toContain("granted")
   expect(okTrust).not.toContain("changed")
@@ -765,5 +769,51 @@ phase("12. a local marketplace's missing clone: list and info name restore-or-re
   const cause = `  marketplace clone missing (${dir}) \u2014 restore the directory, or run ocm remove mp-local`
   const causeCount = info.stdout.split("\n").filter((l) => l === cause).length
   if (causeCount !== 1) throw new Error(`expected the local remedy cause line once, got ${causeCount}, in:\n${info.stdout}`)
+})
+
+phase("13. info spells plugin and mcp components exactly as list does; the → target still names the real key", async (home) => {
+  // invariants: config safety and ownership — the user's keys and their own
+  // command predate the add and must survive the renders
+  writeTree(cfg(home), {
+    "opencode.json": json({ model: "claude-sonnet-4-6", permission: { edit: "allow" } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const mp = join(home, "mp")
+  writeTree(mp, { plugins: { "exec-kit": {
+    "plugin.json": PLUGIN_JSON,
+    commands: { "work.md": COMMAND },
+    plugin: { "notify.js": JS_PLUGIN },
+    "mcp.json": mcpJson({ "exec-mcp": SERVER }),
+  } } })
+  expect(ocm(home, ["add", mp, "--trust"]).status).toBe(0)
+  const registryBytes = readFileSync(registryFile(home), "utf8")
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+
+  // list's spelling is the reference: the bare names come from its own lines
+  const listed = ocm(home, ["list"])
+  if (listed.status !== 0) throw new Error(`ocm list exited ${listed.status}: ${listed.output}`)
+  const pluginFile = lineWith(listed.stdout, "plugins:").match(/plugins:\s*(\S+)/)?.[1]
+  const mcpServer = lineWith(listed.stdout, "mcp:").match(/mcp:\s*(\S+)/)?.[1]
+  if (!pluginFile || !mcpServer) throw new Error(`expected plugins:/mcp: names in:\n${listed.stdout}`)
+
+  const info = ocm(home, ["info", "exec-kit"])
+  if (info.status !== 0) throw new Error(`ocm info exec-kit exited ${info.status}: ${info.output}`)
+  // the row heads spell the bare names list prints, not the opencode keys
+  const componentRow = (type, name) => {
+    const line = info.stdout.split("\n").find((l) => new RegExp(`^\\s*${type}\\s+${name}(\\s|$)`).test(l))
+    if (!line) throw new Error(`expected a ${type} row for ${name} in:\n${info.stdout}`)
+    return line
+  }
+  const pluginRow = componentRow("plugin", pluginFile)
+  const mcpRow = componentRow("mcp", mcpServer)
+  // the continuation stays and names the real key or path, not the bare name
+  expect(pluginRow).toContain("→")
+  expect(pluginRow).toContain(`ocm--exec-kit--${pluginFile}`)
+  expect(mcpRow).toContain("→") // linked: the trusted add wrote the server key
+
+  // invariants: the renders write nothing, and the user's own files survive
+  expect(readFileSync(registryFile(home), "utf8")).toBe(registryBytes)
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes)
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n")
 })
 }

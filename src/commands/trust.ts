@@ -7,12 +7,14 @@ import {
   grantTrust,
   pendingComponents,
   skipEntry,
+  untrustHeadline,
 } from "../../loader/core.js"
 import type { CoreExecutableComponent, CoreMaterializeReport } from "../../loader/core.js"
 import { componentRoot, materializeLinks } from "../install"
-import { loadRegistryForWrite, saveRegistry } from "../registry"
+import { loadRegistry, loadRegistryForWrite, saveRegistry } from "../registry"
 import { reportMutationWarnings, reportRestart, reportUpgrade, reportWarnings } from "../report"
 import type { MarketplaceEntry } from "../types"
+import { shipsNoExecutables } from "./display"
 import { printTrustListing, promptTrust } from "./trust-prompt"
 
 // a decline: first sight denies the whole marketplace (spec 07); a re-prompt
@@ -165,8 +167,7 @@ export async function untrust(name: string): Promise<void> {
   reportMutationWarnings(result.report, { marketplace: name })
   reportRestart(result.report)
   const removed = result.report.outcomes.some((o) => o.state === "removed")
-  if (removed) console.log(`marketplace "${name}" no longer trusted; executable components removed`)
-  else if (result.wasGranted) console.log(`marketplace "${name}" no longer trusted; it ships nothing executable, nothing was removed`)
-  else console.log(`marketplace "${name}" was not trusted; nothing changed`)
+  const entry = loadRegistry().marketplaces[name]
+  console.log(untrustHeadline(name, removed, result.wasGranted, entry ? shipsNoExecutables(entry) : false))
   reportUpgrade(result.wasV1)
 }

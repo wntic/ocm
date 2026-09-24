@@ -1032,3 +1032,51 @@ test("23. a rendered command resolves in opencode and its ! block runs the scrip
   })
   // opencode spawns: canary + error scan + config resolution + one run (see harness.mjs)
 }, 420_000)
+
+// brief 48 §2: a local (non-git) marketplace has no revision, and "@ unknown"
+// in a rendered trailer reads like a bug report. The revision word is
+// "local" instead; the ownership proof reads only up to " @ ", so a file an
+// older ocm wrote with "@ unknown" stays recognised as ocm's.
+
+test("24. a local (non-git) marketplace's rendered trailer reads @ local, not @ unknown", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: ADW })
+    materialize(home, [["mp", mp, null]])
+    const mirror = join(skillsLinks(home), "adw--python-style", "SKILL.md")
+    const content = readFileSync(mirror, "utf8")
+    const at = content.lastIndexOf("<!-- ocm: rendered from ")
+    if (at === -1) throw new Error(`expected the ownership marker in ${mirror}`)
+    expect(content.slice(at)).toBe(`<!-- ocm: rendered from plugins/adw/skills/python-style/SKILL.md @ local -->\n`)
+  })
+})
+
+test("25. a rendered file carrying the old @ unknown trailer is still recognised as ocm's on the rendered→symlink transition", async () => {
+  await withFakeHome(async (home) => {
+    const mp = marketplace(home, { adw: { commands: { "deploy.md": ROOTED_COMMAND } } })
+    materialize(home, [["mp", mp, null]])
+    const dest = join(cfg(home), "commands", "adw:deploy.md")
+    if (lstatSync(dest).isSymbolicLink()) throw new Error(`expected a regular file at ${dest}, found a symlink`)
+
+    // age the file: same body, same marker prefix, only the revision word
+    // differs — what an older ocm wrote on a local marketplace
+    const rendered = readFileSync(dest, "utf8")
+    const at = rendered.lastIndexOf("<!-- ocm: rendered from ")
+    if (at === -1) throw new Error(`expected the ownership marker in ${dest}`)
+    writeFileSync(dest, rendered.slice(0, at) + rendered.slice(at).replace(/ @ .+ -->\n$/, " @ unknown -->\n"))
+    expect(readFileSync(dest, "utf8")).toContain(" @ unknown -->\n")
+
+    // the author drops the variable: the dest goes back to a symlink, and
+    // the aged file must be cleared as ocm's own, never displaced as the
+    // user's — isRenderedFrom reads only up to " @ ", so the revision word
+    // cannot break the proof
+    const source = join(mp, "plugins", "adw", "commands", "deploy.md")
+    writeFileSync(source, COMMAND)
+    const [report] = materialize(home, [["mp", mp, null]])
+
+    expect(lstatSync(dest).isSymbolicLink()).toBe(true)
+    expect(realpathSync(dest)).toBe(realpathSync(source))
+    const unmanaged = report.warnings.filter((w) => w.includes("not managed by ocm"))
+    if (unmanaged.length) throw new Error(`ocm called its own rendered file unmanaged:\n${unmanaged.join("\n")}`)
+    assertAbsent(join(rootCacheDir(home), "displaced"))
+  })
+})

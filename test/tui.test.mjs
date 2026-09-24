@@ -1113,3 +1113,17 @@ test("1. trustMessage equals the CLI trust listing for the same components, acro
     // invariant: no plugin-load errors attributable to ocm-installed files
   })
 })
+
+// brief 48 §4: the TUI's untrust toast and the CLI's untrust headline are
+// one wording function in the loader — the TUI cannot drift from the CLI
+test("2. untrustHeadline returns the CLI's untrust line in every untrust state", async () => {
+  await withFakeHome(async () => {
+    const core = await loadModule("core.js")
+    const untrustHeadline = required(core, "untrustHeadline", "loader/core.js", "brief 48 §4: one wording for the TUI toast and the CLI headline")
+    // removed wins regardless of the grant state
+    expect(untrustHeadline("mp", true, true, true)).toBe('marketplace "mp" no longer trusted; executable components removed')
+    expect(untrustHeadline("mp", false, false, true)).toBe('marketplace "mp" was not trusted; nothing changed')
+    expect(untrustHeadline("mp", false, true, true)).toBe('marketplace "mp" no longer trusted; it ships nothing executable, nothing was removed')
+    expect(untrustHeadline("mp", false, true, false)).toBe('marketplace "mp" no longer trusted; none of its executable components were installed, nothing was removed')
+  })
+})

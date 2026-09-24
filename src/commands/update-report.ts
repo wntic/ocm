@@ -243,6 +243,14 @@ function renderOutcomeCounts(report: MarketplaceReport): void {
   }
 }
 
+// brief 48 §1 (F258): a reverted user edit is a change the revision pair
+// cannot see — the warning is the event
+const REVERTED_EDIT_PREFIX = "reverted your edits to "
+
+export function revertedEdits(report: MarketplaceReport): boolean {
+  return report.warnings.some((w) => w.startsWith(REVERTED_EDIT_PREFIX))
+}
+
 export function renderMarketplace(report: MarketplaceReport, quiet: boolean, headerPrinted = false): void {
   if (quiet && report.ok && !report.changed) return
   if (!headerPrinted) console.log(`updating ${report.name}...`)
@@ -261,7 +269,10 @@ export function renderMarketplace(report: MarketplaceReport, quiet: boolean, hea
     return
   }
   if (report.before && report.after) {
-    console.log(report.before === report.after ? "  already up to date" : `  ${report.before.slice(0, 7)} → ${report.after.slice(0, 7)}`)
+    // brief 48 §1 (F258): a reverted user edit on an unmoved revision says
+    // nothing here — the stderr warning is the event
+    if (report.before !== report.after) console.log(`  ${report.before.slice(0, 7)} → ${report.after.slice(0, 7)}`)
+    else if (!revertedEdits(report)) console.log("  already up to date")
   } else if (report.digestsAbsent !== null) {
     // brief 30 §4: a local marketplace has no revision pair — the recorded
     // digests answer, and an absent baseline is unknown, never unchanged

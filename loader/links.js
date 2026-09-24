@@ -126,16 +126,19 @@ export function link(source, dest, ctx, plugin, component) {
 export function render(source, dest, transform, ctx, plugin) {
   let body
   let output
+  let trailer
   try {
     const transformed = transform(readFileSync(source, "utf8"))
     if (transformed === null || transformed === undefined) return "skipped"
     body = transformed.endsWith("\n") ? transformed : `${transformed}\n`
-    output = body + `<!-- ${RENDERED_MARKER}${relative(ctx.dir, source)} @ ${ctx.revision} -->\n`
+    trailer = `<!-- ${RENDERED_MARKER}${relative(ctx.dir, source)} @ ${ctx.revision} -->\n`
+    output = body + trailer
   } catch (err) {
     ctx.warnings.push(`failed ${source}: ${errorMessage(err)}`)
     return "skipped"
   }
   let silent = false
+  let reverted = false
   let stat
   try {
     stat = lstatSync(dest)
@@ -169,10 +172,25 @@ export function render(source, dest, transform, ctx, plugin) {
       else if (current === undefined || !current.includes(RENDERED_MARKER)) {
         if (!takeOver(dest, ctx, plugin)) return "skipped"
       }
+      // brief 48 §1 (F258): an intact trailer means the file was rendered
+      // from exactly these source bytes at this revision and then edited —
+      // the rewrite below reverts the user's edit and must say so. Only
+      // when the source bytes are provably unchanged: a git clone's
+      // revision pins them; a local marketplace's changed set must exclude
+      // the source (its digest keys a skill by directory)
+      if (current !== undefined && current.includes(trailer)) {
+        const rel = relative(ctx.dir, source)
+        if (ctx.gitClone === true || (ctx.changed != null && !ctx.changed.has(rel) && !ctx.changed.has(dirname(rel)))) {
+          reverted = true
+        }
+      }
     }
   }
   try {
     writeFileSync(dest, output)
+    if (reverted) {
+      ctx.warnings.push(`reverted your edits to ${dest} — it is managed by ocm; edit the source in the marketplace instead`)
+    }
     return silent ? "ok" : "created"
   } catch (err) {
     ctx.warnings.push(`failed ${dest}: ${errorMessage(err)}`)

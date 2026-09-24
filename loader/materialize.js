@@ -28,9 +28,9 @@ function gitRevision(dir) {
     const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, timeout: 5000, encoding: "utf8" })
     if (result.status === 0) return result.stdout.trim()
   } catch {
-    // a failed git spawn reads as no revision — "unknown" below
+    // a failed git spawn reads as no revision — "local" below
   }
-  return "unknown"
+  return "local"
 }
 
 // brief 41: the tokens substituted at materialization time — the suffix is
@@ -55,6 +55,11 @@ function buildCtx(name, dir, registry, entry, warnings, options) {
     revision: (entry && typeof entry.revision === "string" && entry.revision) || gitRevision(dir),
     warnings,
     force: options.force === true,
+    // brief 48 §1 (F258): a git clone's revision pins source bytes, so an
+    // intact trailer alone proves a user edit; a local marketplace needs
+    // the changed set to exclude the source
+    gitClone: entry?.local === false,
+    changed: options.changed ?? null,
     displacedDir: join(DISPLACED_DIR, new Date().toISOString().replace(/[:.]/g, "-")),
     // brief 31 §6: dest → displaced cache target for every takeover this
     // run, so an outcome can state where the user's file went

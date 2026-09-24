@@ -2931,3 +2931,52 @@ phase("an update over a hand-written file at a component's destination exits 0 w
   }
 }, 240_000)
 }
+
+// brief 48 §1 (F258): a user edit to a rendered command file was reverted
+// silently — the materializer must warn on stderr, and on a git marketplace
+// whose revision did not move the warning replaces "already up to date"
+{
+const ROOTED_COMMAND = "---\ndescription: rooted helper\n---\n\npython3 \"${OCM_PLUGIN_ROOT}/plugins/greet-kit/scripts/greet.sh\"\n"
+
+phase("10. a user-edited rendered command is reverted with a stderr warning that replaces already up to date; the second pass is a clean no-op", async (home) => {
+  // invariants: config safety and ownership — the user's keys and command
+  // predate the pass and must survive it outside ocm's owned keys
+  writeTree(cfg(home), {
+    "opencode.json": json({ mcp: { "user-server": { type: "local", command: ["echo"] } } }),
+    commands: { "mine.md": "# my own command\n" },
+  })
+  const remote = join(home, "remote")
+  gitRepo(remote, { plugins: { "greet-kit": { "plugin.json": PLUGIN_JSON, commands: { "greet.md": ROOTED_COMMAND } } } })
+  const added = ocm(home, "add", `file://${remote}`, "--name", "mp")
+  if (added.status !== 0) throw new Error(`ocm add exited ${added.status}: ${added.stderr}`)
+  const dest = commandLink(home, "greet-kit", "greet.md")
+  if (lstatSync(dest).isSymbolicLink()) throw new Error(`expected a regular rendered file at ${dest}, found a symlink — the fixture does not exercise the rendered path`)
+  const original = readFileSync(dest, "utf8")
+  if (!original.includes("ocm: rendered from ")) {
+    throw new Error(`the file at ${dest} lacks the rendered marker — the fixture does not exercise the rendered path`)
+  }
+  const configBytes = readFileSync(join(cfg(home), "opencode.json"), "utf8")
+  writeFileSync(dest, `${original}MY LOCAL TWEAK\n`) // the F258 edit: appended after the marker, ownership still provable
+
+  const updated = ocm(home, "update", "mp")
+  if (updated.status !== 0) throw new Error(`ocm update mp exited ${updated.status}: ${updated.stderr}`)
+  expect(updated.stderr).toContain(`warning: reverted your edits to ${dest} — it is managed by ocm; edit the source in the marketplace instead`)
+  const out = `${updated.stdout}\n${updated.stderr}`
+  if (out.includes("already up to date")) {
+    throw new Error(`the revert warning replaces "already up to date" — the pass was not silent:\n${out}`)
+  }
+  expect(readFileSync(dest, "utf8")).toBe(original) // the bytes are back to the canonical render
+  expect(readFileSync(join(cfg(home), "opencode.json"), "utf8")).toBe(configBytes) // invariant: config safety
+  expect(readFileSync(join(cfg(home), "commands", "mine.md"), "utf8")).toBe("# my own command\n") // invariant: ownership
+
+  const again = ocm(home, "update", "mp")
+  if (again.status !== 0) throw new Error(`second ocm update mp exited ${again.status}: ${again.stderr}`)
+  const out2 = `${again.stdout}\n${again.stderr}`
+  if (!out2.split("\n").includes("  already up to date")) {
+    throw new Error(`expected "  already up to date" on the second pass:\n${out2}`)
+  }
+  if (again.stderr.includes("reverted your edits")) {
+    throw new Error(`the second pass reverted nothing — the warning must not repeat:\n${again.stderr}`)
+  }
+}, 240_000)
+}
