@@ -100,7 +100,7 @@ export async function scan(source: string): Promise<void> {
     if (!plugins.length) {
       console.log(`no plugins found in ${source}`)
       console.log(`  expected plugins/<name>/{commands,agents,skills}/ at the repository root`)
-      console.log(`  see ocm validate and the README's marketplace format`)
+      console.log(`  see ocm validate and the marketplace format: https://github.com/wntic/ocm/blob/main/docs/authoring.md`)
       return
     }
     // brief 29 §2 (F77): scan is a dry run of add — it runs add's refusal
