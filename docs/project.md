@@ -6,9 +6,10 @@ tracked, and are deleted once the code they describe is stable. Everything
 here outlives them.
 
 The verified opencode behaviour the code depends on is in
-[opencode-contract.md](./opencode-contract.md); the end-to-end rounds that
-produced the current work queue are in `e2e-findings*.md`, whose triage tables
-name briefs by number.
+[opencode-contract.md](./opencode-contract.md). The end-to-end rounds that
+found the briefs listed below (round-by-round findings and test plans) were
+scaffolding like the briefs themselves and were removed once the scope they
+drove was frozen and shipped.
 
 ## Releases & versioning
 
